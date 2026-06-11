@@ -37,6 +37,7 @@ from app.modules.question_bank.schemas import (
     GeneratedQuestion,
     QuestionRubric,
     UpdateQuestionBody,
+    followups_to_jsonb,
 )
 from app.modules.question_bank.state_machine import (
     auto_revert_on_edit,
@@ -594,7 +595,7 @@ async def write_generated_questions(
                 signal_values=list(incoming.signal_values),
                 estimated_minutes=incoming.estimated_minutes,
                 is_mandatory=incoming.is_mandatory,
-                follow_ups=list(incoming.follow_ups),
+                follow_ups=followups_to_jsonb(incoming.follow_ups),
                 positive_evidence=list(incoming.positive_evidence),
                 red_flags=list(incoming.red_flags),
                 rubric=incoming.rubric.model_dump(),
@@ -666,7 +667,7 @@ async def persist_one_question(
         signal_values=list(question.signal_values),
         estimated_minutes=question.estimated_minutes,
         is_mandatory=question.is_mandatory,
-        follow_ups=list(question.follow_ups),
+        follow_ups=followups_to_jsonb(question.follow_ups),
         positive_evidence=list(question.positive_evidence),
         red_flags=list(question.red_flags),
         rubric=question.rubric.model_dump(),
@@ -738,7 +739,7 @@ async def replace_question_in_place(
     question.signal_values = list(new_data.signal_values)
     question.estimated_minutes = new_data.estimated_minutes
     question.is_mandatory = new_data.is_mandatory
-    question.follow_ups = list(new_data.follow_ups)
+    question.follow_ups = followups_to_jsonb(new_data.follow_ups)
     question.positive_evidence = list(new_data.positive_evidence)
     question.red_flags = list(new_data.red_flags)
     question.rubric = new_data.rubric.model_dump()
@@ -801,7 +802,7 @@ async def create_recruiter_question(
         signal_values=list(body.signal_values),
         estimated_minutes=body.estimated_minutes,
         is_mandatory=body.is_mandatory,
-        follow_ups=list(body.follow_ups),
+        follow_ups=followups_to_jsonb(body.follow_ups),
         positive_evidence=list(body.positive_evidence),
         red_flags=list(body.red_flags),
         rubric=body.rubric.model_dump(),

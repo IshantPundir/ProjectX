@@ -316,6 +316,12 @@ class PlaceholderBankResponse(BaseModel):
     total_minutes: float = 0.0
 
 
+def followups_to_jsonb(follow_ups: list[FollowUpDimension]) -> list[dict]:
+    """Serialize a list of FollowUpDimension objects into JSONB-ready dicts for
+    the stage_questions.follow_ups column."""
+    return [fu.model_dump() for fu in follow_ups]
+
+
 class BanksOverviewResponse(BaseModel):
     banks: list[BankResponse | PlaceholderBankResponse]
 
