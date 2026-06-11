@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.modules.interview_runtime.results import (
     ClaimsPoolSnapshot,
@@ -55,6 +55,33 @@ class QuestionRubric(BaseModel):
     below_bar: str
 
 
+class FollowUpDimension(BaseModel):
+    """One governed probe dimension — a sub-template the engine composes WITHIN.
+
+    Mirrors question_bank.schemas.FollowUpDimension (two bounded contexts; the
+    stage_questions.follow_ups JSONB column is the contract between them).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    dimension: str = Field(
+        ..., min_length=1,
+        description="Stable slug; the per-thread fire-once ledger key (e.g. 'validate_impact').",
+    )
+    intent: str = Field(
+        ..., min_length=1,
+        description="WHAT this probe verifies — the brain composes a natural probe within this.",
+    )
+    seed_probe: str = Field(
+        ..., min_length=1,
+        description="Pre-authored spoken seed (the legacy follow-up string).",
+    )
+    listen_for: list[str] = Field(
+        default_factory=list,
+        description="Observable specifics that satisfy this dimension (the brain targets these).",
+    )
+
+
 class QuestionConfig(BaseModel):
     """Mirrors question_bank/schemas.py GeneratedQuestion + adds id.
 
@@ -69,7 +96,10 @@ class QuestionConfig(BaseModel):
     signal_values: list[str] = Field(min_length=1, max_length=3)
     estimated_minutes: float = Field(gt=0, le=15)
     is_mandatory: bool
-    follow_ups: list[str] = Field(min_length=0, max_length=3)
+    follow_ups: list[FollowUpDimension] = Field(
+        default_factory=list,
+        description="Governed probe dimensions for this question (0-3).",
+    )
     positive_evidence: list[str] = Field(min_length=3, max_length=5)
     red_flags: list[str] = Field(min_length=2, max_length=3)
     rubric: QuestionRubric
