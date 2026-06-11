@@ -656,6 +656,9 @@ class Settings(BaseSettings):
     # unfinished (with the detector restored, complete answers commit near min_delay,
     # so the ceiling only buys patience for genuine mid-answer pauses).
     engine_endpointing_max_delay_s: float = 4.0     # upper bound (unfinished turns only)
+    engine_probe_cap_per_thread: int = 2
+    """Max probes fired on one question thread before the engine force-advances (deterministic
+    anti-grind). 1-2 probes/question typical; the brain may advance earlier on primary_signal."""
 
     # ── Turn assembly — merge fragmented answers before the brain ──
     # See docs/superpowers/specs/2026-06-10-turn-assembly-design.md. The

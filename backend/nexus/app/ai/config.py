@@ -209,6 +209,10 @@ class AIConfig:
         return self._settings.engine_endpointing_max_delay_s
 
     @property
+    def engine_probe_cap_per_thread(self) -> int:
+        return self._settings.engine_probe_cap_per_thread
+
+    @property
     def engine_assembly_enabled(self) -> bool:
         return self._settings.engine_assembly_enabled
 
