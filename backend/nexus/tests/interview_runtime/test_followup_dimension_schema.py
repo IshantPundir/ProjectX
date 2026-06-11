@@ -27,6 +27,18 @@ def test_followup_dimension_rejects_blank_dimension():
         FollowUpDimension(dimension="", intent="i", seed_probe="p")
 
 
+def test_followup_dimension_forbids_extra_fields():
+    with pytest.raises(ValidationError):
+        FollowUpDimension(dimension="d", intent="i", seed_probe="p", unknown_key="x")
+
+
+def test_followup_dimension_rejects_blank_intent_and_seed():
+    with pytest.raises(ValidationError):
+        FollowUpDimension(dimension="d", intent="", seed_probe="p")
+    with pytest.raises(ValidationError):
+        FollowUpDimension(dimension="d", intent="i", seed_probe="")
+
+
 def test_question_config_follow_ups_are_dimensions():
     q = QuestionConfig(
         id="q1", position=0, text="A real question here?",
