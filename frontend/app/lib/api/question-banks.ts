@@ -74,7 +74,6 @@ export type BankResponse = {
   question_count: number
   total_minutes: number
   is_stale: boolean
-  generation_status_by_kind: Record<string, string>
   created_at: string
   updated_at: string
 }
