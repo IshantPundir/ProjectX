@@ -286,9 +286,9 @@ def _build_user_message(
             )
             # Surface the behavioral phase's follow-up dimensions so the
             # technical phase knows which probe angles are already covered.
-            # The engine fires each dimension at most once per session, so
-            # the technical phase must not author a follow-up with the same
-            # dimension slug or the same underlying intent as these.
+            # The engine fires each dimension at most once per thread and tracks
+            # coverage across the whole screen, so the technical phase must not
+            # author a follow-up with the same dimension slug or underlying intent.
             dims = q.get("follow_ups") or []
             dim_labels = [
                 f"{d.get('dimension')} ({d.get('intent')})"
@@ -1780,7 +1780,7 @@ async def regenerate_kind_actor(
             # builder's chaining block reads `text`, `signal_values`, and the
             # follow-up `dimension`/`intent` pairs so the technical phase can
             # avoid repeating probe dimensions already authored in the behavioral
-            # phase (the engine fires each dimension at most once per session).
+            # phase (the engine fires each dimension at most once per thread).
             behavioral_kinds = PHASE_QUESTION_KINDS["behavioral"]
             prior_phase_questions = [
                 {
