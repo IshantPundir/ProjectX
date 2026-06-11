@@ -80,7 +80,20 @@ def _make_question(
         signal_values=signal_values,
         estimated_minutes=5.0,
         is_mandatory=is_mandatory,
-        follow_ups=["Follow up 1?", "Follow up 2?"],
+        follow_ups=[
+            {
+                "dimension": "follow_up_1",
+                "intent": "verify depth on first dimension",
+                "seed_probe": "Follow up 1?",
+                "listen_for": ["detail A", "detail B"],
+            },
+            {
+                "dimension": "follow_up_2",
+                "intent": "verify depth on second dimension",
+                "seed_probe": "Follow up 2?",
+                "listen_for": ["detail C"],
+            },
+        ],
         positive_evidence=["positive A", "positive B", "positive C"],
         red_flags=["red flag 1", "red flag 2"],
         rubric=QuestionRubric(excellent=excellent, meets_bar=meets_bar, below_bar=below_bar),
@@ -217,14 +230,18 @@ class TestBuildSessionContext:
             assert not hasattr(qi, "below_bar")
 
     def test_bank_index_has_text_and_follow_ups(self):
-        """BankQuestionIndex carries text + follow_ups (per corrected contract)."""
+        """BankQuestionIndex carries text + follow_ups as FollowUpDimension objects."""
         config = _make_session_config()
         ctx = build_session_context(config)
         qmap = {q.question_id: q for q in ctx.bank_index}
 
         qi = qmap["q-001"]
         assert qi.text == "Tell me about your distributed systems experience."
-        assert qi.follow_ups == ["Follow up 1?", "Follow up 2?"]
+        assert len(qi.follow_ups) == 2
+        assert qi.follow_ups[0].dimension == "follow_up_1"
+        assert qi.follow_ups[0].seed_probe == "Follow up 1?"
+        assert qi.follow_ups[1].dimension == "follow_up_2"
+        assert qi.follow_ups[1].seed_probe == "Follow up 2?"
 
     def test_bank_index_signals_list(self):
         """BankQuestionIndex.signals must be the full coverable signal set."""
@@ -301,7 +318,7 @@ class TestPrefixByteIdentical:
 
         # Build a turn input (should not affect prefix)
         q = config.stage.questions[0]
-        rubric = active_question_rubric(q, probes_used=[])
+        rubric = active_question_rubric(q, fired_dimensions=[])
         proj = CoverageProjection()
         _turn_input = build_turn_input(
             turn_ref="turn-001",
@@ -346,7 +363,7 @@ class TestNoRubricInPrefix:
         ctx = build_session_context(config)
 
         q = config.stage.questions[0]  # has ACTIVE_Q_EXCELLENT and ACTIVE_Q_MEETS_BAR
-        rubric = active_question_rubric(q, probes_used=[])
+        rubric = active_question_rubric(q, fired_dimensions=[])
         proj = CoverageProjection()
         turn_input = build_turn_input(
             turn_ref="turn-001",
@@ -376,7 +393,7 @@ class TestCandidateUtteranceFenced:
         ctx = build_session_context(config)
 
         q = config.stage.questions[0]
-        rubric = active_question_rubric(q, probes_used=[])
+        rubric = active_question_rubric(q, fired_dimensions=[])
         proj = CoverageProjection()
         utterance = "UNIQUE_CANDIDATE_UTTERANCE_XYZ"
         turn_input = build_turn_input(
@@ -676,7 +693,7 @@ class TestSuffixBounded:
 
         # Activate q-001
         q_active = config.stage.questions[0]
-        rubric = active_question_rubric(q_active, probes_used=[])
+        rubric = active_question_rubric(q_active, fired_dimensions=[])
         proj = CoverageProjection()
         turn_input = build_turn_input(
             turn_ref="turn-001",
@@ -702,7 +719,7 @@ class TestSuffixBounded:
         ctx = build_session_context(config)
 
         q_active = config.stage.questions[0]
-        rubric = active_question_rubric(q_active, probes_used=[])
+        rubric = active_question_rubric(q_active, fired_dimensions=[])
         proj = CoverageProjection()
         turn_input = build_turn_input(
             turn_ref="turn-001",
@@ -734,7 +751,7 @@ class TestBuildMessages:
         sys_prompt = "You are the brain."
 
         q = config.stage.questions[0]
-        rubric = active_question_rubric(q, probes_used=[])
+        rubric = active_question_rubric(q, fired_dimensions=[])
         proj = CoverageProjection()
         turn_input = build_turn_input(
             turn_ref="turn-001",
@@ -765,7 +782,7 @@ class TestBuildMessages:
         sys_prompt = "You are the brain."
 
         q = config.stage.questions[0]
-        rubric = active_question_rubric(q, probes_used=[])
+        rubric = active_question_rubric(q, fired_dimensions=[])
         proj = CoverageProjection()
         turn_input = build_turn_input(
             turn_ref="turn-001",

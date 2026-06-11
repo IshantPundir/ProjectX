@@ -6,7 +6,7 @@ Responsibilities:
        Maps SessionConfig → the STABLE, byte-identical prefix the brain receives every turn.
        Contains ZERO per-turn data (no rubric text — rubrics break cache consistency).
 
-  2. active_question_rubric(q, *, probes_used) → ActiveQuestionRubric
+  2. active_question_rubric(q, *, fired_dimensions) → ActiveQuestionRubric
        Maps a QuestionConfig → the per-turn rubric that goes into the DYNAMIC SUFFIX only.
 
   3. CoverageProjection
@@ -46,6 +46,7 @@ from app.modules.interview_engine.contracts import (
     BrainSessionContext,
     BrainTurnInput,
     BudgetPhase,
+    FollowUpDimension,
     SignalRead,
     SignalSpec,
     WindowTurn,
@@ -63,6 +64,16 @@ from app.modules.interview_runtime.schemas import (
 
 # Re-exported so callers can import the full public surface from this module.
 from app.modules.interview_engine.contracts import SignalObservation  # noqa: F401
+
+
+# ---------------------------------------------------------------------------
+# Private helper — bounded-context conversion
+# ---------------------------------------------------------------------------
+
+def _to_contract_dims(dims) -> list[FollowUpDimension]:
+    """Convert wire FollowUpDimension objects (interview_runtime) into the engine
+    contracts copy at the bounded-context boundary (mirrors QuestionRubric.model_validate)."""
+    return [FollowUpDimension.model_validate(d.model_dump()) for d in dims]
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +138,7 @@ def build_session_context(config: SessionConfig) -> BrainSessionContext:
                 is_mandatory=q.is_mandatory,
                 tier="core",          # flat bank → all-core; two-tier is a later plan
                 text=q.text,
-                follow_ups=list(q.follow_ups),
+                follow_ups=_to_contract_dims(q.follow_ups),
             )
         )
 
@@ -148,7 +159,7 @@ def build_session_context(config: SessionConfig) -> BrainSessionContext:
 def active_question_rubric(
     q: QuestionConfig,
     *,
-    probes_used: list[int],
+    fired_dimensions: list[str],
 ) -> ActiveQuestionRubric:
     """Map the full rubric for the currently active question into ActiveQuestionRubric.
 
@@ -166,8 +177,8 @@ def active_question_rubric(
         positive_evidence=list(q.positive_evidence),
         red_flags=list(q.red_flags),
         evaluation_hint=q.evaluation_hint,
-        follow_ups=list(q.follow_ups),
-        probes_used=list(probes_used),
+        follow_ups=_to_contract_dims(q.follow_ups),
+        fired_dimensions=list(fired_dimensions),
     )
 
 
@@ -359,7 +370,8 @@ def render_suffix(turn_input: BrainTurnInput) -> list[dict]:
     Structure of the single user message:
       ## Active Question Rubric
       ... (question_id, text, excellent, meets_bar, below_bar,
-           positive_evidence, red_flags, evaluation_hint, follow_ups, probes_used)
+           positive_evidence, red_flags, evaluation_hint,
+           follow_up_dimensions, fired_dimensions)
 
       ## Signal Coverage So Far
       ... (evidence_so_far — one line per SignalRead)
@@ -382,6 +394,14 @@ def render_suffix(turn_input: BrainTurnInput) -> list[dict]:
       <<<CANDIDATE_ANSWER_END>>>
     """
     r = turn_input.active_question
+    follow_ups_rendered = json.dumps(
+        [
+            {"dimension": d.dimension, "intent": d.intent,
+             "seed_probe": d.seed_probe, "listen_for": d.listen_for}
+            for d in r.follow_ups
+        ],
+        ensure_ascii=False,
+    )
     rubric_block = (
         f"## Active Question Rubric\n"
         f"question_id: {r.question_id}\n"
@@ -392,8 +412,8 @@ def render_suffix(turn_input: BrainTurnInput) -> list[dict]:
         f"positive_evidence: {json.dumps(r.positive_evidence, ensure_ascii=False)}\n"
         f"red_flags: {json.dumps(r.red_flags, ensure_ascii=False)}\n"
         f"evaluation_hint: {r.evaluation_hint}\n"
-        f"follow_ups: {json.dumps(r.follow_ups, ensure_ascii=False)}\n"
-        f"probes_used: {r.probes_used}"
+        f"follow_up_dimensions: {follow_ups_rendered}\n"
+        f"fired_dimensions: {json.dumps(r.fired_dimensions, ensure_ascii=False)}"
     )
 
     reads = turn_input.evidence_so_far
