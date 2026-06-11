@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
 # Shared enums
@@ -50,7 +50,16 @@ class QuestionRubric(BaseModel):
 
 
 class FollowUpDimension(BaseModel):
-    """A governed probe dimension the live engine composes within (generation copy)."""
+    """A governed probe dimension the live engine composes within.
+
+    Shared shape for generation output, the recruiter create/update bodies, and the
+    read response. `listen_for` is PERMISSIVE here (may be empty) so the read path
+    tolerates legacy / backfilled banks (migration 0055 wraps old string follow-ups
+    with `listen_for=[]`) and recruiter-authored follow-ups. The GENERATION guarantee
+    that the LLM produces a non-empty `listen_for` is enforced separately on
+    `GeneratedQuestion` (see its `_follow_ups_have_listen_for` validator), NOT on this
+    shared shape — mirroring the permissive `interview_runtime.schemas.FollowUpDimension`.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -60,8 +69,9 @@ class FollowUpDimension(BaseModel):
                         description="What this probe verifies — distinct from the lead and other dimensions.")
     seed_probe: str = Field(..., min_length=1, max_length=240,
                             description="A short single-ask spoken seed probe.")
-    listen_for: list[str] = Field(..., min_length=1, max_length=4,
-                                  description="Observable specifics a strong answer to THIS dimension names.")
+    listen_for: list[str] = Field(default_factory=list, max_length=4,
+                                  description="Observable specifics a strong answer to THIS dimension names. "
+                                              "May be empty on legacy/backfilled or recruiter-authored rows.")
 
 
 class GeneratedQuestion(BaseModel):
@@ -96,6 +106,24 @@ class GeneratedQuestion(BaseModel):
     is_mandatory: bool
     follow_ups: list[FollowUpDimension] = Field(..., min_length=0, max_length=3)
     positive_evidence: list[str] = Field(..., min_length=3, max_length=5)
+
+    @field_validator("follow_ups")
+    @classmethod
+    def _follow_ups_have_listen_for(
+        cls, value: list[FollowUpDimension]
+    ) -> list[FollowUpDimension]:
+        """Generation guarantee: every LLM-authored follow-up must name what to listen for.
+
+        Enforced HERE (the LLM-output model) rather than on the shared FollowUpDimension,
+        so the read/recruiter paths stay tolerant of legacy/backfilled empty `listen_for`.
+        instructor surfaces this as a validation error → the generation call retries.
+        """
+        for fu in value:
+            if not fu.listen_for:
+                raise ValueError(
+                    f"follow-up dimension '{fu.dimension}' must have a non-empty listen_for"
+                )
+        return value
     red_flags: list[str] = Field(..., min_length=2, max_length=3)
     rubric: QuestionRubric
     evaluation_hint: str = Field(..., min_length=10, max_length=200)
