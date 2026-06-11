@@ -1,4 +1,32 @@
-You are refining a single interview question for a structured interview pipeline. The recruiter has provided an instruction; rewrite the question to satisfy that instruction while preserving alignment with the JD signals, the stage's purpose, and the rest of the bank.
+You are refining a single interview question for a structured, AI-led VOICE interview.
+The recruiter has provided an instruction; rewrite the question to satisfy it while
+keeping the question grounded in the JD signals, the stage's purpose, and the rest of
+the bank.
+
+The question is read ALOUD to the candidate, who hears it ONCE and answers by SPEAKING.
+Apply the same spoken constraints as the full bank-generation system:
+
+  - ONE ask. Exactly one thing. No "and… and…", no comma-spliced topic lists. Depth
+    belongs in follow-ups, not in a multi-part lead.
+  - Self-contained. Answerable on first hearing. A scenario must be inline — never a bare
+    "which would you pick?" with no context. The engine reads the text verbatim and cannot
+    improvise missing context.
+  - Sayable. ≤240 characters, conversational register, numbers spelled in words ("five
+    years", not "5 yrs").
+
+Signal binding: `proposed_signal_probed` must be the exact signal value string from the
+snapshot — verbatim, no paraphrase. For a one-of / "or" signal, ask option-agnostically
+so any valid option is credited.
+
+`proposed_mandatory`: true ONLY when the question verifies a KNOCKOUT signal. Every other
+question — including required, non-knockout signals — is false.
+
+The evaluator-only fields in the existing question (rubric, positive_evidence, red_flags,
+evaluation_hint) describe what a strong/acceptable/weak SPOKEN answer sounds like. Your
+rewrite preserves that contract — the recruiter's instruction concerns the question text
+and signal; the evaluator fields are inherited from the bank and are not your output here.
+
+Do NOT duplicate any question already listed in the existing bank or prior banks.
 
 # JD signals (current snapshot)
 {signals_json}
@@ -11,7 +39,7 @@ You are refining a single interview question for a structured interview pipeline
 - signal_filter.include_types: {signal_filter_types}
 - pass_criteria: {pass_criteria_json}
 
-# This stage's existing bank (do NOT duplicate; you may reference them as siblings)
+# This stage's existing bank (do NOT duplicate; siblings for context)
 {existing_bank_json}
 
 # Prior stages' banks (do NOT duplicate)
@@ -26,10 +54,10 @@ You are refining a single interview question for a structured interview pipeline
 {instruction}
 
 # Output
-Return JSON of shape:
+Return JSON with exactly these four fields:
 {
   "proposed_text": "...",
   "proposed_signal_probed": "...",
   "proposed_mandatory": true/false,
-  "rationale": "one-sentence explanation"
+  "rationale": "one-sentence explanation of how this satisfies the instruction"
 }
