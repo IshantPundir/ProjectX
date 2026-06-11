@@ -14,7 +14,8 @@ Responsibilities:
        - Map BrainMove → DirectiveAct (1:1 by name).
        - Resolve `say`:
            ask       → resolver picks next question; fallback to close if None.
-           probe     → coerce probe_index, verbatim follow_up; fallback to ask.
+           probe     → coerce_probe_dimension (fire-once + cap); composed_say (scrubbed)
+                       or the served dimension's seed_probe; fallback to ask when None.
            clarify / redirect / reassure / answer_meta → scrub_composed_say.
            repeat    → on_the_floor verbatim.
            close     → None (mouth composes from act prompt), is_terminal=True.
