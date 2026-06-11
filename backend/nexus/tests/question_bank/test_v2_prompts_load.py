@@ -17,11 +17,10 @@ def test_v2_bank_prompts_load_and_state_spoken_rules():
     assert "one-of" in common.lower() or "at least one of" in common.lower()
 
 
-def test_v2_stage_and_phase_prompts_load():
+def test_v2_stage_prompts_load():
     loader = PromptLoader(version="v2")
     for name in (
         "question_bank_ai_screening",
-        "question_bank_ai_screening_behavioral",
         "question_bank_phone_screen",
         "question_bank_regenerate_one",
     ):
@@ -29,9 +28,10 @@ def test_v2_stage_and_phase_prompts_load():
         assert len(body) > 200
 
 
-def test_v2_phase_prompts_constrain_kinds():
+def test_v2_ai_screening_is_one_call_all_kinds():
+    """The unified ai_screening prompt authors the whole bank in one pass — it must
+    allow every question kind (no behavioral/technical phase split anymore)."""
     loader = PromptLoader(version="v2")
-    behavioral = loader.get("question_bank_ai_screening_behavioral")
-    technical = loader.get("question_bank_ai_screening")
-    assert "technical_scenario" in technical
-    assert "experience_check" in behavioral
+    ai_screening = loader.get("question_bank_ai_screening")
+    for kind in ("experience_check", "behavioral", "technical_scenario", "compliance_binary"):
+        assert kind in ai_screening

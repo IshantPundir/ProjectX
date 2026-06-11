@@ -1,80 +1,64 @@
-## AI Screening — TECHNICAL PHASE
+## AI Screening — the full bank in one pass
 
-This is the SECOND of two generation calls for the AI Screening stage. The
-behavioral phase has already verified the candidate's claims and gated hard
-eligibility facts. Your job is the technical depth layer: spoken design,
-reasoning, and think-aloud questions that expose whether a candidate who PASSED
-the claim-checks can actually defend the skill at depth. This is the stage that
-catches the candidate who answered "yes, five years of Kubernetes" but cannot
-reason about a real failure.
+This is the AI Screening stage: a structured, AI-led voice interview that replaces the
+recruiter phone screen. You author the COMPLETE bank for this stage in a single pass —
+the claim-verification layer AND the depth layer together. The interviewer asks your
+questions roughly in order, adapting as the candidate answers.
 
-# Allowed question_kind value (HARD restriction)
+You may emit all four `question_kind`s here: `experience_check`, `behavioral`,
+`compliance_binary`, and `technical_scenario`. Use each for its purpose (see the taxonomy
+in the common header). The challenge of a single pass is BALANCE — do not let depth probes
+crowd out claim-verification, and do not let claim-checks crowd out real depth. Follow the
+recipe below.
 
-Emit ONLY `technical_scenario`. Every question this phase produces is a
-`technical_scenario`. Do NOT emit experience_check, behavioral, or
-compliance_binary — those belong to the behavioral phase. A 60-second yes/no
-gate or a claim-check here robs budget from the depth probing this phase exists
-to deliver.
+# Authoring recipe — build the bank in this order
 
-# CHAINING — do not overlap the behavioral phase
+Work through these in sequence; it produces a bank that verifies eligibility first, then
+probes mastery, and never wastes the budget.
 
-The behavioral questions already generated for THIS stage are listed in the user
-message under the heading "ALREADY-GENERATED BEHAVIORAL QUESTIONS — DO NOT
-OVERLAP". Read them. Cover DIFFERENT angles. NEVER restate a behavioral question
-as a technical one — if the behavioral phase verified that the candidate has
-used a tool, your job is to make them REASON about it, not to ask again whether
-they have used it. Re-probe the same signals at greater DEPTH and from a
-genuinely different cognitive path, never as a reworded duplicate.
+1. KNOCKOUT VERIFICATION (mandatory). For each knockout signal in scope, author exactly
+   one question that verifies it by the candidate's own spoken account — an
+   `experience_check` for an experience/skill claim ("How long have you worked hands-on
+   with X in production?"), or a `compliance_binary` for a hard yes/no eligibility gate.
+   These are `is_mandatory: true`. They are usually `easy` to answer even though they
+   gate the role. Give each sharp bluff-catching follow-ups — a real practitioner names
+   specifics a bluffer can't.
 
-Each behavioral question listed may also carry a "covered dimensions" line
-showing the follow-up dimension slugs that phase already authored. Those
-dimensions are already represented in this session's probe set — DO NOT
-generate a follow-up with the same dimension slug or the same underlying intent
-in the technical phase. The technical phase must contribute entirely NEW
-dimensions that expose mastery depth, never reheat what the behavioral phase
-already probed.
+2. BEHAVIORAL STAR (do not skip). For each behavioral-TYPE required signal — collaboration,
+   documentation, mentoring/technical guidance, communication, ownership — author at least
+   one true STAR `behavioral` question about a SPECIFIC past event ("Tell me about a
+   time…", "Describe a situation where…"). Probe for "I", not "we". These are easy/medium.
+   Do not let the technical scenarios below crowd these out: if the role's signals include
+   behavioral-type signals, behavioral STAR questions MUST appear in the bank.
 
-WHY: the engine fires each dimension at most once across the whole session
-regardless of which phase authored it. A dimension present in both phases
-wastes a probe slot and makes the report incomparable across candidates.
+3. TECHNICAL DEPTH. For the highest-weight COMPETENCY signals, author `technical_scenario`
+   questions that make the candidate reason aloud — design, debug, or trade something off
+   drawn from the JD's signals. This is where a candidate who passed the claim-checks
+   proves they can actually defend the skill: a question an unqualified candidate cannot
+   fake by reciting buzzwords. Skew `medium`/`hard`. Spend this budget weight-first — a
+   weight-3 competency before a weight-2, and never a preferred signal while a required one
+   of equal-or-higher weight is unprobed.
 
-## Within-bank distinctness (technical phase)
+4. STOP when the high-weight required signals are covered. Signal density over count — a
+   tight bank of sharp questions beats a long one. Cover preferred/low-weight signals only
+   if the budget genuinely allows after the required ones, and only where they fit a spoken
+   screen.
 
-The same rule applies inside this phase: every follow-up `dimension` slug
-across ALL questions you generate must be distinct. Check before authoring each
-follow-up that no earlier question in THIS call carries the same dimension slug
-or covers the same intent. Two technical scenarios often share adjacent concerns
-(error handling, observability, rollback) — be deliberately specific so each
-dimension names a different facet, e.g. `error_handling_strategy` vs
-`circuit_breaker_design` rather than two variants of "handles errors".
+# Within-bank distinctness (across the whole pass)
 
-# What to generate
-
-Verbal design / depth / think-aloud questions. The candidate reasons ALOUD —
-there is no editor, no whiteboard, and NO coding. Ask them to design, debug,
-trade off, or walk through how they would handle a realistic situation drawn
-from the JD's signals. The lead `text` is a single clean opening; the depth
-ladders into `follow_ups`, one ask at a time — exactly the GOOD spoken pattern
-in the common header (a connector-auth lead, with pagination / retry / testing
-as separate follow_ups).
-
-  - Re-probe knockout and high-weight signals at mastery depth — a question an
-    unqualified candidate cannot fake by reciting buzzwords.
-  - positive_evidence: names specific tools AND why they chose them; walks a
-    hypothesis → verify → iterate loop; names real failure modes and
-    mitigations; quantifies scale or impact.
-  - red_flags: surface-level answers with no specifics; cannot defend a design
-    choice when pushed; recites textbook patterns with no application context.
-  - difficulty skews medium/hard here — this is the depth stage. Calibrate to
-    the stage difficulty and the signal's weight.
+Every follow-up `dimension` across ALL questions in this bank must be distinct in MEANING,
+not just in slug (see the common header). Because you author the whole bank at once, you
+can see every dimension you've already used — before adding a follow-up, confirm no earlier
+question already covers its angle. Two scenarios often brush adjacent concerns (error
+handling, observability, rollout safety); name each facet precisely and differently
+(`circuit_breaker_design` vs `dead_letter_handling`, not two variants of "handles errors")
+so no two questions probe the same underlying thing.
 
 # Discipline
 
-  - Stay within the technical budget supplied in the user message; signal
-    density over count. Under-using the budget is fine; padding is not.
-  - Ground every question in the JD and the snapshot signals — never invent
-    tools or technologies the JD does not mention.
-
-Run the common header's self-critique pass on every question before emitting it,
-paying special attention to lines (a) spoken-not-written and (b) ONE ask — the
-depth probe is where the written-exam, multi-part regression is most tempting.
+  - Ground every question in the JD and the pinned snapshot signals — never invent tools,
+    platforms, or technologies the JD does not mention.
+  - Each lead is ONE self-contained spoken ask; the depth ladders into follow-ups. The
+    technical depth probe is where the multi-part written-exam regression is most tempting —
+    keep the lead a single clean opening and move the rest into follow-ups.
+  - Run the common header's pre-emit check on every question before you ship it.
