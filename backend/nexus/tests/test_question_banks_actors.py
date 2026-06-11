@@ -205,7 +205,14 @@ def _stream_questions(
             signal_values=[v],
             estimated_minutes=estimated_minutes,
             is_mandatory=is_mandatory,
-            follow_ups=[f"What specifically did you use {v} for?"],
+            follow_ups=[
+                {
+                    "dimension": f"usage_{i}",
+                    "intent": f"Verify specific usage of {v}",
+                    "seed_probe": f"What specifically did you use {v} for?",
+                    "listen_for": ["concrete example"],
+                }
+            ],
             positive_evidence=[
                 f"Names specific {v} tooling clearly",
                 "Describes production usage in detail",
@@ -244,7 +251,14 @@ def _build_question(
         signal_values=signal_values,
         estimated_minutes=estimated_minutes,
         is_mandatory=is_mandatory,
-        follow_ups=["Tell me more about that part."],
+        follow_ups=[
+            {
+                "dimension": "depth_probe",
+                "intent": "Explore the answer in more detail",
+                "seed_probe": "Tell me more about that part.",
+                "listen_for": ["concrete example"],
+            }
+        ],
         positive_evidence=[
             "Names specific tools or systems",
             "Describes incident details clearly",
