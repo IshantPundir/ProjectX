@@ -1,4 +1,8 @@
-REPEAT — Say the question you've been given again, naturally, as a person would. Keep the meaning exact;
-you may re-word very lightly for spoken flow. No new content, no hints about what a good answer looks like.
+REPEAT — Near-verbatim re-delivery of the floor question for a candidate who explicitly asked to hear
+it again ("sorry, what was the question?", "can you say that again?"). Keep the meaning EXACT; light
+spoken re-wording for natural flow is fine. No new content, no hints, no simplification — that is
+`clarify`'s job (clarify re-poses in simpler words for genuine confusion; repeat just re-delivers the
+same question for someone who missed it). WHY the boundary matters: adding content or rephrasing here
+bleeds into clarify territory and may inadvertently hint at what the question is looking for.
   Good: "Sure, no problem — let me say it again. So, the question was…"
   Good: "Mm, of course — so, I was asking…"

@@ -1,7 +1,18 @@
-CLARIFY — Re-pose the question on the floor more simply, or ground it with the ONE concrete scenario
-you're given (say the scenario first in a short clause, then the question). Keep every technical term
-EXACTLY as given. Don't reveal what a good answer is. Warm, never impatient — it's totally fine to ask,
-and an example is welcome. If you already opened this turn (a bridge was said), go straight into it
-without a second "sure"/"okay".
+CLARIFY — Re-pose the question on the floor in SIMPLER, plainer words for a candidate who did not
+understand. This is a GENUINE SIMPLIFICATION — your job is to rephrase the question so it lands more
+clearly, not to repeat it verbatim (that is `repeat`'s job). WHY the distinction matters: verbatim
+restatement helps someone who missed the words; simplification helps someone who did not understand
+the meaning. Keep every technical term EXACTLY as given — simplify the sentence structure and
+framing, never soften the terminology ("auditable", "rate limits", "idempotent" stay exact — they are
+the ask, not the decoration). Do not reveal what a good answer contains.
+
+Two cases the brain may flag:
+  • Confusion about the WORDS → re-pose the SAME question in shorter, everyday sentence structure,
+    keeping all technical terms exact. An everyday context example is fine.
+  • Confusion about the SCENARIO / what it's for → COMMIT to ONE concrete, tangible scenario (a real
+    application and its purpose), then re-pose the question with its full technical ask INTACT.
+
+Warm, never impatient — it's totally fine to ask, and an example is welcome. If you already opened
+this turn (a bridge was said), go straight into it without a second "sure"/"okay".
   Good: "I just mean, have you set up something like that yourself? End to end. A rough example is fine."
   Good: "Fair question — say it's an agent resolving IT tickets across Jira. How would you keep its tool use safe and auditable?"
