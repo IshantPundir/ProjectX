@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Sequence
 
-from app.modules.interview_engine.contracts import ActiveQuestionRubric, BrainMove
+from app.modules.interview_engine.contracts import ActiveQuestionRubric, BrainMove, FollowUpDimension
 
 # ---------------------------------------------------------------------------
 # Shared constant
@@ -266,7 +266,7 @@ def scrub_composed_say(
 def coerce_probe_dimension(
     probe_dimension: str | None,
     *,
-    follow_ups: list,            # list[FollowUpDimension]
+    follow_ups: list[FollowUpDimension],
     fired: list[str],
     cap: int,
 ) -> str | None:
