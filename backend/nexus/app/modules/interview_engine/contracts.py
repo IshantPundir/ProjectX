@@ -37,6 +37,14 @@ from app.modules.interview_runtime.evidence import (  # noqa: F401
 )
 
 
+class FollowUpDimension(BaseModel):
+    """A governed probe dimension (engine copy; mirrors interview_runtime.schemas)."""
+    dimension: str
+    intent: str
+    seed_probe: str
+    listen_for: list[str] = Field(default_factory=list)
+
+
 # ============================================================================
 # 1. BRAIN per-turn OUTPUT (LEAN — what the LLM emits each turn)
 # ============================================================================
@@ -98,14 +106,13 @@ class BrainTurnOutput(BaseModel):
                     "Empty on non-answer turns (clarify/meta/redirect).",
     )
     move: BrainMove
-    probe_index: int | None = Field(
-        default=None, ge=0,
-        description="For `probe`: index into the ACTIVE question's bank `follow_ups` — the recruiter "
-                    "follow-up TEMPLATE the brain is adapting this turn (which gap it targets). The spoken "
-                    "probe text itself is COMPOSED in `composed_say` (a natural, in-scope adaptation of "
-                    "that template to what the candidate actually said); probe_index records which template "
-                    "area was covered (anti-grind + coverage). Probing is thread-local — the question is "
-                    "always the one on the floor (no id needed).",
+    probe_dimension: str | None = Field(
+        default=None,
+        description="For `probe`: the `dimension` slug of the ACTIVE question's follow-up this probe "
+                    "serves. The brain composes `composed_say` WITHIN that dimension's intent. The engine "
+                    "fires each dimension at most once per thread (the driver's ledger) and force-advances "
+                    "at the probe cap; an already-fired or unknown slug is coerced to an unfired one, or to "
+                    "`ask` when none remain. None → let the engine pick the next unfired dimension.",
     )
     preferred_next_signal: str | None = Field(
         default=None,
@@ -174,7 +181,7 @@ class BankQuestionIndex(BaseModel):
     is_mandatory: bool
     tier: str                   # core | coverage
     text: str
-    follow_ups: list[str]       # the pre-written elicitation probes
+    follow_ups: list[FollowUpDimension]   # the pre-written probe dimensions
 
 
 class BrainSessionContext(BaseModel):
@@ -205,10 +212,10 @@ class ActiveQuestionRubric(BaseModel):
     positive_evidence: list[str]
     red_flags: list[str]
     evaluation_hint: str
-    follow_ups: list[str]
-    probes_used: list[int] = Field(
+    follow_ups: list[FollowUpDimension]
+    fired_dimensions: list[str] = Field(
         default_factory=list,
-        description="follow_up indices already fired on this thread — so the brain doesn't repeat a probe.",
+        description="dimension slugs already fired on this thread — fire-once + cap input.",
     )
 
 
@@ -392,12 +399,11 @@ class BrainDecision(BaseModel):
             "produced when the resolver found no remaining question."
         ),
     )
-    probe_index: int | None = Field(
+    probe_dimension: str | None = Field(
         default=None,
         description=(
-            "When directive.act == probe: the bank follow_up TEMPLATE index the brain adapted "
-            "(coerced to a valid, unused index). The SessionDriver records it in probes_used so "
-            "the same template area is not re-probed and exhaustion is detectable. None for "
-            "non-probe acts (and when no template backed a freshly-composed probe)."
+            "When directive.act == probe: the coerced dimension slug the brain served "
+            "(valid + unfired). The SessionDriver appends it to the thread's fired_dimensions "
+            "ledger. None for non-probe acts."
         ),
     )
