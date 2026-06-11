@@ -261,6 +261,7 @@ def _create_question_iterable(**kwargs):
         messages=kwargs["messages"],
         max_retries=1,
         metadata=kwargs.get("metadata", {}),
+        prompt_cache_key=f"qbank-gen-{kwargs['job_id']}",
     )
     if ai_config.question_bank_effort:
         call_kwargs["reasoning_effort"] = ai_config.question_bank_effort
@@ -394,7 +395,7 @@ async def _stream_bank_questions(
         )
         try:
             async for q in _create_question_iterable(
-                messages=messages, metadata=metadata,
+                messages=messages, metadata=metadata, job_id=str(job_id),
             ):
                 if len(persisted) >= ai_config.question_bank_max_questions:
                     logger.warning(
