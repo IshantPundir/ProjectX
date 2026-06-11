@@ -25,6 +25,17 @@ export type QuestionKind =
 
 export type QuestionDifficulty = 'easy' | 'medium' | 'hard'
 
+/**
+ * A governed follow-up probe dimension. Banks generated before the
+ * dimensions migration (backfilled) may carry an empty `listen_for`.
+ */
+export type FollowUpDimension = {
+  dimension: string
+  intent: string
+  seed_probe: string
+  listen_for: string[]
+}
+
 export type QuestionResponse = {
   id: string
   bank_id: string
@@ -34,7 +45,7 @@ export type QuestionResponse = {
   signal_values: string[]
   estimated_minutes: number
   is_mandatory: boolean
-  follow_ups: string[]
+  follow_ups: FollowUpDimension[]
   positive_evidence: string[]
   red_flags: string[]
   rubric: QuestionRubric
@@ -86,7 +97,7 @@ export type CreateQuestionBody = {
   signal_values: string[]
   estimated_minutes: number
   is_mandatory?: boolean
-  follow_ups?: string[]
+  follow_ups?: FollowUpDimension[]
   positive_evidence?: string[]
   red_flags?: string[]
   rubric: QuestionRubric
@@ -99,7 +110,7 @@ export type UpdateQuestionBody = Partial<{
   signal_values: string[]
   estimated_minutes: number
   is_mandatory: boolean
-  follow_ups: string[]
+  follow_ups: FollowUpDimension[]
   positive_evidence: string[]
   red_flags: string[]
   rubric: QuestionRubric

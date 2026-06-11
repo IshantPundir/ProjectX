@@ -18,7 +18,14 @@ function makeQuestion(
     signal_values: ['Incident response'],
     estimated_minutes: 5,
     is_mandatory: false,
-    follow_ups: ['What tools did you use?'],
+    follow_ups: [
+      {
+        dimension: 'tools_used',
+        intent: 'which incident tooling they used',
+        seed_probe: 'What tools did you use?',
+        listen_for: ['names specific tools'],
+      },
+    ],
     positive_evidence: [
       'Names specific tools',
       'Describes hypothesis-verify',

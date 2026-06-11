@@ -1129,7 +1129,7 @@ function QBDetail({
                   className="text-[13px] italic"
                   style={{ color: 'var(--px-fg-2)', lineHeight: 1.5 }}
                 >
-                  &ldquo;{p}&rdquo;
+                  &ldquo;{p.seed_probe}&rdquo;
                 </span>
               </div>
             ))}
@@ -1509,7 +1509,7 @@ function QBInterviewer({
                   className="text-[12px] italic"
                   style={{ color: 'var(--px-fg-2)' }}
                 >
-                  &ldquo;{p}&rdquo;
+                  &ldquo;{p.seed_probe}&rdquo;
                 </div>
               ))}
             </div>

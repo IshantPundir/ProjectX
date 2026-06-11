@@ -88,7 +88,7 @@ export function QuestionRubricExpanded({ question }: Props) {
                 >
                   →
                 </span>
-                {item}
+                {item.seed_probe}
               </li>
             ))}
           </ul>

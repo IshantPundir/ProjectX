@@ -13,7 +13,18 @@ const schema = z.object({
   signal_values: z.array(z.string()).min(1).max(3),
   estimated_minutes: z.number().gt(0).lte(15),
   is_mandatory: z.boolean(),
-  follow_ups: z.array(z.string()).max(3),
+  // Custom questions have no follow-up editor yet, so this stays empty; the
+  // object shape matches FollowUpDimension (CreateQuestionBody.follow_ups).
+  follow_ups: z
+    .array(
+      z.object({
+        dimension: z.string().min(1),
+        intent: z.string().min(1),
+        seed_probe: z.string().min(1),
+        listen_for: z.array(z.string()),
+      }),
+    )
+    .max(3),
   positive_evidence: z.array(z.string()).max(5),
   red_flags: z.array(z.string()).max(3),
   rubric: z.object({
