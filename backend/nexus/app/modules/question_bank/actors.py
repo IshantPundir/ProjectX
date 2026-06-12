@@ -52,6 +52,7 @@ from app.modules.question_bank.service import (
     replace_question_in_place,
     transition_to_failed,
     transition_to_generating,
+    transition_to_self_reviewing,
     transition_to_reviewing_after_critic,
     validate_streamed_question,
     wipe_ai_questions,
@@ -60,10 +61,7 @@ from app.modules.question_bank.context import (
     QuestionContext,
     build_question_context,
 )
-from app.modules.question_bank.state_machine import (
-    auto_revert_on_edit,
-    transition_to_self_reviewing,
-)
+from app.modules.question_bank.state_machine import auto_revert_on_edit
 
 logger = structlog.get_logger()
 _tracer = trace.get_tracer("nexus.ai.openai")
