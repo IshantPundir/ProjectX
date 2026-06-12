@@ -106,6 +106,14 @@ async def run_bank_critic(
         "job_posting_id": str(job_id),
         "prompt_version": ai_config.question_bank_prompt_version,
     }
+    logger.info(
+        "question_bank.critic.start",
+        bank_id=str(bank_id),
+        model=ai_config.question_bank_critic_model,
+        reasoning_effort=ai_config.question_bank_critic_effort,
+        system_prompt_chars=len(system_prompt),
+        user_message_chars=len(user_message),
+    )
     started_at = time.monotonic()
     with _tracer.start_as_current_span("openai.chat.completions.create"):
         set_llm_span_attributes(

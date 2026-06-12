@@ -40,6 +40,27 @@ async def test_run_bank_critic_returns_corrected_bank(monkeypatch):
     assert out[0].question_kind == "project_deepdive"
 
 
+async def test_run_bank_critic_repacks_positions(monkeypatch):
+    q_a = _q(text="First question here.", kind="behavioral")
+    q_a.position = 7  # scrambled / gapped on the way back from the critic
+    q_b = _q(text="Second question here.", kind="project_deepdive")
+    q_b.position = 2
+    corrected = BankCritiqueOutput(critique="reordered the bank", questions=[q_a, q_b])
+
+    async def fake_completion(**kwargs):
+        return corrected
+
+    monkeypatch.setattr(critic_mod, "_create_critic_completion", fake_completion)
+
+    out, _log = await critic_mod.run_bank_critic(
+        draft=[_q()],
+        seniority="senior", role_title="Staff Engineer", signals=[],
+        stage_difficulty="hard", stage_duration=20,
+        bank_id=uuid.uuid4(), tenant_id=uuid.uuid4(), job_id=uuid.uuid4(),
+    )
+    assert [q.position for q in out] == [0, 1]
+
+
 async def test_run_bank_critic_raises_on_llm_failure(monkeypatch):
     async def boom(**kwargs):
         raise RuntimeError("api down")
