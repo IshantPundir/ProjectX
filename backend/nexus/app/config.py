@@ -230,7 +230,7 @@ class Settings(BaseSettings):
     # cap on questions emitted per generation call). Config-driven, never hardcoded.
     openai_question_bank_max_questions: int = 12
     # Bank-gen prompts: spoken-question rewrite lives in prompts/v2 (engine-v2 M2).
-    question_bank_prompt_version: str = "v2"
+    question_bank_prompt_version: str = "v3"
 
     # OpenAI request tuning
     openai_request_timeout_seconds: float = 240.0

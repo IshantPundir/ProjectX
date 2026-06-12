@@ -1,0 +1,76 @@
+## AI Screening — the full bank in one pass
+
+This is the AI Screening stage: a structured, AI-led voice interview that replaces the
+recruiter phone screen. You author the COMPLETE bank for this stage in a single pass —
+the claim-verification layer AND the depth layer together. The interviewer asks your
+questions roughly in order, adapting as the candidate answers.
+
+You may emit all five `question_kind`s here: `experience_check`, `behavioral`,
+`compliance_binary`, `technical_scenario`, and `project_deepdive`. Use each for its
+purpose (see the taxonomy in the common header). The challenge of a single pass is
+BALANCE — do not let depth probes crowd out claim-verification, and do not let
+claim-checks crowd out real depth. Follow the recipe below.
+
+# Authoring recipe — build the bank in this order
+
+Work through these in sequence; it produces a bank that verifies eligibility first, then
+probes mastery, and never wastes the budget.
+
+1. KNOCKOUT VERIFICATION (mandatory). For each knockout signal in scope, author exactly
+   one question that verifies it by the candidate's own spoken account — an
+   `experience_check` for an experience/skill claim ("How long have you worked hands-on
+   with X in production?"), or a `compliance_binary` for a hard yes/no eligibility gate.
+   These are `is_mandatory: true`. They are usually `easy` to answer even though they
+   gate the role. Give each sharp bluff-catching follow-ups — a real practitioner names
+   specifics a bluffer can't.
+
+2. BEHAVIORAL STAR (do not skip). For each behavioral-TYPE required signal — collaboration,
+   documentation, mentoring/technical guidance, communication, ownership — author at least
+   one true STAR `behavioral` question about a SPECIFIC past event ("Tell me about a
+   time…", "Describe a situation where…"). Probe for "I", not "we". These are easy/medium.
+   Do not let the technical scenarios below crowd these out: if the role's signals include
+   behavioral-type signals, behavioral STAR questions MUST appear in the bank.
+
+2.5 PROJECT DEEP-DIVE (senior/experienced roles — REQUIRED, exactly one). Author one
+    `project_deepdive` whose lead invites the candidate to pick a real project they
+    personally drove, with an escalating ladder (decision ownership → chose-it-over-what
+    → what broke → what they'd change). For junior/entry roles, SKIP this step. This is
+    the highest-validity item in the bank — do not let technical scenarios crowd it out.
+
+3. TECHNICAL DEPTH. For the highest-weight COMPETENCY signals, author `technical_scenario`
+   questions that make the candidate reason aloud — design, debug, or trade something off
+   drawn from the JD's signals. This is where a candidate who passed the claim-checks
+   proves they can actually defend the skill: a question an unqualified candidate cannot
+   fake by reciting buzzwords. Skew `medium`/`hard`. Spend this budget weight-first — a
+   weight-3 competency before a weight-2, and never a preferred signal while a required one
+   of equal-or-higher weight is unprobed.
+
+4. STOP when the high-weight required signals are covered. Signal density over count — a
+   tight bank of sharp questions beats a long one. Cover preferred/low-weight signals only
+   if the budget genuinely allows after the required ones, and only where they fit a spoken
+   screen.
+
+# Within-bank distinctness (across the whole pass)
+
+Every follow-up `dimension` across ALL questions in this bank must be distinct in MEANING,
+not just in slug (see the common header). Because you author the whole bank at once, you
+can see every dimension you've already used — before adding a follow-up, confirm no earlier
+question already covers its angle.
+
+Watch the cross-cutting operational concerns hardest (error/failure handling, retries,
+observability/monitoring, rollback/recovery, idempotency, security, validation): each is a
+natural sub-facet of every technical scenario, so it is the easiest thing to accidentally
+re-probe on two or three questions. Per the common header, each such concern is a
+BANK-LEVEL SINGLETON — probe it on exactly ONE question and make every other technical
+question's follow-ups target a DIFFERENT competency (the lead's specific mechanics, a
+distinct design tradeoff, the data/contract shape). If a dedicated reliability /
+troubleshooting question exists, no other question carries a failure-handling follow-up.
+
+# Discipline
+
+  - Ground every question in the JD and the pinned snapshot signals — never invent tools,
+    platforms, or technologies the JD does not mention.
+  - Each lead is ONE self-contained spoken ask; the depth ladders into follow-ups. The
+    technical depth probe is where the multi-part written-exam regression is most tempting —
+    keep the lead a single clean opening and move the rest into follow-ups.
+  - Run the common header's pre-emit check on every question before you ship it.

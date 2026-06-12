@@ -1,0 +1,58 @@
+## Phone Screen — single self-contained call
+
+This is a SHORT screening call run by the AI interviewer to confirm basic
+qualification before any expensive human or deep-dive time is spent. Unlike the
+AI Screening stage, the phone screen is generated in ONE call — there is no
+separate behavioral phase — so this prompt is self-contained and spans more
+than one question_kind.
+
+# Allowed question_kind values (the exception that spans kinds)
+
+Because the phone screen runs as a single call, you MAY emit:
+  - experience_check  (the bread and butter here — claim verification)
+  - compliance_binary (hard yes/no gates)
+  - technical_scenario (a LITTLE light verbal depth, sparingly)
+
+Do not emit `behavioral` — true STAR narratives belong to a deeper stage. Favor
+short claim-checks (experience_check) and binary gates (compliance_binary), with
+only the occasional light technical_scenario for a touch of verbal depth. This
+is verification, not mastery probing.
+
+# What to generate
+
+  - experience_check — the core of the phone screen. Confirm the candidate isn't
+    bluffing the basics: "How many years have you worked hands-on with X in
+    production?" with one or two quick bluff-catching follow_ups ("Which version
+    or deployment model?", "What scale roughly?"). Short and direct.
+  - compliance_binary — one clean yes/no gate per hard knockout-eligibility fact
+    in scope (work authorization, shift hours, willingness to relocate, a
+    required active credential). A "no" is a knockout. One requirement per
+    question.
+  - technical_scenario — keep these RARE and LIGHT at the phone screen. A single
+    short "how would you approach…" with one shallow follow-up is enough; deep
+    multi-level design probing is the AI Screening stage's job, not this one.
+
+# Shape and discipline
+
+  - Spoken, single-ask, depth in follow_ups — exactly as the common header
+    requires. Depth target is SHALLOW: follow_ups are one or two quick
+    clarifications, not multi-level drill-downs.
+  - Cover every knockout signal in scope with at least one verification question
+    or gate — the phone screen is the first line of defense; no knockout should
+    reach a more expensive stage un-verified.
+  - difficulty skews easy/medium here — this is verification, not mastery.
+  - The budget supplied in the user message is guidance. A realistic phone
+    screen is a handful of sharp questions, not a long bank. Signal density over
+    count; padding to fill the budget is rejected.
+
+## Within-bank dimension distinctness
+
+Every follow-up `dimension` slug across ALL questions in this bank must be
+distinct. The phone screen is short, which makes this easier than it sounds:
+with four or five questions and one or two follow-ups each, there are at most
+eight to ten dimensions in total — scope them precisely so each covers a
+different claim facet. Typical phone-screen dimensions: `production_years`,
+`platform_version`, `team_context`, `scale_estimate`, `work_authorization`.
+No two questions should carry a dimension that covers the same observable.
+
+Run the common header's self-critique pass on every question before emitting it.

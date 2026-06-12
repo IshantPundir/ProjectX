@@ -1,0 +1,80 @@
+## Single-question regeneration
+
+You are replacing ONE question in an existing stage's bank. The common header applies in
+full — every spoken constraint, signal-binding rule, follow-up governance rule, and
+evaluator-only field rule is active here. Read them before writing.
+
+The user message supplies:
+  - Full job context, signal snapshot, and stage metadata.
+  - The CURRENT question being replaced (its text, signals, rubric, estimated_minutes).
+  - TARGET SIGNALS: the signals the replacement must probe. When `replace_signal_values` is
+    provided, probe those instead of the current question's signals.
+  - OTHER QUESTIONS IN THE BANK — every other question in this stage, with their
+    follow-up dimensions. Your replacement must not duplicate them semantically.
+
+# Your task
+
+Produce exactly ONE `GeneratedQuestion` that:
+
+1. Probes the TARGET SIGNALS from a genuinely DIFFERENT angle than the current question —
+   a different cognitive path, not a minor rewording. If the original asks for production
+   experience, probe depth instead; if the original probes design decisions, probe failure
+   handling instead.
+
+2. Takes roughly the same `estimated_minutes` as the question it replaces.
+
+3. Respects this stage's depth target (shallower for a phone screen, deeper for AI
+   screening).
+
+# Spoken constraints (see common header — all apply here)
+
+The replacement is read ALOUD to the candidate, who hears it ONCE. It must:
+  - Be ONE self-contained spoken ask (no "and… and…", no multi-part written-exam question).
+  - Carry its scenario inline if it needs one — no bare "which would you pick?" with no
+    context. The engine reads `text` verbatim; missing context wastes the candidate's first
+    turn on a clarification.
+  - Be ≤240 chars, conversational, numbers spelled in words.
+
+# Signal binding (see common header)
+
+  - Copy `signal_values` VERBATIM from the snapshot. Do not paraphrase or abbreviate.
+  - Set `primary_signal` to exactly one of the strings in `signal_values`.
+  - If the target signal is a one-of / "or" requirement, ask option-agnostically and credit
+    ANY valid option in rubric and evidence.
+
+# Follow-up distinctness — the critical constraint for regeneration
+
+The bank already has follow-up dimensions from the OTHER questions. Your replacement MUST
+NOT reuse any dimension slug OR probe the same underlying angle as any existing dimension,
+even under a different name. Check every dimension in the "OTHER QUESTIONS" section before
+adding a follow-up. Depth that would duplicate an existing dimension belongs in a
+semantically different angle of the same topic, not a renamed repeat.
+
+  - Each follow-up has all four fields: `dimension`, `intent`, `seed_probe`, `listen_for`.
+  - `listen_for` must be NON-EMPTY: 1–4 concrete observables (real tool names, steps,
+    numbers, decision criteria) a strong answer actually names.
+
+# Other rules
+
+  - `is_mandatory`: true ONLY if a TARGET SIGNAL is a knockout signal. Otherwise false.
+  - `question_kind`: preserve the original question's kind unless `replace_signal_values`
+    is provided AND the new signal class materially changes the question's shape.
+  - `difficulty`: easy / medium / hard — how hard it is to give a STRONG answer, calibrated
+    to the stage difficulty and signal weight. Not the signal's importance.
+  - Evaluator-only fields (`rubric`, `positive_evidence`, `red_flags`, `evaluation_hint`)
+    describe what a good / acceptable / weak SPOKEN answer sounds like — not a written essay.
+
+# Before emitting
+
+Check: ONE self-contained spoken ask? `primary_signal` ∈ `signal_values`, both verbatim?
+Every follow-up has a concrete non-empty `listen_for`? No dimension duplicates any existing
+bank dimension in slug OR meaning? `is_mandatory` true only for a knockout? Rubric describes
+a spoken answer and credits any valid one-of option?
+
+# Output
+
+Return a `SingleQuestionOutput` with:
+  - `question` — the new `GeneratedQuestion`.
+  - `reasoning` — one to three sentences on how this question probes the target signal at a
+    different angle from the others already in the bank, and why no follow-up dimension
+    collides with the existing ones.
