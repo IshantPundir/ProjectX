@@ -24,7 +24,7 @@ import { getFreshSupabaseToken } from '@/lib/auth/tokens'
 import { stageSupportsQuestionBank } from '@/lib/pipelines/categories'
 import { RefineQuestionDialog } from '@/components/dashboard/question-bank/RefineQuestionDialog'
 import { AddQuestionDialog } from '@/components/dashboard/question-bank/AddQuestionDialog'
-import type { BankResponse, QuestionResponse } from '@/lib/api/question-banks'
+import type { BankResponse, QuestionResponse, QuestionKind } from '@/lib/api/question-banks'
 import type { PipelineStageResponse, StageType } from '@/lib/api/pipelines'
 
 gsap.registerPlugin(useGSAP, ScrollTrigger)
@@ -94,6 +94,14 @@ const STAGE_TYPE_LABEL: Record<StageType, string> = {
   human_interview: 'human interview',
   debrief: 'debrief',
   take_home: 'take home',
+}
+
+const QUESTION_KIND_LABEL: Record<QuestionKind, string> = {
+  experience_check: 'Experience check',
+  behavioral: 'Behavioral',
+  technical_scenario: 'Technical scenario',
+  compliance_binary: 'Compliance',
+  project_deepdive: 'Project deep-dive',
 }
 
 type Mode = 'review' | 'interviewer'
@@ -309,6 +317,15 @@ function StagePill({
             aria-label="Generating"
           >
             <span className="qb-pill-pulse">•••</span>
+          </span>
+        )}
+        {bank?.status === 'self_reviewing' && (
+          <span
+            className="text-[9.5px] inline-flex items-center gap-0.5"
+            style={{ color: 'var(--px-accent)' }}
+            aria-label="AI self-reviewing"
+          >
+            <span className="qb-pill-pulse">🤖</span>
           </span>
         )}
         {bank?.status === 'reviewing' && (
@@ -1038,6 +1055,18 @@ function QBDetail({
                 {s}
               </span>
             ))}
+            {q.question_kind && QUESTION_KIND_LABEL[q.question_kind as QuestionKind] && (
+              <span
+                className="rounded-full border px-2 py-0.5 text-[10.5px] font-medium"
+                style={{
+                  background: 'var(--px-accent-tint)',
+                  color: 'var(--px-accent)',
+                  borderColor: 'var(--px-accent-line)',
+                }}
+              >
+                {QUESTION_KIND_LABEL[q.question_kind as QuestionKind]}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -1608,6 +1637,7 @@ function EmptyBankState({
   const generateMutation = useGenerateStageQuestions(jobId, stage.id)
   const isGenerating =
     bank?.status === 'generating' || generateMutation.isPending
+  const isSelfReviewing = bank?.status === 'self_reviewing'
   return (
     <div
       className="rounded-[10px] border p-10 text-center"
@@ -1626,11 +1656,17 @@ function EmptyBankState({
         className="mx-auto mb-6 max-w-lg text-sm"
         style={{ color: 'var(--px-fg-3)' }}
       >
-        {isGenerating
-          ? "Copilot is drafting questions scoped to this stage's signals."
-          : 'Generate a question bank for this stage. Copilot will draft questions scoped to this stage’s signals.'}
+        {isSelfReviewing
+          ? "AI is reviewing and refining the generated questions."
+          : isGenerating
+          ? "Copilot is drafting questions scoped to this stage’s signals."
+          : "Generate a question bank for this stage. Copilot will draft questions scoped to this stage's signals."}
       </p>
-      {isGenerating ? (
+      {isSelfReviewing ? (
+        <div className="text-sm inline-flex items-center gap-1.5" style={{ color: "var(--px-accent)" }}>
+          <SparkIcon size={12} /> AI is self-reviewing the bank...
+        </div>
+      ) : isGenerating ? (
         <div className="text-sm" style={{ color: 'var(--px-accent)' }}>
           <SparkIcon size={12} /> Generating…
         </div>

@@ -5,6 +5,7 @@ import { apiFetch } from '@/lib/api/client'
 export type BankStatus =
   | 'draft'
   | 'generating'
+  | 'self_reviewing'
   | 'reviewing'
   | 'confirmed'
   | 'failed'
@@ -22,6 +23,7 @@ export type QuestionKind =
   | 'behavioral'
   | 'technical_scenario'
   | 'compliance_binary'
+  | 'project_deepdive'
 
 export type QuestionDifficulty = 'easy' | 'medium' | 'hard'
 

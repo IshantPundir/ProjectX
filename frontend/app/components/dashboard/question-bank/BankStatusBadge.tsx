@@ -11,6 +11,7 @@ type Props = {
 const STATUS_STYLES: Record<BankStatus, { bg: string; text: string; label: string }> = {
   draft: { bg: 'bg-zinc-100', text: 'text-zinc-600', label: 'DRAFT' },
   generating: { bg: 'bg-blue-50', text: 'text-blue-700', label: 'GENERATING' },
+  self_reviewing: { bg: 'bg-violet-50', text: 'text-violet-700', label: 'SELF-REVIEW' },
   reviewing: { bg: 'bg-amber-50', text: 'text-amber-700', label: 'REVIEWING' },
   confirmed: { bg: 'bg-emerald-50', text: 'text-emerald-700', label: 'CONFIRMED' },
   failed: { bg: 'bg-red-50', text: 'text-red-700', label: 'FAILED' },
@@ -22,6 +23,7 @@ export function BankStatusBadge({ status, small }: Props) {
 
   const Icon =
     status === 'generating' ? Loader2 :
+    status === 'self_reviewing' ? Loader2 :
     status === 'confirmed' ? Lock :
     status === 'failed' ? AlertCircle :
     status === 'reviewing' ? Clock :
@@ -32,7 +34,7 @@ export function BankStatusBadge({ status, small }: Props) {
       className={`inline-flex items-center gap-1 rounded-full font-semibold ${sizeClass} ${style.bg} ${style.text}`}
     >
       <Icon
-        className={`${small ? 'w-2.5 h-2.5' : 'w-3 h-3'} ${status === 'generating' ? 'animate-spin' : ''}`}
+        className={`${small ? 'w-2.5 h-2.5' : 'w-3 h-3'} ${status === 'generating' || status === 'self_reviewing' ? 'animate-spin' : ''}`}
         aria-hidden="true"
       />
       {style.label}

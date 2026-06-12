@@ -5,23 +5,29 @@ import { BankStatusBadge } from '@/components/dashboard/question-bank/BankStatus
 import type { BankStatus } from '@/lib/api/question-banks'
 
 describe('BankStatusBadge', () => {
-  const statuses: BankStatus[] = [
-    'draft',
-    'generating',
-    'reviewing',
-    'confirmed',
-    'failed',
+  const statuses: { status: BankStatus; label: string }[] = [
+    { status: 'draft', label: 'DRAFT' },
+    { status: 'generating', label: 'GENERATING' },
+    { status: 'self_reviewing', label: 'SELF-REVIEW' },
+    { status: 'reviewing', label: 'REVIEWING' },
+    { status: 'confirmed', label: 'CONFIRMED' },
+    { status: 'failed', label: 'FAILED' },
   ]
 
-  statuses.forEach((status) => {
+  statuses.forEach(({ status, label }) => {
     it(`renders ${status} with correct label`, () => {
       const { getByText } = render(<BankStatusBadge status={status} />)
-      expect(getByText(status.toUpperCase())).toBeInTheDocument()
+      expect(getByText(label)).toBeInTheDocument()
     })
   })
 
   it('renders generating with an animated spinner', () => {
     const { container } = render(<BankStatusBadge status="generating" />)
+    expect(container.querySelector('.animate-spin')).not.toBeNull()
+  })
+
+  it('renders self_reviewing with an animated spinner', () => {
+    const { container } = render(<BankStatusBadge status="self_reviewing" />)
     expect(container.querySelector('.animate-spin')).not.toBeNull()
   })
 

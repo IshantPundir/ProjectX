@@ -404,11 +404,12 @@ function StagePickerForRole({
 function BankStatusPill({
   status,
 }: {
-  status: 'draft' | 'generating' | 'reviewing' | 'confirmed' | 'failed' | null
+  status: 'draft' | 'generating' | 'self_reviewing' | 'reviewing' | 'confirmed' | 'failed' | null
 }) {
   const map = {
     draft: { label: 'No bank', color: 'var(--px-fg-4)' },
     generating: { label: 'Generating…', color: 'var(--px-caution)' },
+    self_reviewing: { label: 'Self-review…', color: 'var(--px-accent)' },
     reviewing: { label: 'Review', color: 'var(--px-accent)' },
     confirmed: { label: 'Confirmed', color: 'var(--px-ok)' },
     failed: { label: 'Failed', color: 'var(--px-danger)' },
