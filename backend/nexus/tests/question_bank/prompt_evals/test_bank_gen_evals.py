@@ -492,12 +492,13 @@ CASES: list[BankGenCase] = [
 # Map case id → case for lookup
 _CASE_BY_ID: dict[str, BankGenCase] = {c.id: c for c in CASES}
 
-# The four valid question_kind values (schema matches GeneratedQuestion.question_kind)
+# The five valid question_kind values (schema matches GeneratedQuestion.question_kind)
 _VALID_QUESTION_KINDS = {
     "experience_check",
     "behavioral",
     "technical_scenario",
     "compliance_binary",
+    "project_deepdive",
 }
 
 
@@ -928,4 +929,46 @@ async def test_one_call_emits_a_star_question_for_behavioral_signals() -> None:
     assert "behavioral" in kinds, (
         "one-call generation produced no true STAR `behavioral` question despite "
         f"behavioral-type signals being present; kinds={kinds}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 9 — senior/staff/principal/executive banks contain exactly one project_deepdive
+# ---------------------------------------------------------------------------
+
+_SENIOR_CASES = [c for c in CASES if c.seniority in
+                 ("senior", "staff", "principal", "executive")]
+
+
+@pytest.mark.parametrize("case", _SENIOR_CASES, ids=[c.id for c in _SENIOR_CASES])
+async def test_senior_bank_contains_a_project_deepdive(case: BankGenCase) -> None:
+    """Senior/experienced banks must contain exactly one project_deepdive (the spine)."""
+    questions = await _generate(case)
+    kinds = [q.question_kind for q in questions]
+    deepdives = kinds.count("project_deepdive")
+    assert deepdives == 1, (
+        f"[{case.id}] senior bank should contain exactly one project_deepdive; "
+        f"found {deepdives}. kinds={kinds}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 10 — seed probes demand a falsifiable specific, never generic elaboration
+# ---------------------------------------------------------------------------
+
+_VAGUE_PROBE_PHRASES = ("tell me more", "can you elaborate", "go deeper", "explain more")
+
+
+@pytest.mark.parametrize("case", _SENIOR_CASES, ids=[c.id for c in _SENIOR_CASES])
+async def test_seed_probes_demand_specifics_not_open_elaboration(case: BankGenCase) -> None:
+    """Every seed_probe must demand a falsifiable specific, never generic elaboration."""
+    questions = await _generate(case)
+    violations = [
+        fu.seed_probe
+        for q in questions for fu in q.follow_ups
+        if any(p in fu.seed_probe.lower() for p in _VAGUE_PROBE_PHRASES)
+    ]
+    assert not violations, (
+        f"[{case.id}] generic 'tell me more'-style probes (must demand a specific): "
+        f"{violations}"
     )
