@@ -61,6 +61,7 @@ from app.modules.question_bank.context import (
     QuestionContext,
     build_question_context,
 )
+from app.modules.question_bank.critic import run_bank_critic
 from app.modules.question_bank.state_machine import auto_revert_on_edit
 
 logger = structlog.get_logger()
@@ -501,16 +502,25 @@ async def _generate_one_bank(
     contract: `_run_stage_generation` inspects the terminal state and tests assert
     specific exception types propagate).
 
-    Three phases:
+    Phases:
       A (short session) — load rows, resolve the single prompt name, capture
         primitives, wipe ALL AI questions for a clean regenerate, ensure 'generating',
         commit, close.
       B (no held session) — ONE streamed generation call emits all question kinds in a
         single pass. Each question persists+publishes in its own short session inside
         `_stream_bank_questions`.
-      C (short session) — reconcile: mandatory auto-correction in position order,
-        re-pack positions, soft over-budget warning, keyterm extraction, stamp
-        generation-time metadata, transition to 'reviewing', commit.
+      B2 (short session) — commit `generating → self_reviewing` as its OWN durable phase
+        and publish BANK_STATUS_CHANGED so the SSE fast path shows the self-review
+        animation. B2 (not Phase C) owns the `→ self_reviewing` transition.
+      B3 (no held session across the LLM call) — the bank self-critic: load the draft,
+        call `run_bank_critic`, and replace the AI questions with the corrected set. On
+        critic FAILURE the streamed draft is kept and a skip marker is recorded into the
+        critique note (`critique_note`) — the failure is logged, NEVER silently
+        swallowed, and generation still proceeds to 'reviewing'.
+      C (short session) — reconcile on the now-final questions: mandatory auto-correction
+        in position order, re-pack positions, soft over-budget warning, keyterm
+        extraction, write the critique log to `coverage_notes`, stamp generation-time
+        metadata, transition `self_reviewing → reviewing`, commit.
     """
     # ---- Phase A: load + capture primitives + wipe (short session) ----
     async with get_bypass_session() as db:
@@ -561,6 +571,7 @@ async def _generate_one_bank(
         stage_id = stage.id
         snapshot_id = snapshot.id
         stage_duration = stage.duration_minutes
+        stage_difficulty = stage.difficulty
         snapshot_signals = list(snapshot.signals)
         pipeline_version = instance.pipeline_version
         stage_config_snapshot = {
@@ -590,6 +601,104 @@ async def _generate_one_bank(
             start_position=0,
             correlation_id=correlation_id,
         )
+
+        # ---- Phase B2: enter self-review (durable status drives the UI animation) ----
+        async with get_bypass_session() as db:
+            await db.execute(text(f"SET LOCAL app.current_tenant = '{tenant_id}'"))
+            bank = (
+                await db.execute(
+                    select(StageQuestionBank).where(StageQuestionBank.id == bank_id)
+                )
+            ).scalar_one()
+            transition_to_self_reviewing(bank)
+            await db.commit()
+        # Publish the transition so the SSE fast path shows "AI is self-reviewing…".
+        await pubsub.publish(
+            pubsub.job_channel(job_id),
+            pubsub.Events.BANK_STATUS_CHANGED,
+            {
+                "job_id": str(job_id),
+                "bank_id": str(bank_id),
+                "stage_id": str(stage_id),
+                "new_status": "self_reviewing",
+                "source": "actor",
+            },
+            correlation_id=correlation_id or f"actor-critic-{bank_id}",
+        )
+
+        # ---- Phase B3: critic — audit + correct the draft (no held session) ----
+        async with get_bypass_session() as rdb:
+            await rdb.execute(text(f"SET LOCAL app.current_tenant = '{tenant_id}'"))
+            draft_rows = await get_bank_questions(rdb, bank_id)
+            job_row = (
+                await rdb.execute(select(JobPosting).where(JobPosting.id == job_id))
+            ).scalar_one()
+            snapshot_row = (
+                await rdb.execute(
+                    select(JobPostingSignalSnapshot).where(
+                        JobPostingSignalSnapshot.id == snapshot_id
+                    )
+                )
+            ).scalar_one()
+            role_title = job_row.title
+            seniority = snapshot_row.seniority_level
+            from app.modules.question_bank.schemas import QuestionRubric
+            draft_questions = [
+                GeneratedQuestion(
+                    position=r.position, text=r.text, primary_signal=r.primary_signal,
+                    signal_values=list(r.signal_values), estimated_minutes=r.estimated_minutes,
+                    is_mandatory=r.is_mandatory, follow_ups=list(r.follow_ups),
+                    positive_evidence=list(r.positive_evidence), red_flags=list(r.red_flags),
+                    rubric=QuestionRubric(**r.rubric), evaluation_hint=r.evaluation_hint,
+                    question_kind=r.question_kind, difficulty=r.difficulty,
+                )
+                for r in draft_rows
+            ]
+        # rdb closed — no session held across the critic LLM call.
+
+        critique_note: str
+        try:
+            corrected, critique_note = await run_bank_critic(
+                draft=draft_questions,
+                seniority=seniority,
+                role_title=role_title,
+                signals=snapshot_signals,
+                stage_difficulty=stage_difficulty,
+                stage_duration=stage_duration,
+                bank_id=bank_id,
+                tenant_id=tenant_id,
+                job_id=job_id,
+            )
+            # Replace the draft with the corrected bank.
+            async with get_bypass_session() as wdb:
+                await wdb.execute(text(f"SET LOCAL app.current_tenant = '{tenant_id}'"))
+                wbank = (
+                    await wdb.execute(
+                        select(StageQuestionBank).where(StageQuestionBank.id == bank_id)
+                    )
+                ).scalar_one()
+                await wipe_ai_questions(wdb, bank=wbank)
+                for pos, q in enumerate(corrected):
+                    await persist_one_question(
+                        wdb, bank=wbank, question=q, source="ai_generated",
+                        position=pos, stage_difficulty=stage_difficulty,
+                    )
+                await wdb.commit()
+        except Exception as critic_exc:
+            # FALLBACK (no silent swallow): keep the streamed draft, mark the skip in
+            # coverage_notes (audit trail), still proceed to reviewing.
+            logger.error(
+                "question_bank.critic.skipped",
+                bank_id=str(bank_id),
+                error_type=type(critic_exc).__name__,
+                error_message=str(critic_exc)[:500],
+                correlation_id=correlation_id or f"actor-critic-{bank_id}",
+                exc_info=True,
+            )
+            critique_note = (
+                f"[critic skipped: {type(critic_exc).__name__}] "
+                "draft kept un-critiqued; review manually."
+            )
 
         # ---- Phase C: reconcile + transition (short session) ----
         async with get_bypass_session() as db:
@@ -706,11 +815,11 @@ async def _generate_one_bank(
                     bank_id=str(bank_id),
                 )
 
-            # generating -> self_reviewing -> reviewing. The dedicated self-review
-            # commit + the critic pass are wired in a later task; for now the bank
-            # transitions through self_reviewing in this same reconcile commit so the
-            # state machine's required path is honored.
-            transition_to_self_reviewing(bank)
+            # The bank is ALREADY in 'self_reviewing' (Phase B2 committed that
+            # transition as its own durable phase). Phase C only finalizes:
+            # write the critique log + metadata and transition
+            # self_reviewing -> reviewing.
+            bank.coverage_notes = critique_note
             bank.prompt_version = ai_config.question_bank_prompt_version
             bank.pipeline_version_at_generation = pipeline_version
             bank.stage_config_snapshot = stage_config_snapshot

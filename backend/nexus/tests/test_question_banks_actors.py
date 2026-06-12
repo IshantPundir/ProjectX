@@ -331,6 +331,25 @@ def _patch_stream(monkeypatch, *outputs: list[GeneratedQuestion]):
     return calls
 
 
+def _patch_critic_passthrough(monkeypatch):
+    """Neutralize the bank self-critic (Phase B3) for full-generation tests.
+
+    The critic is a PERMANENT phase of `_generate_one_bank` — it makes a real LLM
+    call. Tests that drive `_generate_one_bank` / `_run_*` end-to-end with a mocked
+    stream must also control the critic seam (just like `_patch_stream` controls the
+    generation seam), or the call hits the live OpenAI API. The default stub here is a
+    pure PASSTHROUGH: it re-loads nothing and returns the draft unchanged + a fixed
+    critique, so existing draft-count/content assertions stay valid.
+    """
+
+    async def _passthrough_critic(*, draft, **_kwargs):
+        return list(draft), "passthrough critic (test stub) — draft accepted as-is."
+
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.run_bank_critic", _passthrough_critic
+    )
+
+
 def _patch_stream_raises(monkeypatch, exc: Exception):
     """Patch `_create_question_iterable` to raise `exc` while iterating."""
 
@@ -365,6 +384,7 @@ async def test_generate_stage_success_writes_questions_and_sets_reviewing(
     await db.flush()
 
     _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
     _patch_stream(monkeypatch, _stream_questions(["Apigee"]))
 
     await _generate_one_bank(
@@ -405,6 +425,7 @@ async def test_generate_stage_skips_hallucinated_signal_value(
     await db.flush()
 
     _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
     # Stream a valid question + a hallucinated one; only the valid one persists.
     _patch_stream(
         monkeypatch,
@@ -443,6 +464,7 @@ async def test_generate_stage_auto_corrects_knockout_without_mandatory(
     await db.flush()
 
     _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
     # LLM forgets to mark mandatory for a knockout signal; post-stream
     # mandatory auto-correction must flip it.
     _patch_stream(
@@ -493,6 +515,7 @@ async def test_generate_stage_skips_signal_outside_include_types(
     await db.flush()
 
     _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
     # One disallowed (behavioral) + one allowed (competency); only the allowed persists.
     _patch_stream(
         monkeypatch,
@@ -555,6 +578,7 @@ async def test_generate_pipeline_sequentially_sees_prior_stages(
     await db.flush()
 
     _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
     calls = _patch_stream(monkeypatch, _stream_questions(["Python"]))
 
     await _generate_one_bank(
@@ -592,6 +616,7 @@ async def test_generate_pipeline_continues_on_stage_failure(db, monkeypatch):
     )
 
     _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
 
     # Stage 1 succeeds
     bank1 = await ensure_bank_exists(db, stage=stage1, job=job)
@@ -837,6 +862,7 @@ async def test_generate_stage_failed_output_retained_on_retry(db, monkeypatch):
     await db.flush()
 
     _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
 
     # First attempt: the stream raises → D7 wipe + transition to failed.
     _patch_stream_raises(monkeypatch, RuntimeError("LLM stream blew up"))
@@ -993,6 +1019,7 @@ async def test_run_stage_generation_returns_reviewing_on_success(db, monkeypatch
     await db.flush()
 
     _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
     _patch_stream(monkeypatch, _stream_questions(["Apigee"]))
 
     result = await _run_stage_generation(
@@ -1028,6 +1055,7 @@ async def test_run_stage_generation_returns_failed_on_stream_error(db, monkeypat
     await db.flush()
 
     _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
     _patch_stream_raises(monkeypatch, RuntimeError("LLM stream blew up"))
 
     result = await _run_stage_generation(
@@ -1075,6 +1103,7 @@ async def test_run_pipeline_generation_publishes_per_stage_and_completion(
     await db.flush()
 
     _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
     _patch_stream(monkeypatch, _stream_questions(["Python"]))
 
     corr_id = "corr-pipeline-happy-path"
@@ -1093,10 +1122,23 @@ async def test_run_pipeline_generation_publishes_per_stage_and_completion(
         for p in capture_publishes
         if p.event == pubsub.Events.PIPELINE_GENERATION_COMPLETE
     ]
+    # Each stage now emits TWO BANK_STATUS_CHANGED events: 'self_reviewing'
+    # (Phase B2 — drives the self-review UI animation) then a terminal
+    # 'reviewing' (the wrapping actor publishes after Phase C commits).
+    self_review_events = [
+        p for p in bank_events if p.payload["new_status"] == "self_reviewing"
+    ]
+    terminal_events = [
+        p for p in bank_events if p.payload["new_status"] != "self_reviewing"
+    ]
 
-    assert len(bank_events) == 2, (
-        f"Expected one BANK_STATUS_CHANGED per stage (2), got {len(bank_events)}: "
-        f"{[(p.event, p.payload) for p in capture_publishes]}"
+    assert len(self_review_events) == 2, (
+        f"Expected one 'self_reviewing' BANK_STATUS_CHANGED per stage (2), got "
+        f"{len(self_review_events)}: {[(p.event, p.payload) for p in capture_publishes]}"
+    )
+    assert len(terminal_events) == 2, (
+        f"Expected one terminal BANK_STATUS_CHANGED per stage (2), got "
+        f"{len(terminal_events)}: {[(p.event, p.payload) for p in capture_publishes]}"
     )
     assert len(completion_events) == 1
     assert all(p.correlation_id == corr_id for p in capture_publishes), (
@@ -1112,9 +1154,15 @@ async def test_run_pipeline_generation_publishes_per_stage_and_completion(
     assert completion_payload["total"] == 2
     assert completion_payload["job_id"] == str(job.id)
     assert completion_payload["source"] == "actor"
-    # Per-stage payloads carry new_status and stage_id
-    for p in bank_events:
+    # Terminal per-stage payloads carry the reviewing status + stage_id
+    for p in terminal_events:
         assert p.payload["new_status"] == "reviewing"
+        assert p.payload["job_id"] == str(job.id)
+        assert "stage_id" in p.payload
+        assert "bank_id" in p.payload
+        assert p.payload["source"] == "actor"
+    # Self-review payloads carry the same identity fields.
+    for p in self_review_events:
         assert p.payload["job_id"] == str(job.id)
         assert "stage_id" in p.payload
         assert "bank_id" in p.payload
@@ -1147,6 +1195,7 @@ async def test_run_pipeline_generation_publishes_failed_status_on_stage_error(
     await db.flush()
 
     _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
 
     # Stage 1 (phone_screen) streams cleanly; stage 2 (ai_screening) raises
     # mid-stream — a genuine generation failure.
@@ -1189,8 +1238,11 @@ async def test_run_pipeline_generation_publishes_failed_status_on_stage_error(
     ]
     statuses = sorted(p.payload["new_status"] for p in bank_events)
 
-    assert statuses == ["failed", "reviewing"], (
-        f"Expected one reviewing + one failed, got {statuses}"
+    # Stage 1 succeeds → emits 'self_reviewing' (Phase B2) then terminal
+    # 'reviewing'. Stage 2 raises mid-stream in Phase B (BEFORE B2), so it
+    # emits only the terminal 'failed' — no 'self_reviewing' for the failed stage.
+    assert statuses == ["failed", "reviewing", "self_reviewing"], (
+        f"Expected stage1 self_reviewing+reviewing and stage2 failed, got {statuses}"
     )
     assert len(completion_events) == 1
     cp = completion_events[0].payload
@@ -1218,6 +1270,7 @@ async def test_run_stage_generation_reraises_when_bank_not_terminal(db, monkeypa
     await db.flush()
 
     _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
     _patch_stream(monkeypatch, _stream_questions(["Apigee"]))
 
     async def _boom(*_args, **_kwargs):
@@ -1457,6 +1510,7 @@ async def test_stream_bank_questions_persists_and_publishes_each(
     await db.flush()
 
     _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
     _patch_stream(monkeypatch, _stream_questions(["Python", "Kafka"]))
 
     persisted = await _stream_bank_questions(
@@ -1502,6 +1556,7 @@ async def test_stream_bank_questions_respects_ceiling(db, monkeypatch):
     await db.flush()
 
     _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
     # Yield twice the ceiling — only ai_config.question_bank_max_questions should persist.
     runaway = _stream_questions(["Python"]) * (ai_config.question_bank_max_questions * 2)
     _patch_stream(monkeypatch, runaway)
@@ -1540,6 +1595,7 @@ async def test_generate_one_bank_single_streamed_call_all_kinds(db, monkeypatch)
     await db.flush()
 
     _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
     # A single streamed pass emits both an experience_check and a technical_scenario.
     streamed = [
         *_stream_questions(
@@ -1746,3 +1802,117 @@ async def test_regenerate_one_question_rejects_primary_signal_not_in_values(
             snapshot=snapshot,
             replace_signal_values=None,
         )
+
+
+# ---------------------------------------------------------------------------
+# Self-review + critic flow (Task 8) — Phase B2 (self_reviewing) + B3 (critic)
+# wired into _generate_one_bank. Two integration tests over the same DB harness:
+#   (a) critic SUCCESS: the corrected set replaces the draft, coverage_notes =
+#       the critique, bank ends 'reviewing'.
+#   (b) critic FAILURE: the streamed draft is preserved, coverage_notes starts
+#       with "[critic skipped:", bank STILL ends 'reviewing' (never stranded in
+#       self_reviewing).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_generate_one_bank_critic_success_replaces_draft(db, monkeypatch):
+    """Critic success path: the corrected bank replaces the streamed draft.
+
+    Stream persists 2 questions; the critic returns a corrected list of 1
+    question (dropping one) + a critique string. Asserts the bank ends
+    'reviewing', coverage_notes == the critique, and only the critic's 1
+    corrected question survives.
+    """
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[_signal(value="Apigee"), _signal(value="Kafka")],
+    )
+    _instance, stage = await _make_pipeline_and_stage(
+        db, job=job, stage_type="ai_screening",
+    )
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    transition_to_generating(bank)
+    await db.flush()
+
+    _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
+    # Stream a 2-question draft.
+    _patch_stream(monkeypatch, _stream_questions(["Apigee", "Kafka"]))
+
+    # Critic corrects to a single question (drops one) + returns a critique.
+    critique = "Dropped the redundant Kafka probe; sharpened the Apigee anchors."
+    corrected = _stream_questions(["Apigee"])
+
+    async def _fake_critic(**_kwargs):
+        return corrected, critique
+
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.run_bank_critic", _fake_critic
+    )
+
+    await _generate_one_bank(
+        bank_id=bank.id,
+        tenant_id=tenant.id,
+        started_by=user.id,
+    )
+
+    assert bank.status == "reviewing"
+    assert bank.coverage_notes == critique
+
+    questions = await get_bank_questions(db, bank.id)
+    assert len(questions) == 1, (
+        f"critic dropped one question — expected 1 survivor, got {len(questions)}"
+    )
+    assert questions[0].signal_values == ["Apigee"]
+
+
+@pytest.mark.asyncio
+async def test_generate_one_bank_critic_failure_keeps_draft(db, monkeypatch):
+    """Critic failure fallback: the streamed draft is preserved, never swallowed.
+
+    The critic raises; _generate_one_bank must keep the draft, mark the skip in
+    coverage_notes, and STILL reach 'reviewing' (never stranded in
+    self_reviewing).
+    """
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[_signal(value="Apigee"), _signal(value="Kafka")],
+    )
+    _instance, stage = await _make_pipeline_and_stage(
+        db, job=job, stage_type="ai_screening",
+    )
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    transition_to_generating(bank)
+    await db.flush()
+
+    _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
+    _patch_stream(monkeypatch, _stream_questions(["Apigee", "Kafka"]))
+
+    async def _boom_critic(**_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.run_bank_critic", _boom_critic
+    )
+
+    await _generate_one_bank(
+        bank_id=bank.id,
+        tenant_id=tenant.id,
+        started_by=user.id,
+    )
+
+    # Never stranded in self_reviewing — generation still finalizes.
+    assert bank.status == "reviewing"
+    assert bank.coverage_notes is not None
+    assert bank.coverage_notes.startswith("[critic skipped:")
+
+    # The streamed draft is preserved un-critiqued (both questions survive).
+    questions = await get_bank_questions(db, bank.id)
+    assert len(questions) == 2, (
+        f"draft must be preserved on critic failure — expected 2, got {len(questions)}"
+    )
+    assert {q.signal_values[0] for q in questions} == {"Apigee", "Kafka"}
