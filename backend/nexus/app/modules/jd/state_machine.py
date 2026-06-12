@@ -25,10 +25,10 @@ LEGAL_TRANSITIONS: Final[dict[str, set[str]]] = {
     "draft": {"signals_extracting"},
     "signals_extracting": {"signals_extracted", "signals_extraction_failed"},
     "signals_extraction_failed": {"signals_extracting"},  # retry
-    "signals_extracted": {"signals_confirmed"},
-    "signals_confirmed": {"signals_extracted", "pipeline_built"},
-    "pipeline_built": {"active"},
-    "active": set(),
+    "signals_extracted": {"signals_confirmed", "signals_extracting"},  # + re-extract
+    "signals_confirmed": {"signals_extracted", "pipeline_built", "signals_extracting"},  # + unlock & re-extract
+    "pipeline_built": {"active", "signals_extracting"},  # + unlock & re-extract
+    "active": {"signals_extracting"},  # + unlock & re-extract
     "archived": set(),
 }
 
