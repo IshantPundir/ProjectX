@@ -49,10 +49,16 @@ probes mastery, and never wastes the budget.
 Every follow-up `dimension` across ALL questions in this bank must be distinct in MEANING,
 not just in slug (see the common header). Because you author the whole bank at once, you
 can see every dimension you've already used — before adding a follow-up, confirm no earlier
-question already covers its angle. Two scenarios often brush adjacent concerns (error
-handling, observability, rollout safety); name each facet precisely and differently
-(`circuit_breaker_design` vs `dead_letter_handling`, not two variants of "handles errors")
-so no two questions probe the same underlying thing.
+question already covers its angle.
+
+Watch the cross-cutting operational concerns hardest (error/failure handling, retries,
+observability/monitoring, rollback/recovery, idempotency, security, validation): each is a
+natural sub-facet of every technical scenario, so it is the easiest thing to accidentally
+re-probe on two or three questions. Per the common header, each such concern is a
+BANK-LEVEL SINGLETON — probe it on exactly ONE question and make every other technical
+question's follow-ups target a DIFFERENT competency (the lead's specific mechanics, a
+distinct design tradeoff, the data/contract shape). If a dedicated reliability /
+troubleshooting question exists, no other question carries a failure-handling follow-up.
 
 # Discipline
 

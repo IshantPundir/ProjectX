@@ -118,6 +118,26 @@ follow-up, check that no earlier question already covers its angle; if a later s
 shares a direction, deepen a genuinely different facet. Each follow-up must also differ
 from its own lead — never a restatement of `text`.
 
+## Cross-cutting operational concerns are bank-level singletons
+
+Some concerns are a natural sub-facet of ALMOST EVERY technical scenario — error and
+failure handling, retries and backoff, observability and monitoring, rollback and
+recovery, idempotency, security, rate limiting, validation. The trap: you attach a "how
+would you handle failure?" probe to question after question, so the candidate recites the
+SAME resilience playbook (retries, validation, fallback, alerting) two or three times.
+That is repetition even though each slug is spelled differently.
+
+Rule: each cross-cutting operational concern is probed AT MOST ONCE across the whole bank.
+Pick the single question where it fits best and probe it THERE only. In particular, if the
+bank already has a dedicated reliability / monitoring / troubleshooting question, NO other
+question may carry a failure-handling, retry, recovery, or error-handling follow-up — that
+ground is already covered; spend those follow-up slots on a genuinely different competency
+the bank has not touched. WHY: the live engine cannot tell two differently-named but
+same-meaning probes apart — it fires both, screens the candidate on the same competency
+twice, and the report double-counts it. Naming "different facets" of the same concern
+(e.g. one question's "retry strategy" and another's "rollback plan") does NOT make them
+distinct — they are the same operational competency and belong on ONE question.
+
 # Evaluator-only fields — describe a SPOKEN answer
 
 `rubric`, `positive_evidence`, `red_flags`, and `evaluation_hint` are read only by the

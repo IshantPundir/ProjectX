@@ -212,8 +212,11 @@ class Settings(BaseSettings):
     openai_extraction_effort: str = "medium"
     openai_reenrichment_model: str = "gpt-5.2"
     openai_reenrichment_effort: str = "medium"
-    openai_question_bank_model: str = "gpt-5"
-    openai_question_bank_effort: str = "medium"
+    openai_question_bank_model: str = "gpt-5.4-mini"
+    # gpt-5.4-mini does NOT accept reasoning_effort on /v1/chat/completions (Responses
+    # API only). Empty string = don't send the param → runs at the model's fast default
+    # (same model the realtime engine uses). This is the latency win.
+    openai_question_bank_effort: str = ""
     # Fast/cheap model for the per-bank STT keyterm extraction LLM call (one
     # call per bank generation; result cached on stage_question_banks.extracted_keyterms).
     # See docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md.
