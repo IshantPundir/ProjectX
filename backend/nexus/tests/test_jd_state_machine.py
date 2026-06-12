@@ -88,3 +88,4 @@ def test_existing_transitions_unchanged():
     assert is_legal_transition("signals_confirmed", "pipeline_built") is True
     assert is_legal_transition("pipeline_built", "active") is True
     assert is_legal_transition("draft", "signals_extracting") is True
+    assert is_legal_transition("signals_confirmed", "signals_extracted") is True

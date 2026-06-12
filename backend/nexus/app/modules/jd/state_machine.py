@@ -5,7 +5,10 @@ in this module — including the Dramatiq actor.
 
 LEGAL_TRANSITIONS is the canonical set. New states (2B's signals_confirmed,
 2C's template_draft etc.) are added here and the corresponding 409 message
-mapping is added in app/main.py's exception handler."""
+mapping is added in app/main.py's exception handler.
+
+Re-extraction edges: signals_extracted / signals_confirmed / pipeline_built /
+active can all transition back to signals_extracting (unlock & re-run)."""
 
 from typing import Final
 from uuid import UUID
