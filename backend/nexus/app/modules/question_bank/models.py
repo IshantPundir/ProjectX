@@ -85,7 +85,7 @@ class StageQuestion(Base):
     __table_args__ = (
         CheckConstraint(
             "question_kind IN ('experience_check', 'behavioral', "
-            "'technical_scenario', 'compliance_binary')",
+            "'technical_scenario', 'compliance_binary', 'project_deepdive')",
             name="stage_questions_question_kind_check",
         ),
         CheckConstraint(
