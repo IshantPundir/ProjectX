@@ -49,3 +49,11 @@ def test_reviewing_after_critic_rejects_wrong_source():
     b = _Bank("generating")
     with pytest.raises(RuntimeError):
         transition_to_reviewing_after_critic(b, user_id=uuid.uuid4())
+
+
+def test_self_reviewing_can_restart_to_generating():
+    # A worker crash after the self_reviewing commit must be recoverable: a retry
+    # re-enters Phase A and transitions self_reviewing -> generating to restart.
+    b = _Bank("self_reviewing")
+    transition_to_generating(b)
+    assert b.status == "generating"

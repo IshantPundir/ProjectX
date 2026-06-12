@@ -39,6 +39,7 @@ from app.modules.audit import log_event
 from app.modules.question_bank.refine import extract_bank_keyterms
 from app.modules.question_bank.schemas import (
     GeneratedQuestion,
+    QuestionRubric,
     SingleQuestionOutput,
 )
 from app.modules.question_bank.errors import (
@@ -623,7 +624,7 @@ async def _generate_one_bank(
                 "new_status": "self_reviewing",
                 "source": "actor",
             },
-            correlation_id=correlation_id or f"actor-critic-{bank_id}",
+            correlation_id=correlation_id or f"actor-stage-{bank_id}",
         )
 
         # ---- Phase B3: critic — audit + correct the draft (no held session) ----
@@ -642,7 +643,6 @@ async def _generate_one_bank(
             ).scalar_one()
             role_title = job_row.title
             seniority = snapshot_row.seniority_level
-            from app.modules.question_bank.schemas import QuestionRubric
             draft_questions = [
                 GeneratedQuestion(
                     position=r.position, text=r.text, primary_signal=r.primary_signal,
@@ -657,6 +657,7 @@ async def _generate_one_bank(
         # rdb closed — no session held across the critic LLM call.
 
         critique_note: str
+        corrected: list[GeneratedQuestion] | None
         try:
             corrected, critique_note = await run_bank_critic(
                 draft=draft_questions,
@@ -669,7 +670,27 @@ async def _generate_one_bank(
                 tenant_id=tenant_id,
                 job_id=job_id,
             )
-            # Replace the draft with the corrected bank.
+        except Exception as critic_exc:
+            # FALLBACK (no silent swallow): the CRITIC CALL failed. Keep the streamed
+            # draft, mark the skip in coverage_notes (audit trail), proceed to reviewing.
+            logger.error(
+                "question_bank.critic.skipped",
+                bank_id=str(bank_id),
+                error_type=type(critic_exc).__name__,
+                error_message=str(critic_exc)[:500],
+                correlation_id=correlation_id or f"actor-stage-{bank_id}",
+                exc_info=True,
+            )
+            critique_note = (
+                f"[critic skipped: {type(critic_exc).__name__}] "
+                "draft kept un-critiqued; review manually."
+            )
+            corrected = None
+
+        # Re-persist the corrected bank OUTSIDE the critic-skip guard: a persistence
+        # failure here is a genuine error (critic succeeded) and must propagate to the
+        # outer failure path (wipe -> failed), NOT be mislabeled as a critic skip.
+        if corrected is not None:
             async with get_bypass_session() as wdb:
                 await wdb.execute(text(f"SET LOCAL app.current_tenant = '{tenant_id}'"))
                 wbank = (
@@ -684,21 +705,6 @@ async def _generate_one_bank(
                         position=pos, stage_difficulty=stage_difficulty,
                     )
                 await wdb.commit()
-        except Exception as critic_exc:
-            # FALLBACK (no silent swallow): keep the streamed draft, mark the skip in
-            # coverage_notes (audit trail), still proceed to reviewing.
-            logger.error(
-                "question_bank.critic.skipped",
-                bank_id=str(bank_id),
-                error_type=type(critic_exc).__name__,
-                error_message=str(critic_exc)[:500],
-                correlation_id=correlation_id or f"actor-critic-{bank_id}",
-                exc_info=True,
-            )
-            critique_note = (
-                f"[critic skipped: {type(critic_exc).__name__}] "
-                "draft kept un-critiqued; review manually."
-            )
 
         # ---- Phase C: reconcile + transition (short session) ----
         async with get_bypass_session() as db:
@@ -717,7 +723,6 @@ async def _generate_one_bank(
 
             # Project persisted rows → GeneratedQuestion, run mandatory correction
             # (flips is_mandatory only) in position order, write flips back, re-pack.
-            from app.modules.question_bank.schemas import QuestionRubric
             from app.modules.question_bank.service import (
                 _apply_mandatory_correction_in_position_order,
             )

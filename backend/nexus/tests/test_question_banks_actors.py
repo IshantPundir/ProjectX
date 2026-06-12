@@ -1916,3 +1916,50 @@ async def test_generate_one_bank_critic_failure_keeps_draft(db, monkeypatch):
         f"draft must be preserved on critic failure — expected 2, got {len(questions)}"
     )
     assert {q.signal_values[0] for q in questions} == {"Apigee", "Kafka"}
+
+
+# ---------------------------------------------------------------------------
+# Retry recovery from self_reviewing (Critical fix regression test)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_generate_one_bank_recovers_from_self_reviewing_on_retry(
+    db, monkeypatch
+):
+    """Regression: if the worker crashes after the self_reviewing commit but
+    before the final reviewing commit, a Dramatiq retry re-enters Phase A of
+    `_generate_one_bank` with the bank in 'self_reviewing'. The retry must
+    recover cleanly (self_reviewing → generating → ... → reviewing), not
+    strand the bank forever or raise an IllegalTransitionError outside the
+    failure path.
+    """
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[_signal(value="Apigee")],
+    )
+    _instance, stage = await _make_pipeline_and_stage(
+        db, job=job, stage_type="ai_screening",
+    )
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    # Simulate a crash after B2 committed self_reviewing but before C committed reviewing.
+    bank.status = "self_reviewing"
+    await db.flush()
+
+    _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
+    _patch_stream(monkeypatch, _stream_questions(["Apigee"]))
+
+    # The retry must not raise — it should recover to reviewing.
+    await _generate_one_bank(
+        bank_id=bank.id,
+        tenant_id=tenant.id,
+        started_by=user.id,
+    )
+
+    assert bank.status == "reviewing", (
+        f"Retry from self_reviewing must recover to reviewing, got {bank.status!r}"
+    )
+    questions = await get_bank_questions(db, bank.id)
+    assert len(questions) == 1

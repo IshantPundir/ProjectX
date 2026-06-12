@@ -1,11 +1,12 @@
 """Per-bank state machine for question generation.
 
 States: draft → generating → self_reviewing → reviewing → confirmed
-                                    ↓
-                                 failed (with error)
+                  ↑                ↓ ↓
+                  └────────────────┘ failed (with error)
 
-Transitions are enforced by explicit helpers. The service layer calls these
-rather than mutating bank.status directly.
+`self_reviewing` can restart to `generating` (retry recovery — see
+`transition_to_generating` docstring). Transitions are enforced by explicit
+helpers. The service layer calls these rather than mutating bank.status directly.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ BankStatus = Literal["draft", "generating", "self_reviewing", "reviewing", "conf
 LEGAL: dict[BankStatus, set[BankStatus]] = {
     "draft": {"generating", "reviewing", "failed"},
     "generating": {"self_reviewing", "failed"},
-    "self_reviewing": {"reviewing", "failed"},
+    "self_reviewing": {"reviewing", "failed", "generating"},
     "reviewing": {"generating", "confirmed"},
     "confirmed": {"generating", "reviewing"},
     "failed": {"generating"},
@@ -45,7 +46,12 @@ def _now_utc() -> datetime:
 
 
 def transition_to_generating(bank: StageQuestionBank) -> None:
-    """draft | reviewing | confirmed | failed → generating.
+    """draft | reviewing | confirmed | failed | self_reviewing → generating.
+
+    The `self_reviewing` source is legal so that a Dramatiq retry (which
+    re-enters Phase A of `_generate_one_bank`) can recover cleanly when the
+    worker crashed after the `self_reviewing` commit but before the final
+    `reviewing` commit — without stranding the bank in `self_reviewing` forever.
 
     Raises:
       BankAlreadyGeneratingError — the bank is already in 'generating'.
