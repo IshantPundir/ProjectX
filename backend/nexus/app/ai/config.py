@@ -75,6 +75,14 @@ class AIConfig:
         return self._settings.openai_question_bank_effort
 
     @property
+    def question_bank_critic_model(self) -> str:
+        return self._settings.openai_question_bank_critic_model
+
+    @property
+    def question_bank_critic_effort(self) -> str:
+        return self._settings.openai_question_bank_critic_effort
+
+    @property
     def question_bank_keyterm_model(self) -> str:
         return self._settings.openai_question_bank_keyterm_model
 

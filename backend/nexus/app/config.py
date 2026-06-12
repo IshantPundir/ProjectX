@@ -217,6 +217,11 @@ class Settings(BaseSettings):
     # API only). Empty string = don't send the param → runs at the model's fast default
     # (same model the realtime engine uses). This is the latency win.
     openai_question_bank_effort: str = ""
+    # Critic pass — audits + corrects the streamed draft bank (one call per bank).
+    # Recommend a STRONGER model than the generator (quality backstop, runs once).
+    # Effort default empty per the effort-gating contract (chat-model-safe).
+    openai_question_bank_critic_model: str = "gpt-5.4-mini"
+    openai_question_bank_critic_effort: str = ""
     # Fast/cheap model for the per-bank STT keyterm extraction LLM call (one
     # call per bank generation; result cached on stage_question_banks.extracted_keyterms).
     # See docs/superpowers/specs/2026-05-19-deepgram-keyterm-migration-design.md.
