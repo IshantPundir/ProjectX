@@ -61,8 +61,7 @@ def test_pipeline_built_to_active_legal():
 
 def test_active_can_re_extract():
     """Active jobs can be unlocked and re-run through signal extraction."""
-    from app.modules.jd.state_machine import LEGAL_TRANSITIONS
-    assert "signals_extracting" in LEGAL_TRANSITIONS["active"]
+    assert LEGAL_TRANSITIONS["active"] == {"signals_extracting"}
 
 
 def test_archived_has_no_outbound_transitions():
