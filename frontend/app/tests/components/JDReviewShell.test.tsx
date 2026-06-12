@@ -35,6 +35,9 @@ vi.mock('@/lib/hooks/use-save-signals', () => ({
 vi.mock('@/lib/hooks/use-confirm-signals', () => ({
   useConfirmSignals: () => ({ mutate: vi.fn(), isPending: false }),
 }))
+vi.mock('@/lib/hooks/use-re-extract-signals', () => ({
+  useReExtractSignals: () => ({ mutate: vi.fn(), isPending: false }),
+}))
 
 // ---------------------------------------------------------------------------
 // Fixture
