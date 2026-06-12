@@ -137,6 +137,98 @@ async def test_manifest_carries_template_provenance():
 
 
 @pytest.mark.asyncio
+async def test_unquestioned_eligibility_signal_is_not_scored_or_gap_flagged():
+    """AI-screening banks now test SKILLS only — eligibility signals (years/degree/
+    cert, purpose=eligibility) are filtered out of generation, so they get NO
+    question. Such a signal must NOT appear as a gap, must NOT lower the score, and
+    must NOT show up in the report at all (it's pre-screened, outside the AI screen's
+    remit). The scored denominator is the PRIMARY set (= signals owned by an asked
+    question); an un-questioned signal is never in it.
+    """
+    # One asked skill question (python). The bank ALSO carries an eligibility signal
+    # ("years_experience", a must-have) that was deliberately NOT generated into any
+    # question — it exists only in signal_metadata, never in evidence.questions.
+    evidence = SessionEvidence.model_validate(_evidence_dict())  # questions = [python] only
+    questions = [{"id": "q1", "text": "Tell me about Python", "signal_values": ["python"],
+                  "rubric": {}, "question_kind": "technical_depth", "primary_signal": "python"}]
+    signal_metadata = [
+        {"value": "python", "type": "competency", "weight": 3,
+         "knockout": True, "priority": "required"},
+        # Un-questioned eligibility must-have — pre-screened, no question asked.
+        {"value": "years_experience", "type": "experience", "weight": 3,
+         "knockout": True, "priority": "required", "purpose": "eligibility"},
+    ]
+
+    with patch("app.modules.reporting.service.grade_question", new=AsyncMock(
+            return_value=QuestionGradeOut(evidence_quotes=["built an ETL in Python"],
+                level="solid", overridden=False, override_reason=None))), \
+         patch("app.modules.reporting.service.score_holistic", new=AsyncMock(
+            return_value=HolisticAdjustmentOut(delta=0, justification="ok"))), \
+         patch("app.modules.reporting.service.grade_communication", new=AsyncMock(
+            return_value=CommunicationVerdict(evidence_quotes=[], justification="ok", level="adequate"))), \
+         patch("app.modules.reporting.service.write_narrative", new=AsyncMock(
+            return_value=NarrativeOut(
+                decision=DecisionOut(headline="ok", why_positive=WhyColumn(title="", body=""),
+                                     why_negative=WhyColumn(title="", body="")),
+                quick_summary="", strengths=[], concerns=[], questions=[],
+                methodology=MethodologyOut(note="", charity_flags=[])))):
+        report = await build_report(evidence=evidence, questions=questions,
+                                    signal_metadata=signal_metadata, correlation_id="cid")
+
+    assessed = {s.signal for s in report.signal_assessments}
+    # The un-questioned eligibility signal is absent from the report entirely.
+    assert "years_experience" not in assessed
+    assert assessed == {"python"}
+    # It did NOT drag the candidate down: strong asked skill → advance.
+    assert report.verdict == "advance"
+    assert report.scores["overall"].score is not None
+    # It is not in the scored level_map (the audit denominator) either.
+    level_map = report.scoring_manifest.evidence_grounding_summary["level_map"]
+    assert "years_experience" not in level_map
+    assert set(level_map) == {"python"}
+
+
+@pytest.mark.asyncio
+async def test_zero_knockout_bank_produces_a_normal_verdict():
+    """AI-screening banks now typically carry ZERO is_mandatory/knockout questions
+    (skill must-haves are scenario-graded; eligibility knockouts are pre-screened).
+    A session with no knockout/must-have signals must still produce a normal,
+    score-driven verdict — no error, no spurious auto-fail.
+    """
+    # python is a NON-knockout signal; no signal in the bank is a must-have.
+    evidence = SessionEvidence.model_validate(_evidence_dict())
+    # Flip the engine-side identity to non-knockout too, so identity recovery can't
+    # reintroduce a must-have from evidence.signals[].
+    ev = evidence.model_copy(deep=True)
+    object.__setattr__(ev.signals[0], "knockout", False)
+    questions = [{"id": "q1", "text": "Tell me about Python", "signal_values": ["python"],
+                  "rubric": {}, "question_kind": "technical_depth", "primary_signal": "python"}]
+    signal_metadata = [{"value": "python", "type": "competency", "weight": 3,
+                        "knockout": False, "priority": "preferred"}]
+
+    with patch("app.modules.reporting.service.grade_question", new=AsyncMock(
+            return_value=QuestionGradeOut(evidence_quotes=["built an ETL in Python"],
+                level="solid", overridden=False, override_reason=None))), \
+         patch("app.modules.reporting.service.score_holistic", new=AsyncMock(
+            return_value=HolisticAdjustmentOut(delta=0, justification="ok"))), \
+         patch("app.modules.reporting.service.grade_communication", new=AsyncMock(
+            return_value=CommunicationVerdict(evidence_quotes=[], justification="ok", level="adequate"))), \
+         patch("app.modules.reporting.service.write_narrative", new=AsyncMock(
+            return_value=NarrativeOut(
+                decision=DecisionOut(headline="ok", why_positive=WhyColumn(title="", body=""),
+                                     why_negative=WhyColumn(title="", body="")),
+                quick_summary="", strengths=[], concerns=[], questions=[],
+                methodology=MethodologyOut(note="", charity_flags=[])))):
+        report = await build_report(evidence=ev, questions=questions,
+                                    signal_metadata=signal_metadata, correlation_id="cid")
+
+    # No must-have anywhere → no knockout gate fires → score-driven verdict.
+    assert report.verdict in {"advance", "borderline", "reject"}
+    assert report.verdict == "advance"  # strong solo skill, no ceiling cap
+    assert all(s.knockout is False for s in report.signal_assessments)
+
+
+@pytest.mark.asyncio
 async def test_build_report_populates_question_cards():
     evidence = SessionEvidence.model_validate(_evidence_dict())
     questions = [{"id": "q1", "text": "Tell me about Python", "signal_values": ["python"],
