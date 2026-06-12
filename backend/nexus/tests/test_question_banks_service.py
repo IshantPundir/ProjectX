@@ -61,11 +61,14 @@ from app.modules.question_bank.service import (
     reorder_questions,
     transition_to_failed,
     transition_to_generating,
-    transition_to_reviewing_after_generation,
+    transition_to_reviewing_after_critic,
     update_question,
     write_generated_questions,
 )
-from app.modules.question_bank.state_machine import transition_to_confirmed
+from app.modules.question_bank.state_machine import (
+    transition_to_confirmed,
+    transition_to_self_reviewing,
+)
 from tests.conftest import (
     create_test_client,
     create_test_org_unit,
@@ -387,7 +390,7 @@ async def test_transition_to_generating_rejects_if_already_generating(db):
 
 
 @pytest.mark.asyncio
-async def test_transition_to_reviewing_after_generation_sets_timestamps(db):
+async def test_transition_to_reviewing_after_critic_sets_timestamps(db):
     tenant, user, unit = await _setup_tenant_user_unit(db)
     job, _snapshot = await _make_job_with_signals(
         db, tenant.id, unit.id, user.id,
@@ -397,7 +400,8 @@ async def test_transition_to_reviewing_after_generation_sets_timestamps(db):
     bank = await ensure_bank_exists(db, stage=stage, job=job)
 
     transition_to_generating(bank)
-    transition_to_reviewing_after_generation(bank, user_id=user.id)
+    transition_to_self_reviewing(bank)
+    transition_to_reviewing_after_critic(bank, user_id=user.id)
     assert bank.status == "reviewing"
     assert bank.generated_at is not None
     assert bank.generated_by == user.id
