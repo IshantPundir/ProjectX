@@ -32,7 +32,7 @@ from opentelemetry.trace import Status, StatusCode
 from app.ai.client import get_openai_client
 from app.ai.tracing import set_llm_span_attributes
 from app.ai.config import ai_config
-from app.ai.prompts import prompt_loader
+from app.ai.prompts import PromptLoader, prompt_loader
 from app.ai.schemas import (
     EnrichmentOutput,
     ExtractedSignals,
@@ -49,6 +49,10 @@ from app.modules.org_units import find_company_profile_in_ancestry
 
 logger = structlog.get_logger()
 _tracer = trace.get_tracer("nexus.ai.openai")
+# Versioned loader for signal extraction — reads the configured prompt version
+# (default "v2") so extraction stamps the correct audit-trail version.
+# Enrichment and re-enrichment continue to use the shared default v1 loader.
+_signal_extraction_loader = PromptLoader(version=ai_config.jd_signal_extraction_prompt_version)
 
 # --- Retry classification ---------------------------------------------------
 # Permanent exceptions will never succeed on retry — the input is bad, the
@@ -117,7 +121,7 @@ async def _persist_signal_snapshot(
         signals=[item.model_dump() for item in signals.signals],
         seniority_level=signals.seniority_level,
         role_summary=signals.role_summary,
-        prompt_version="v1",
+        prompt_version=ai_config.jd_signal_extraction_prompt_version,
     )
     db.add(snapshot)
 
@@ -325,7 +329,7 @@ async def _run_signal_extraction(
     source_jd = job.description_enriched if source_is_enriched else job.description_raw
 
     client = get_openai_client()
-    prompt = prompt_loader.get("jd_signal_extraction")
+    prompt = _signal_extraction_loader.get("jd_signal_extraction")
     # Build the user message with whichever JD applies.
     user_message_parts: list[str] = [
         "## Company Profile\n"
@@ -350,7 +354,7 @@ async def _run_signal_extraction(
     with _tracer.start_as_current_span("openai.chat.completions.create"):
         set_llm_span_attributes(
             prompt_name="jd_signal_extraction",
-            prompt_version="v1",
+            prompt_version=ai_config.jd_signal_extraction_prompt_version,
             tenant_id=tenant_id,
             correlation_id=correlation_id,
             job_posting_id=job_posting_id,
@@ -372,7 +376,7 @@ async def _run_signal_extraction(
                     "correlation_id": correlation_id,
                     "job_posting_id": job_posting_id,
                     "tenant_id": tenant_id,
-                    "prompt_version": "v1",
+                    "prompt_version": ai_config.jd_signal_extraction_prompt_version,
                 },
             )
         except Exception as exc:
