@@ -39,6 +39,7 @@ from app.modules.question_bank.models import (
 )
 from app.modules.question_bank.actors import _generate_one_bank
 from app.modules.question_bank.schemas import (
+    FollowUpDimension,
     GeneratedQuestion,
     QuestionRubric,
     UpdateQuestionBody,
@@ -205,7 +206,14 @@ def _stream_questions(
             signal_values=[v],
             estimated_minutes=estimated_minutes,
             is_mandatory=is_mandatory,
-            follow_ups=[f"What specifically did you use {v} for?"],
+            follow_ups=[
+                FollowUpDimension(
+                    dimension=f"{v.lower()}_usage_specifics",
+                    intent=f"Verify concrete hands-on {v} usage",
+                    seed_probe=f"What specifically did you use {v} for?",
+                    listen_for=[f"a named {v} library or tool", "a concrete production task"],
+                )
+            ],
             positive_evidence=[
                 f"Names specific {v} tooling clearly",
                 "Describes production usage in detail",
@@ -261,6 +269,21 @@ def _patch_stream(monkeypatch, items: list[GeneratedQuestion]):
     )
 
 
+def _patch_critic(monkeypatch):
+    """Patch `run_bank_critic` to pass the draft through unchanged (no LLM call)."""
+
+    async def _fake_critic(*, draft, **_kwargs):
+        # Re-pack positions 0..N-1 just as the real critic does.
+        corrected = list(draft)
+        for i, q in enumerate(corrected):
+            q.position = i
+        return corrected, "test-fixture: critic skipped"
+
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.run_bank_critic", _fake_critic
+    )
+
+
 # ---------------------------------------------------------------------------
 # 1. Full flow: create → generate → edit → confirm
 # ---------------------------------------------------------------------------
@@ -303,6 +326,7 @@ async def test_full_flow_create_confirm_generate_edit_confirm(
             estimated_minutes=5.0,
         ),
     )
+    _patch_critic(monkeypatch)
     await _generate_one_bank(
         bank_id=bank.id,
         tenant_id=tenant.id,
@@ -371,6 +395,7 @@ async def test_cascade_delete_on_stage_removal(
         monkeypatch,
         _stream_questions(["Python"], is_mandatory=False),
     )
+    _patch_critic(monkeypatch)
     await _generate_one_bank(
         bank_id=bank.id,
         tenant_id=tenant.id,
