@@ -17,6 +17,7 @@ SignalType = Literal["competency", "experience", "credential", "behavioral"]
 SignalPriority = Literal["required", "preferred"]
 SignalStage = Literal["screen", "interview"]
 SignalSource = Literal["ai_extracted", "ai_inferred"]
+SignalPurpose = Literal["skill", "eligibility"]
 
 
 class SignalItemV2(BaseModel):
@@ -30,6 +31,10 @@ class SignalItemV2(BaseModel):
     priority: SignalPriority
     weight: Literal[1, 2, 3] = 2
     knockout: bool = False
+
+    # Assessed in the AI skills screen ("skill") vs recruiter pre-screened ("eligibility").
+    # Default "skill" so legacy snapshots (no purpose) stay testable — no regression.
+    purpose: SignalPurpose = "skill"
 
     # When
     stage: SignalStage
@@ -75,6 +80,8 @@ class ExtractedSignals(BaseModel):
             raise ValueError("Must include at least one competency signal")
         if len(knockouts) > 5:
             raise ValueError("Too many knockout signals (max 5)")
+        if not any(s.purpose == "skill" for s in self.signals):
+            raise ValueError("Must include at least one signal with purpose='skill'")
         return self
 
 
