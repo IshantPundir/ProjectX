@@ -766,6 +766,7 @@ async def extract_signals(
     return {"status": "accepted"}
 
 
+# signals_extraction_failed is excluded — it retries via /extract-signals, not re-extract.
 _REEXTRACT_SOURCE_STATES = {"signals_extracted", "signals_confirmed", "pipeline_built", "active"}
 
 

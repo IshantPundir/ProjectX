@@ -1007,6 +1007,170 @@ async def test_reextract_from_active_202(db: AsyncSession, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_reextract_from_signals_extracted_202(db: AsyncSession, monkeypatch):
+    """Re-extract from signals_extracted → 202; job transitions to
+    signals_extracting; extraction dispatched with skip_enrichment=True;
+    reset_banks_for_job called with the correct job_id."""
+    captured = _stub_all_dispatches(monkeypatch)
+
+    reset_calls: list[dict] = []
+
+    async def _fake_reset(db, *, job_id):
+        reset_calls.append({"job_id": job_id})
+        return 0
+
+    monkeypatch.setattr(
+        "app.modules.jd.router.reset_banks_for_job",
+        _fake_reset,
+    )
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Test",
+        description_raw="A" * 200,
+        status="signals_extracted",
+        source="native",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(
+                f"/api/jobs/{job.id}/re-extract-signals", headers=headers,
+            )
+    finally:
+        restore()
+
+    assert response.status_code == 202, response.text
+    assert response.json() == {"status": "accepted"}
+
+    # Banks should have been reset.
+    assert len(reset_calls) == 1
+    assert reset_calls[0]["job_id"] == job.id
+
+    # Extraction dispatched with skip_enrichment=True.
+    extract_call = captured["extract_and_enhance_jd"]
+    assert extract_call != {}
+    assert extract_call["kwargs"].get("skip_enrichment") is True
+
+    # Status now signals_extracting.
+    await db.refresh(job)
+    assert job.status == "signals_extracting"
+
+
+@pytest.mark.asyncio
+async def test_reextract_from_pipeline_built_202(db: AsyncSession, monkeypatch):
+    """Re-extract from pipeline_built → 202; same assertions."""
+    captured = _stub_all_dispatches(monkeypatch)
+    reset_calls: list[dict] = []
+
+    async def _fake_reset(db, *, job_id):
+        reset_calls.append({"job_id": job_id})
+        return 0
+
+    monkeypatch.setattr(
+        "app.modules.jd.router.reset_banks_for_job",
+        _fake_reset,
+    )
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Test",
+        description_raw="A" * 200,
+        status="pipeline_built",
+        source="native",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(
+                f"/api/jobs/{job.id}/re-extract-signals", headers=headers,
+            )
+    finally:
+        restore()
+
+    assert response.status_code == 202, response.text
+    assert response.json() == {"status": "accepted"}
+    assert len(reset_calls) == 1
+    assert reset_calls[0]["job_id"] == job.id
+    extract_call = captured["extract_and_enhance_jd"]
+    assert extract_call != {}
+    assert extract_call["kwargs"].get("skip_enrichment") is True
+    await db.refresh(job)
+    assert job.status == "signals_extracting"
+
+
+@pytest.mark.asyncio
+async def test_reextract_from_extraction_failed_409(db: AsyncSession, monkeypatch):
+    """Re-extract from signals_extraction_failed → 409 job_not_re_extractable.
+    This state retries via /extract-signals, not /re-extract-signals."""
+    _stub_all_dispatches(monkeypatch)
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    job = JobPosting(
+        tenant_id=tenant.id,
+        org_unit_id=company.id,
+        title="Test",
+        description_raw="A" * 200,
+        status="signals_extraction_failed",
+        source="native",
+        created_by=user.id,
+    )
+    db.add(job)
+    await db.commit()
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(
+                f"/api/jobs/{job.id}/re-extract-signals", headers=headers,
+            )
+    finally:
+        restore()
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "job_not_re_extractable"
+
+
+@pytest.mark.asyncio
 async def test_reextract_from_draft_409(db: AsyncSession, monkeypatch):
     """Re-extract from draft → 409 job_not_re_extractable."""
     _stub_all_dispatches(monkeypatch)
