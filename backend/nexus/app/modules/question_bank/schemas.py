@@ -186,7 +186,9 @@ class BankCritiqueOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     critique: str = Field(
-        ..., min_length=10, max_length=4000,
+        ...,
+        min_length=10,
+        max_length=4000,
         description="What the critic changed and why — coverage gaps closed, anchors "
                     "sharpened, repeats removed, format/seniority fixes.",
     )

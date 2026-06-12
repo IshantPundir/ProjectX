@@ -52,4 +52,11 @@ def test_bank_critique_output_carries_corrected_questions_and_log():
         questions=[_mk_question("project_deepdive")],
     )
     assert out.questions[0].question_kind == "project_deepdive"
-    assert "Knockout" in out.critique
+    assert out.critique == (
+        "Knockout 'X' was uncovered; added a compliance_binary. Sharpened 2 anchors."
+    )
+
+
+def test_bank_critique_rejects_too_short_critique():
+    with pytest.raises(ValidationError):
+        BankCritiqueOutput(critique="too short", questions=[_mk_question("behavioral")])
