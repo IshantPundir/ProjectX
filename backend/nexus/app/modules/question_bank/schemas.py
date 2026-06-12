@@ -132,12 +132,15 @@ class GeneratedQuestion(BaseModel):
         "behavioral",
         "technical_scenario",
         "compliance_binary",
+        "project_deepdive",
     ] = Field(
         ...,
         description=(
             "Refined spoken taxonomy: experience_check (claim verification) · "
             "behavioral (true STAR) · technical_scenario (verbal design/depth) · "
-            "compliance_binary (hard yes/no gate)."
+            "compliance_binary (hard yes/no gate) · project_deepdive (the senior "
+            "spine — a real project the candidate drove, probed for decision "
+            "ownership and surviving orthogonal escalation)."
         ),
     )
     difficulty: Literal["easy", "medium", "hard"] | None = Field(
@@ -169,6 +172,24 @@ class StageQuestionBankOutput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    questions: list[GeneratedQuestion] = Field(..., min_length=1, max_length=15)
+
+
+class BankCritiqueOutput(BaseModel):
+    """Critic LLM response: the corrected full bank + a short audit log.
+
+    The critic audits the streamed draft against a fixed checklist and returns the
+    CORRECTED bank (same question shape) plus a human-readable `critique` persisted to
+    stage_question_banks.coverage_notes (the scoring audit trail).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    critique: str = Field(
+        ..., min_length=10, max_length=4000,
+        description="What the critic changed and why — coverage gaps closed, anchors "
+                    "sharpened, repeats removed, format/seniority fixes.",
+    )
     questions: list[GeneratedQuestion] = Field(..., min_length=1, max_length=15)
 
 
