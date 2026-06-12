@@ -4,6 +4,7 @@ import { apiFetch } from './client'
 export type SignalType = 'competency' | 'experience' | 'credential' | 'behavioral'
 export type SignalPriority = 'required' | 'preferred'
 export type SignalStage = 'screen' | 'interview'
+export type SignalPurpose = 'skill' | 'eligibility'
 export type EvaluationMethod =
   | 'verbal_response'
   | 'code_exercise'
@@ -33,6 +34,7 @@ export type SignalItem = {
   priority: SignalPriority
   weight: 1 | 2 | 3
   knockout: boolean
+  purpose: SignalPurpose
   stage: SignalStage
   evaluation_method: EvaluationMethod
   evaluation_hint: string | null

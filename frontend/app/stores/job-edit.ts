@@ -70,6 +70,7 @@ export const useJobEditStore = create<JobEditState>()((set) => ({
         priority,
         weight: 1,
         knockout: false,
+        purpose: 'skill',
         stage,
         evaluation_method: 'verbal_response',
         evaluation_hint: null,

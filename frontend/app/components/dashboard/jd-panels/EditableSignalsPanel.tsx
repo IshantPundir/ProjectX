@@ -17,6 +17,7 @@ import type {
   SignalType,
   SignalStage,
   SignalPriority,
+  SignalPurpose,
 } from '@/lib/api/jobs'
 import { useJobEditStore } from '@/stores/job-edit'
 
@@ -147,6 +148,31 @@ function EditableChipRow({
           aria-label={item.knockout ? 'Remove knockout' : 'Mark as knockout'}
         >
           KO
+        </button>
+
+        {/* Purpose toggle: skill (AI-tested) vs eligibility (recruiter pre-screened) */}
+        <button
+          type="button"
+          onClick={() =>
+            updateSignal(realIndex, {
+              purpose: ((item.purpose ?? 'skill') === 'eligibility'
+                ? 'skill'
+                : 'eligibility') as SignalPurpose,
+            })
+          }
+          title="skill = tested in the AI screen; eligibility = recruiter pre-screened"
+          className={`h-5 px-1.5 text-[10px] font-medium rounded border transition-colors ${
+            (item.purpose ?? 'skill') === 'eligibility'
+              ? 'bg-amber-50 text-amber-700 border-amber-300'
+              : 'bg-zinc-50 text-zinc-400 border-zinc-200 hover:bg-zinc-100'
+          }`}
+          aria-label={
+            (item.purpose ?? 'skill') === 'eligibility'
+              ? 'Switch to skill (AI-tested)'
+              : 'Switch to eligibility (recruiter pre-screened)'
+          }
+        >
+          {(item.purpose ?? 'skill') === 'eligibility' ? 'ELIG' : 'SKILL'}
         </button>
 
         {/* Type dropdown */}

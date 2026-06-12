@@ -59,8 +59,8 @@ const mockJob: JobPostingWithSnapshot = {
     signals: [
       {
         value: 'Python', type: 'competency', priority: 'required',
-        weight: 3, knockout: true, stage: 'screen',
-        evaluation_method: 'verbal_response',
+        weight: 3, knockout: true, purpose: 'skill', stage: 'screen',
+        evaluation_method: 'verbal_response', evaluation_hint: null,
         source: 'ai_extracted', inference_basis: null,
       },
     ],
