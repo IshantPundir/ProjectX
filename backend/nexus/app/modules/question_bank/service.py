@@ -676,6 +676,28 @@ async def wipe_ai_questions(db: AsyncSession, *, bank: StageQuestionBank) -> int
     return deleted.rowcount or 0
 
 
+async def reset_banks_for_job(db: AsyncSession, *, job_id: UUID) -> int:
+    """Clear ALL question banks for a job — used by JD re-extraction, which invalidates
+    every bank generated from the prior signal snapshot. Wipes each bank's AI questions and
+    HARD-RESETS the bank to 'draft' (cleared timestamps/notes) so the questions UI shows the
+    'Generate' call-to-action. This is a deliberate bulk reset, not a per-bank lifecycle
+    transition (hence a direct status set rather than the state-machine helpers). Returns the
+    number of banks reset; 0 if the job has none (e.g. no pipeline yet)."""
+    banks = list((await db.execute(
+        select(StageQuestionBank).where(StageQuestionBank.job_posting_id == job_id)
+    )).scalars().all())
+    for bank in banks:
+        await wipe_ai_questions(db, bank=bank)
+        bank.status = "draft"
+        bank.generated_at = None
+        bank.generated_by = None
+        bank.coverage_notes = None
+        bank.confirmed_at = None
+        bank.confirmed_by = None
+    await db.flush()
+    return len(banks)
+
+
 async def replace_question_in_place(
     db: AsyncSession,
     *,
