@@ -81,16 +81,31 @@ export function SignalRow({
       }}
     >
       <SourceBadge kind={s.source} />
-      {s.knockout ? (
-        <span
-          className="px-chip danger"
-          style={{ height: 20, padding: '0 7px', fontSize: 10, fontWeight: 700, letterSpacing: 0.3 }}
-        >
-          MUST
-        </span>
-      ) : (
-        <span />
-      )}
+      <div className="flex flex-col items-start gap-1">
+        {s.knockout && (
+          <span
+            className="px-chip danger"
+            style={{ height: 20, padding: '0 7px', fontSize: 10, fontWeight: 700, letterSpacing: 0.3 }}
+          >
+            MUST
+          </span>
+        )}
+        {(s.purpose ?? 'skill') === 'eligibility' ? (
+          <span
+            className="rounded px-1 text-[8.5px] font-semibold"
+            style={{ background: 'var(--px-zinc-100)', color: 'var(--px-zinc-600)' }}
+          >
+            ELIG
+          </span>
+        ) : (
+          <span
+            className="rounded px-1 text-[8.5px] font-semibold"
+            style={{ background: 'var(--px-accent-tint)', color: 'var(--px-accent)' }}
+          >
+            SKILL
+          </span>
+        )}
+      </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2.5">
         <span
           className="text-[14px] font-medium"

@@ -85,6 +85,18 @@ export function SignalInspector({
                 : 'You added this'}
             {signal.knockout && ' · deal-breaker'}
           </div>
+          <div className="mt-1 text-[11px]" style={{ color: 'var(--px-fg-3)' }}>
+            <span className="font-medium" style={{ color: 'var(--px-fg-2)' }}>
+              {(signal.purpose ?? 'skill') === 'eligibility' ? 'Eligibility' : 'Skill'}
+            </span>
+            <span>
+              {' '}
+              &middot;{' '}
+              {(signal.purpose ?? 'skill') === 'eligibility'
+                ? 'recruiter pre-screened'
+                : 'tested in the AI screen'}
+            </span>
+          </div>
         </div>
 
         <div
