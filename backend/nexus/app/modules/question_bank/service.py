@@ -44,7 +44,7 @@ from app.modules.question_bank.state_machine import (
     transition_to_confirmed,
     transition_to_failed,
     transition_to_generating,
-    transition_to_reviewing_after_generation,
+    transition_to_reviewing_after_critic,
 )
 
 logger = structlog.get_logger()
@@ -976,6 +976,6 @@ __all__ = [
     "reorder_questions",
     "confirm_bank",
     "transition_to_generating",
-    "transition_to_reviewing_after_generation",
+    "transition_to_reviewing_after_critic",
     "transition_to_failed",
 ]

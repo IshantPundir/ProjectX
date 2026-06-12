@@ -1,8 +1,8 @@
 """Per-bank state machine for question generation.
 
-States: draft → generating → reviewing → confirmed
-               ↓
-            failed (with error)
+States: draft → generating → self_reviewing → reviewing → confirmed
+                                    ↓
+                                 failed (with error)
 
 Transitions are enforced by explicit helpers. The service layer calls these
 rather than mutating bank.status directly.
@@ -23,14 +23,17 @@ from app.modules.question_bank.errors import (
 
 # Canonical BankStatus. schemas.py imports this and re-exports it so both
 # layers stay in sync (B8 consolidation).
-BankStatus = Literal["draft", "generating", "reviewing", "confirmed", "failed"]
+BankStatus = Literal["draft", "generating", "self_reviewing", "reviewing", "confirmed", "failed"]
 
 # Legal transitions. Each value is the set of statuses the left-hand state can move to.
 # NOTE: auto-revert (confirmed → reviewing on edit) is a separate helper because
 # it's triggered by data mutations, not explicit state transitions.
+# NOTE: generating → reviewing is intentionally absent. The AI self-critic phase
+# (self_reviewing) is a permanent part of generation; the direct edge is unreachable.
 LEGAL: dict[BankStatus, set[BankStatus]] = {
     "draft": {"generating", "reviewing", "failed"},
-    "generating": {"reviewing", "failed"},
+    "generating": {"self_reviewing", "failed"},
+    "self_reviewing": {"reviewing", "failed"},
     "reviewing": {"generating", "confirmed"},
     "confirmed": {"generating", "reviewing"},
     "failed": {"generating"},
@@ -62,18 +65,30 @@ def transition_to_generating(bank: StageQuestionBank) -> None:
     bank.updated_at = _now_utc()
 
 
-def transition_to_reviewing_after_generation(bank: StageQuestionBank, *, user_id: UUID) -> None:
-    """generating → reviewing on LLM success.
+def transition_to_self_reviewing(bank: StageQuestionBank) -> None:
+    """generating → self_reviewing (the bank enters the AI self-critic phase).
 
-    NOTE: this is a caller-bug guard, not a user-facing error. Replaced
-    `assert` with an explicit raise so the check survives `python -O`
-    (which strips assertions and would silently mutate bank state
-    through an invalid source).
+    Raises IllegalTransitionError on any other source state (defensive).
     """
-    if bank.status != "generating":
+    if bank.status not in LEGAL or "self_reviewing" not in LEGAL[bank.status]:
+        raise IllegalTransitionError(
+            from_state=bank.status, to_state="self_reviewing"
+        )
+    bank.status = "self_reviewing"
+    bank.updated_at = _now_utc()
+
+
+def transition_to_reviewing_after_critic(
+    bank: StageQuestionBank, *, user_id: UUID
+) -> None:
+    """self_reviewing → reviewing on critic completion (success OR fallback).
+
+    Caller-bug guard, not a user-facing error (survives `python -O`).
+    """
+    if bank.status != "self_reviewing":
         raise RuntimeError(
-            f"transition_to_reviewing_after_generation requires "
-            f"status='generating', got {bank.status!r}"
+            f"transition_to_reviewing_after_critic requires "
+            f"status='self_reviewing', got {bank.status!r}"
         )
     bank.status = "reviewing"
     bank.generated_at = _now_utc()
@@ -82,16 +97,15 @@ def transition_to_reviewing_after_generation(bank: StageQuestionBank, *, user_id
 
 
 def transition_to_failed(bank: StageQuestionBank, *, error: str) -> None:
-    """generating → failed with error message.
+    """generating | self_reviewing → failed with error message.
 
-    NOTE: caller-bug guard (same reasoning as
-    transition_to_reviewing_after_generation — asserts are stripped
-    under `python -O`).
+    NOTE: caller-bug guard (asserts are stripped under `python -O` — explicit
+    raise so invalid-source bugs are never silently swallowed).
     """
-    if bank.status != "generating":
+    if bank.status not in ("generating", "self_reviewing"):
         raise RuntimeError(
-            f"transition_to_failed requires status='generating', "
-            f"got {bank.status!r}"
+            f"transition_to_failed requires status in "
+            f"('generating','self_reviewing'), got {bank.status!r}"
         )
     bank.status = "failed"
     bank.generation_error = error

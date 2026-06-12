@@ -52,7 +52,7 @@ from app.modules.question_bank.service import (
     replace_question_in_place,
     transition_to_failed,
     transition_to_generating,
-    transition_to_reviewing_after_generation,
+    transition_to_reviewing_after_critic,
     validate_streamed_question,
     wipe_ai_questions,
 )
@@ -709,7 +709,7 @@ async def _generate_one_bank(
             bank.pipeline_version_at_generation = pipeline_version
             bank.stage_config_snapshot = stage_config_snapshot
             bank.is_stale = False
-            transition_to_reviewing_after_generation(bank, user_id=started_by)
+            transition_to_reviewing_after_critic(bank, user_id=started_by)
             await db.commit()
     except Exception as exc:
         # ---- Failure path (decision D7): wipe ALL AI questions → failed ----
