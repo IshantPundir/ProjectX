@@ -73,6 +73,7 @@ def _mk_signal(
     weight: int = 3,
     knockout: bool = False,
     stage_tag: str = "interview",
+    purpose: str = "skill",
 ) -> dict[str, Any]:
     return {
         "value": value,
@@ -81,6 +82,7 @@ def _mk_signal(
         "weight": weight,
         "knockout": knockout,
         "stage": stage_tag,
+        "purpose": purpose,
     }
 
 
@@ -536,6 +538,7 @@ def _build_user_message(case: BankGenCase) -> str:
             f"  weight: {signal['weight']}\n"
             f"  knockout: {signal.get('knockout', False)}\n"
             f"  stage_tag: {signal['stage']}\n"
+            f"  purpose: {signal.get('purpose', 'skill')}\n"
         )
 
     parts.append("\n# PIPELINE CONTEXT\n\n")
@@ -971,4 +974,62 @@ async def test_seed_probes_demand_specifics_not_open_elaboration(case: BankGenCa
     assert not violations, (
         f"[{case.id}] generic 'tell me more'-style probes (must demand a specific): "
         f"{violations}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 11 — ai_screening is a skills test: scenario-dominant, no claim/compliance,
+#            ≤1 behavioral, exactly 1 deepdive, fits budget
+# ---------------------------------------------------------------------------
+
+_SKILLS_CASE = BankGenCase(
+    id="skills_test_workato",
+    role_title="AI Integration Engineer (Workato)",
+    seniority="mid",
+    company_profile={
+        "about": "Enterprise automation",
+        "industry": "Technology",
+        "hiring_bar": "high",
+    },
+    signals=[
+        _mk_signal("Workato recipe/workflow development", weight=3),
+        _mk_signal("API integration & data transformation (REST/SOAP, JSON)", weight=3),
+        _mk_signal("AI-driven / agent-based workflow design", weight=3),
+        _mk_signal("RDBMS or NoSQL data reasoning", weight=2),
+        _mk_signal(
+            "Integration project ownership",
+            sig_type="experience",
+            weight=2,
+        ),
+    ],
+    stage_duration=20,
+    stage_difficulty="hard",
+)
+
+
+async def test_ai_screen_is_scenario_dominant_and_skills_only() -> None:
+    """The ai_screening bank must be a skills test: scenario-dominant, no claim/compliance checks.
+
+    Asserts:
+      - No experience_check (claim-verification) or compliance_binary questions leak in.
+      - At least 70% of questions are scenario-type (technical_scenario or project_deepdive).
+      - At most 1 behavioral (skills test, not a STAR interview).
+      - Exactly 1 project_deepdive (the structured spine of the bank).
+    """
+    qs = await _generate(_SKILLS_CASE)
+    kinds = [q.question_kind for q in qs]
+    assert "experience_check" not in kinds, f"claim-check leaked: {kinds}"
+    assert "compliance_binary" not in kinds, f"compliance leaked: {kinds}"
+    scenario_like = sum(1 for k in kinds if k in ("technical_scenario", "project_deepdive"))
+    assert scenario_like / len(kinds) >= 0.7, f"not scenario-dominant: {kinds}"
+    assert kinds.count("behavioral") <= 1, f"too many behavioral: {kinds}"
+    assert kinds.count("project_deepdive") == 1, f"need exactly one deepdive: {kinds}"
+
+
+async def test_ai_screen_fits_budget() -> None:
+    """The total estimated_minutes of the ai_screening bank must not exceed stage_duration."""
+    qs = await _generate(_SKILLS_CASE)
+    total = sum(float(q.estimated_minutes) for q in qs)
+    assert total <= _SKILLS_CASE.stage_duration, (
+        f"over budget: {total} > {_SKILLS_CASE.stage_duration}"
     )
