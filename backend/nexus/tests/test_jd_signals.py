@@ -422,6 +422,63 @@ async def test_enrich_returns_202(db: AsyncSession, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Test: PATCH /api/jobs/{id}/signals — purpose field accepted + persisted
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_save_signals_accepts_purpose(db: AsyncSession, monkeypatch):
+    """PATCH /api/jobs/{id}/signals with purpose='eligibility' on a signal
+    persists purpose in the new snapshot, confirming the save body accepts
+    and round-trips the purpose field without stripping it."""
+    monkeypatch.setattr(
+        "app.modules.jd.actors.extract_and_enhance_jd.send",
+        lambda *a, **k: None,
+    )
+
+    tenant = await create_test_client(db)
+    user = await create_test_user(db, tenant.id)
+    company = await create_test_org_unit(
+        db, tenant.id, unit_type="company", **_VALID_PROFILE,
+    )
+    tenant.super_admin_id = user.id
+    await db.flush()
+
+    job, _snap = await _make_job_with_snapshot(
+        db, tenant.id, company.id, user.id, status="signals_extracted",
+    )
+    await db.commit()
+
+    # Build a save body with purpose="eligibility" on the first signal and
+    # purpose="skill" on the second; remaining signals omit purpose (should
+    # default to "skill").
+    body = _save_signals_body()
+    body["signals"][0] = {**body["signals"][0], "purpose": "eligibility"}
+    body["signals"][1] = {**body["signals"][1], "purpose": "skill"}
+
+    headers, restore = _setup_test_context(db, user, tenant.id, is_super_admin=True)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.patch(
+                f"/api/jobs/{job.id}/signals",
+                json=body,
+                headers=headers,
+            )
+    finally:
+        restore()
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    # purpose must be present and match what was sent
+    assert data["signals"][0]["purpose"] == "eligibility"
+    assert data["signals"][1]["purpose"] == "skill"
+    # Remaining signals default to "skill" when purpose is omitted
+    for sig in data["signals"][2:]:
+        assert sig["purpose"] == "skill"
+
+
+# ---------------------------------------------------------------------------
 # Test: POST /api/jobs/{id}/enrich — rejects when already streaming (409)
 # ---------------------------------------------------------------------------
 

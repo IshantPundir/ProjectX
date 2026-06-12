@@ -13,6 +13,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.ai.schemas import SignalPurpose
+
 # ---------------------------------------------------------------------------
 # Enum-style Literal types
 # ---------------------------------------------------------------------------
@@ -108,6 +110,10 @@ class SignalItemResponse(BaseModel):
     priority: SignalPriority
     weight: Literal[1, 2, 3]
     knockout: bool
+    # Whether the signal is assessed in the AI skills screen ("skill") or is
+    # a recruiter pre-screened eligibility gate ("eligibility").
+    # Default "skill" so legacy snapshots (no purpose key) deserialise cleanly.
+    purpose: SignalPurpose = "skill"
     stage: SignalStage
     evaluation_method: EvaluationMethod
     evaluation_hint: str | None = None
@@ -123,6 +129,10 @@ class SignalItemInput(BaseModel):
     priority: SignalPriority
     weight: Literal[1, 2, 3] = 2
     knockout: bool = False
+    # Whether the signal is assessed in the AI skills screen ("skill") or is
+    # a recruiter pre-screened eligibility gate ("eligibility").
+    # Default "skill" so omitting purpose in an existing save body is a no-op.
+    purpose: SignalPurpose = "skill"
     stage: SignalStage
     evaluation_method: EvaluationMethod | None = None
     evaluation_hint: str | None = None

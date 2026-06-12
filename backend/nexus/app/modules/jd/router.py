@@ -98,6 +98,7 @@ def _snapshot_to_response(
                 priority=item["priority"],
                 weight=item.get("weight", 2),
                 knockout=item.get("knockout", False),
+                purpose=item.get("purpose", "skill"),
                 stage=item["stage"],
                 evaluation_method=eval_method,
                 evaluation_hint=item.get("evaluation_hint"),
