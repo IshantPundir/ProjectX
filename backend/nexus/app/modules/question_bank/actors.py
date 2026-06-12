@@ -60,7 +60,10 @@ from app.modules.question_bank.context import (
     QuestionContext,
     build_question_context,
 )
-from app.modules.question_bank.state_machine import auto_revert_on_edit
+from app.modules.question_bank.state_machine import (
+    auto_revert_on_edit,
+    transition_to_self_reviewing,
+)
 
 logger = structlog.get_logger()
 _tracer = trace.get_tracer("nexus.ai.openai")
@@ -705,6 +708,11 @@ async def _generate_one_bank(
                     bank_id=str(bank_id),
                 )
 
+            # generating -> self_reviewing -> reviewing. The dedicated self-review
+            # commit + the critic pass are wired in a later task; for now the bank
+            # transitions through self_reviewing in this same reconcile commit so the
+            # state machine's required path is honored.
+            transition_to_self_reviewing(bank)
             bank.prompt_version = ai_config.question_bank_prompt_version
             bank.pipeline_version_at_generation = pipeline_version
             bank.stage_config_snapshot = stage_config_snapshot

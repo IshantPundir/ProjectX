@@ -401,6 +401,7 @@ async def test_transition_to_reviewing_after_critic_sets_timestamps(db):
 
     transition_to_generating(bank)
     transition_to_self_reviewing(bank)
+    assert bank.status == "self_reviewing"
     transition_to_reviewing_after_critic(bank, user_id=user.id)
     assert bank.status == "reviewing"
     assert bank.generated_at is not None
