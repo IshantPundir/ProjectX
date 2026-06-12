@@ -280,6 +280,16 @@ export const jobsApi = {
       method: 'POST',
     }),
 
+  /**
+   * POST /api/jobs/{id}/re-extract-signals — clears existing banks, regresses
+   * the job to signals_extracting, and re-dispatches signal extraction.
+   */
+  reExtractSignals: (token: string, id: string): Promise<{ status: string }> =>
+    apiFetch<{ status: string }>(`/api/jobs/${id}/re-extract-signals`, {
+      token,
+      method: 'POST',
+    }),
+
   delete: (token: string, id: string): Promise<{ status: string }> =>
     apiFetch<{ status: string }>(`/api/jobs/${id}`, {
       token,
