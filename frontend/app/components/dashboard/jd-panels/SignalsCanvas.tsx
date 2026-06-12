@@ -61,6 +61,8 @@ export function SignalsCanvas({
   onSave,
   onSaveAndConfirm,
   onReEnrich,
+  onReExtract,
+  reExtracting,
 }: {
   must: SignalWithIndex[]
   nice: SignalWithIndex[]
@@ -77,6 +79,8 @@ export function SignalsCanvas({
   onSave: () => void
   onSaveAndConfirm: () => void
   onReEnrich: () => void
+  onReExtract: () => void
+  reExtracting: boolean
 }) {
   return (
     <main
@@ -97,6 +101,8 @@ export function SignalsCanvas({
         onSave={onSave}
         onSaveAndConfirm={onSaveAndConfirm}
         onReEnrich={onReEnrich}
+        onReExtract={onReExtract}
+        reExtracting={reExtracting}
       />
 
       <div className="px-6 pb-6 pt-4">

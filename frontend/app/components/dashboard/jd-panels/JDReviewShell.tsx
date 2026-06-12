@@ -5,9 +5,10 @@ import { useRouter, useSearchParams } from 'next/navigation'
 
 import { useConfirmSignals } from '@/lib/hooks/use-confirm-signals'
 import { useSaveSignals } from '@/lib/hooks/use-save-signals'
+import { useReExtractSignals } from '@/lib/hooks/use-re-extract-signals'
 import type { JobPostingWithSnapshot, SignalItem } from '@/lib/api/jobs'
 
-import { Tabs } from '@/components/px'
+import { DangerConfirmDialog, Tabs } from '@/components/px'
 import { EnrichedJdCanvas } from './EnrichedJdCanvas'
 import { RawJdCanvas } from './RawJdCanvas'
 import { InspectorHint } from './components/InspectorHint'
@@ -71,6 +72,8 @@ export function JDReviewShell({
 
   const saveMutation = useSaveSignals(job.id)
   const confirmMutation = useConfirmSignals(job.id)
+  const reExtract = useReExtractSignals(job.id)
+  const [confirmReExtract, setConfirmReExtract] = useState(false)
 
   const updateSignal = (index: number, patch: Partial<SignalItem>) => {
     setSignals((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)))
@@ -200,6 +203,8 @@ export function JDReviewShell({
             onSave={save}
             onSaveAndConfirm={saveAndConfirm}
             onReEnrich={onReEnrich}
+            onReExtract={() => setConfirmReExtract(true)}
+            reExtracting={reExtract.isPending}
           />
         )}
       </div>
@@ -221,6 +226,15 @@ export function JDReviewShell({
           isConfirmed={isConfirmed}
         />
       )}
+
+      <DangerConfirmDialog
+        open={confirmReExtract}
+        title="Re-run signal extraction?"
+        description="This unlocks these live signals, replaces them with a fresh AI extraction, and clears the question banks generated from them. You'll review the new signals and regenerate the banks. The job resets to signal review."
+        confirmLabel="Unlock & re-run"
+        onConfirm={() => { setConfirmReExtract(false); reExtract.mutate() }}
+        onClose={() => setConfirmReExtract(false)}
+      />
     </div>
   )
 }

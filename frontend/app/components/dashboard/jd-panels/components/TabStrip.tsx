@@ -48,6 +48,8 @@ export function TabStrip({
   onSave,
   onSaveAndConfirm,
   onReEnrich,
+  onReExtract,
+  reExtracting,
 }: {
   totalCount: number
   isConfirmed: boolean
@@ -58,6 +60,8 @@ export function TabStrip({
   onSave: () => void
   onSaveAndConfirm: () => void
   onReEnrich: () => void
+  onReExtract: () => void
+  reExtracting: boolean
 }) {
   return (
     <div
@@ -91,9 +95,20 @@ export function TabStrip({
           Ask Copilot again
         </button>
         {isConfirmed ? (
-          <button type="button" className="px-btn outline sm" disabled>
-            Locked · live
-          </button>
+          <>
+            <button
+              type="button"
+              className="px-btn outline sm"
+              onClick={onReExtract}
+              disabled={reExtracting}
+            >
+              <I d={REFRESH_ICON} size={11} />
+              {reExtracting ? 'Re-extracting...' : 'Unlock & re-run extraction'}
+            </button>
+            <button type="button" className="px-btn outline sm" disabled>
+              Locked · live
+            </button>
+          </>
         ) : canManage ? (
           <>
             {isDirty && (
