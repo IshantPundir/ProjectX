@@ -101,6 +101,16 @@ STAGE_TYPE_TO_PROMPT = {
     "ai_screening":    "question_bank_ai_screening",
 }
 
+
+def _signals_for_generation(snapshot_signals: list[dict], *, stage_type: str) -> list[dict]:
+    """The signals the bank generator sees. For an AI skills screen, eligibility signals
+    (years/degree/cert — recruiter pre-screened) are excluded; the screen tests SKILLS.
+    Legacy signals without a `purpose` default to skill (no regression)."""
+    if stage_type != "ai_screening":
+        return list(snapshot_signals)
+    return [s for s in snapshot_signals if s.get("purpose", "skill") != "eligibility"]
+
+
 def _build_user_message(
     *,
     job: JobPosting,
@@ -570,6 +580,7 @@ async def _generate_one_bank(
         # Capture all primitives needed for the stream + reconcile phases.
         job_id = job.id
         stage_id = stage.id
+        stage_type = stage.stage_type
         snapshot_id = snapshot.id
         stage_duration = stage.duration_minutes
         stage_difficulty = stage.difficulty
@@ -597,7 +608,7 @@ async def _generate_one_bank(
             job_id=job_id,
             stage_id=stage_id,
             snapshot_id=snapshot_id,
-            eligible_signals=snapshot_signals,   # full set
+            eligible_signals=_signals_for_generation(snapshot_signals, stage_type=stage_type),
             prompt_name=prompt_name,
             start_position=0,
             correlation_id=correlation_id,
