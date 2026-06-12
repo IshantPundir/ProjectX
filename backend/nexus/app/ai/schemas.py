@@ -15,9 +15,9 @@ from pydantic import BaseModel, Field, model_validator
 
 SignalType = Literal["competency", "experience", "credential", "behavioral"]
 SignalPriority = Literal["required", "preferred"]
+SignalPurpose = Literal["skill", "eligibility"]
 SignalStage = Literal["screen", "interview"]
 SignalSource = Literal["ai_extracted", "ai_inferred"]
-SignalPurpose = Literal["skill", "eligibility"]
 
 
 class SignalItemV2(BaseModel):

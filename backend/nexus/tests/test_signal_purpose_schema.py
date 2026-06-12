@@ -28,7 +28,7 @@ def test_purpose_rejects_unknown():
 
 
 def test_extracted_signals_requires_at_least_one_skill():
-    elig = dict(type="experience", priority="required", weight=3, knockout=True,
+    elig = dict(type="experience", priority="required", weight=3, knockout=False,
                 stage="screen", source="ai_extracted", inference_basis=None,
                 purpose="eligibility")
     sigs = [SignalItemV2(value=f"{i}+ years", **elig) for i in range(5)]
@@ -37,7 +37,7 @@ def test_extracted_signals_requires_at_least_one_skill():
 
 
 def test_extracted_signals_passes_with_a_skill():
-    elig = dict(type="experience", priority="required", weight=3, knockout=True,
+    elig = dict(type="experience", priority="required", weight=3, knockout=False,
                 stage="screen", source="ai_extracted", inference_basis=None,
                 purpose="eligibility")
     sigs = [SignalItemV2(value=f"{i}+ years", **elig) for i in range(4)]
