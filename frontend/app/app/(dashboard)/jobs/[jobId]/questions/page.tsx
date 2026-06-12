@@ -1659,12 +1659,12 @@ function EmptyBankState({
         {isSelfReviewing
           ? "AI is reviewing and refining the generated questions."
           : isGenerating
-          ? "Copilot is drafting questions scoped to this stage’s signals."
+          ? "Copilot is drafting questions scoped to this stage's signals."
           : "Generate a question bank for this stage. Copilot will draft questions scoped to this stage's signals."}
       </p>
       {isSelfReviewing ? (
         <div className="text-sm inline-flex items-center gap-1.5" style={{ color: "var(--px-accent)" }}>
-          <SparkIcon size={12} /> AI is self-reviewing the bank...
+          <SparkIcon size={12} /> AI is self-reviewing the bank…
         </div>
       ) : isGenerating ? (
         <div className="text-sm" style={{ color: 'var(--px-accent)' }}>
