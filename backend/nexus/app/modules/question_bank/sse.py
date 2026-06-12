@@ -274,7 +274,7 @@ async def _poll_loop(
                     )
                     total_minutes = float(sum(q.estimated_minutes for q in questions))
 
-                    if bank.status in ("draft", "generating"):
+                    if bank.status in ("draft", "generating", "self_reviewing"):
                         all_terminal = False
 
                     # max_updated_at detects in-place edits (PATCH question text etc.)
@@ -392,5 +392,8 @@ async def _poll_loop(
         # the slow heartbeat is sufficient — pub/sub still delivers
         # transitions in real time, and the backstop just catches the
         # rare case where a publish was lost entirely.
-        any_generating = any(status == "generating" for status, _, _ in state.values())
-        await asyncio.sleep(POLL_INTERVAL_SEC if any_generating else POLL_INTERVAL_IDLE_SEC)
+        any_active = any(
+            status in ("generating", "self_reviewing")
+            for status, _, _ in state.values()
+        )
+        await asyncio.sleep(POLL_INTERVAL_SEC if any_active else POLL_INTERVAL_IDLE_SEC)
