@@ -694,6 +694,8 @@ async def reset_banks_for_job(db: AsyncSession, *, job_id: UUID) -> int:
         bank.coverage_notes = None
         bank.confirmed_at = None
         bank.confirmed_by = None
+        bank.generation_error = None
+        bank.is_stale = False
     await db.flush()
     return len(banks)
 

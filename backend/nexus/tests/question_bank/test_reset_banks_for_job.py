@@ -149,27 +149,32 @@ def _make_ai_question(bank: StageQuestionBank) -> StageQuestion:
 
 
 async def test_reset_banks_for_job_wipes_questions_and_drafts_bank(db):
-    """A job with a bank in reviewing/confirmed status is fully reset:
-    status→draft, generated_at→None, coverage_notes→None, questions→0."""
+    """A confirmed bank with stale generation_error + is_stale=True is fully reset:
+    status→draft, all timestamps/notes→None, generation_error→None, is_stale→False,
+    and all AI questions wiped."""
     tenant, user, company = await _setup_tenant_user_unit(db)
     job, snapshot = await _make_job(db, tenant.id, company.id, user.id)
     _instance, stage = await _make_pipeline_and_stage(db, job=job)
 
-    # Create bank in a non-draft status with timestamps and a question
+    # Create bank in confirmed status with stale generation_error and is_stale set —
+    # the primary scenario reset_banks_for_job must unlock (a previously confirmed bank
+    # that went stale and had a generation failure on a re-run).
+    now = datetime.now(UTC)
     bank = StageQuestionBank(
         tenant_id=tenant.id,
         job_posting_id=job.id,
         stage_id=stage.id,
         signal_snapshot_id=snapshot.id,
-        status="reviewing",
+        status="confirmed",
         prompt_version="v2",
-        generated_at=datetime.now(UTC),
+        generated_at=now,
         generated_by=user.id,
         coverage_notes="Covers 3 signals.",
-        confirmed_at=None,
-        confirmed_by=None,
+        confirmed_at=now,
+        confirmed_by=user.id,
         pipeline_version_at_generation=1,
-        is_stale=False,
+        is_stale=True,
+        generation_error="boom",
     )
     db.add(bank)
     await db.flush()
@@ -199,6 +204,8 @@ async def test_reset_banks_for_job_wipes_questions_and_drafts_bank(db):
     assert bank.coverage_notes is None
     assert bank.confirmed_at is None
     assert bank.confirmed_by is None
+    assert bank.generation_error is None
+    assert bank.is_stale is False
 
     # All AI questions must be gone
     q_count_after = (await db.execute(
