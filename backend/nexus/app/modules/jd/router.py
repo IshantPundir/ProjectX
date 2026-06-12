@@ -53,6 +53,7 @@ from app.modules.jd.service import (
 )
 from app.modules.org_units import find_company_profile_in_ancestry
 from app.modules.jd.state_machine import transition
+from app.modules.question_bank import reset_banks_for_job
 from app.modules.jd.sse import job_status_event_generator
 from app.modules.org_units import OrganizationalUnit, get_org_unit_ancestry
 
@@ -744,6 +745,76 @@ async def extract_signals(
     # Dispatch with skip_enrichment=True — the recruiter's enrichment
     # decision is independent. If they want enriched copy, they'll have
     # already clicked /enrich; the actor will pick up description_enriched.
+    background_tasks.add_task(
+        _safe_dispatch_extraction,
+        job_posting_id=str(job.id),
+        tenant_id=str(job.tenant_id),
+        correlation_id=correlation_id,
+        skip_enrichment=True,
+    )
+
+    status_event = await get_job_status(db, job_id)
+    if status_event is not None:
+        background_tasks.add_task(
+            pubsub.publish,
+            pubsub.job_channel(job_id),
+            pubsub.Events.JD_STATUS_CHANGED,
+            status_event.model_dump(mode="json"),
+            correlation_id=correlation_id,
+        )
+
+    return {"status": "accepted"}
+
+
+_REEXTRACT_SOURCE_STATES = {"signals_extracted", "signals_confirmed", "pipeline_built", "active"}
+
+
+@router.post("/{job_id}/re-extract-signals", status_code=202)
+async def re_extract_signals(
+    job_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> dict[str, str]:
+    """Unlock a confirmed/active job and RE-RUN signal extraction.
+
+    Clears the job's question banks (generated from the prior snapshot, now invalid),
+    regresses the job to ``signals_extracting``, and dispatches the extraction actor
+    (``skip_enrichment=True``) which inserts a NEW snapshot version. The recruiter
+    reviews the fresh signals, re-confirms, and regenerates the banks. Distinct from
+    the draft-only ``/extract-signals``. Same 422 guards (empty raw JD, missing profile).
+    """
+    job = await require_job_access(db, job_id, user, "manage")
+    if job.status not in _REEXTRACT_SOURCE_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "job_not_re_extractable",
+                "message": (
+                    f"Cannot re-extract signals from a job in status '{job.status}'. "
+                    "Re-extraction is available on extracted/confirmed/active jobs."
+                ),
+            },
+        )
+    if not (job.description_raw or "").strip():
+        raise EmptyRawJDError(job_id)
+    profile = await find_company_profile_in_ancestry(db, job.org_unit_id)
+    if profile is None:
+        raise CompanyProfileIncompleteError(job.org_unit_id)
+
+    correlation_id = _get_correlation_id(request)
+
+    # Clear the now-invalid banks + regress to signal review, in this transaction.
+    await reset_banks_for_job(db, job_id=job.id)
+    await transition(
+        db, job,
+        to_state="signals_extracting",
+        actor_id=user.user.id,
+        correlation_id=correlation_id,
+    )
+    await db.flush()
+
     background_tasks.add_task(
         _safe_dispatch_extraction,
         job_posting_id=str(job.id),
