@@ -95,6 +95,10 @@ class AIConfig:
         return self._settings.question_bank_prompt_version
 
     @property
+    def jd_signal_extraction_prompt_version(self) -> str:
+        return self._settings.jd_signal_extraction_prompt_version
+
+    @property
     def request_timeout_seconds(self) -> float:
         return self._settings.openai_request_timeout_seconds
 
