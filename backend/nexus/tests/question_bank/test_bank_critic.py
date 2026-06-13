@@ -73,3 +73,23 @@ async def test_run_bank_critic_raises_on_llm_failure(monkeypatch):
             stage_difficulty="hard", stage_duration=20,
             bank_id=uuid.uuid4(), tenant_id=uuid.uuid4(), job_id=uuid.uuid4(),
         )
+
+
+def test_build_critic_message_includes_violations():
+    from app.modules.question_bank.critic import _build_critic_user_message
+    msg = _build_critic_user_message(
+        draft=[_q()], seniority="mid", role_title="X", signals=[],
+        stage_difficulty="hard", stage_duration=20,
+        violations=["There are 2 project_deepdive questions; reduce to one."],
+    )
+    assert "MUST FIX" in msg
+    assert "2 project_deepdive" in msg
+
+
+def test_build_critic_message_no_violations_section_when_none():
+    from app.modules.question_bank.critic import _build_critic_user_message
+    msg = _build_critic_user_message(
+        draft=[_q()], seniority="mid", role_title="X", signals=[],
+        stage_difficulty="hard", stage_duration=20, violations=None,
+    )
+    assert "MUST FIX" not in msg

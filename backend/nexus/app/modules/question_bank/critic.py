@@ -33,6 +33,7 @@ def _build_critic_user_message(
     signals: list[dict],
     stage_difficulty: str,
     stage_duration: int,
+    violations: list[str] | None = None,
 ) -> str:
     parts: list[str] = []
     parts.append("# ROLE\n\n")
@@ -54,6 +55,15 @@ def _build_critic_user_message(
         "Each question below is the draft. Return the corrected full list + a critique.\n\n"
     )
     parts.append(BankCritiqueOutput(critique="(draft — to be replaced)", questions=draft).model_dump_json(indent=2))
+
+    if violations:
+        parts.append("\n# YOU MUST FIX THESE SPECIFIC VIOLATIONS\n")
+        parts.append(
+            "A deterministic check found these. Do NOT claim they are already fixed — fix them:\n"
+        )
+        for v in violations:
+            parts.append(f"  - {v}\n")
+
     parts.append("\n\nNow return a BankCritiqueOutput with the corrected bank.\n")
     return "".join(parts)
 
@@ -85,6 +95,7 @@ async def run_bank_critic(
     bank_id: UUID,
     tenant_id: UUID,
     job_id: UUID,
+    violations: list[str] | None = None,
 ) -> tuple[list[GeneratedQuestion], str]:
     """Audit + correct the draft. Returns (corrected_questions, critique_log).
 
@@ -95,6 +106,7 @@ async def run_bank_critic(
     user_message = _build_critic_user_message(
         draft=draft, seniority=seniority, role_title=role_title, signals=signals,
         stage_difficulty=stage_difficulty, stage_duration=stage_duration,
+        violations=violations,
     )
     messages = [
         {"role": "system", "content": system_prompt},
