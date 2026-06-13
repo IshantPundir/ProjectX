@@ -710,24 +710,61 @@ async def _generate_one_bank(
             )
             corrected = None
 
-        # Re-persist the corrected bank OUTSIDE the critic-skip guard: a persistence
-        # failure here is a genuine error (critic succeeded) and must propagate to the
-        # outer failure path (wipe -> failed), NOT be mislabeled as a critic skip.
-        if corrected is not None:
-            async with get_bypass_session() as wdb:
-                await wdb.execute(text(f"SET LOCAL app.current_tenant = '{tenant_id}'"))
-                wbank = (
-                    await wdb.execute(
-                        select(StageQuestionBank).where(StageQuestionBank.id == bank_id)
-                    )
-                ).scalar_one()
-                await wipe_ai_questions(wdb, bank=wbank)
-                for pos, q in enumerate(corrected):
-                    await persist_one_question(
-                        wdb, bank=wbank, question=q, source="ai_generated",
-                        position=pos, stage_difficulty=stage_difficulty,
-                    )
-                await wdb.commit()
+        # ---- Phase B3.gate: deterministic invariant gate + bounded re-pass + hard-repair ----
+        # The LLM critic can't be trusted to COUNT (it falsely claims compliance), so the
+        # countable AI-screen invariants are guaranteed in code. The gate runs on the critic
+        # output (or the streamed draft if the critic failed); on violations we do ONE targeted
+        # critic re-pass (≤2 critic calls total), then ALWAYS hard-repair before the single
+        # wipe+re-persist — so the HARD invariants hold even without the LLM.
+        from app.modules.question_bank.invariants import check_bank_invariants, hard_repair
+
+        working = corrected if corrected is not None else draft_questions
+        violations = check_bank_invariants(
+            working, stage_type=stage_type, stage_duration_minutes=stage_duration,
+            signals=snapshot_signals,
+        )
+        gate_codes = [v.code for v in violations]
+        if violations and corrected is not None:
+            # One targeted re-pass — only when the critic is available (it produced `corrected`).
+            try:
+                working, _repass_note = await run_bank_critic(
+                    draft=working, seniority=seniority, role_title=role_title,
+                    signals=snapshot_signals, stage_difficulty=stage_difficulty,
+                    stage_duration=stage_duration, bank_id=bank_id, tenant_id=tenant_id,
+                    job_id=job_id, violations=[v.description for v in violations],
+                )
+            except Exception as repass_exc:
+                logger.warning(
+                    "question_bank.critic.repass_failed",
+                    bank_id=str(bank_id), error_type=type(repass_exc).__name__,
+                )
+        # ALWAYS hard-repair (idempotent) so the HARD invariants hold even if the critic/re-pass didn't.
+        working = hard_repair(working, stage_duration_minutes=stage_duration)
+        if gate_codes:
+            critique_note = (
+                f"{critique_note} | gate: {', '.join(sorted(set(gate_codes)))} "
+                "(re-pass + hard-repair applied)."
+            )
+
+        # Replace the draft with the final (critic + gate + repaired) bank. SINGLE wipe+
+        # re-persist covering BOTH paths: on critic success `working` = critic output, on
+        # critic failure `working` = the streamed draft (still gate-checked + hard-repaired).
+        # A persistence failure here is a genuine error and must propagate to the outer
+        # failure path (wipe -> failed), NOT be mislabeled as a critic skip.
+        async with get_bypass_session() as wdb:
+            await wdb.execute(text(f"SET LOCAL app.current_tenant = '{tenant_id}'"))
+            wbank = (
+                await wdb.execute(
+                    select(StageQuestionBank).where(StageQuestionBank.id == bank_id)
+                )
+            ).scalar_one()
+            await wipe_ai_questions(wdb, bank=wbank)
+            for pos, q in enumerate(working):
+                await persist_one_question(
+                    wdb, bank=wbank, question=q, source="ai_generated",
+                    position=pos, stage_difficulty=stage_difficulty,
+                )
+            await wdb.commit()
 
         # ---- Phase C: reconcile + transition (short session) ----
         async with get_bypass_session() as db:

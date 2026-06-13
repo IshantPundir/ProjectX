@@ -1596,10 +1596,12 @@ async def test_generate_one_bank_single_streamed_call_all_kinds(db, monkeypatch)
 
     _patch_session(monkeypatch, db)
     _patch_critic_passthrough(monkeypatch)
-    # A single streamed pass emits both an experience_check and a technical_scenario.
+    # A single streamed pass emits both a behavioral and a technical_scenario.
+    # (Kinds allowed in an AI skills screen — experience_check is forbidden and would
+    # be dropped by the deterministic invariant gate's hard_repair.)
     streamed = [
         *_stream_questions(
-            ["5y Kubernetes"], estimated_minutes=2.0, question_kind="experience_check",
+            ["5y Kubernetes"], estimated_minutes=2.0, question_kind="behavioral",
         ),
         *_stream_questions(["System Design"], estimated_minutes=5.0),
     ]
@@ -1620,10 +1622,10 @@ async def test_generate_one_bank_single_streamed_call_all_kinds(db, monkeypatch)
 
     rows = await get_bank_questions(db, bank.id)
     kinds = {r.question_kind for r in rows}
-    assert kinds == {"experience_check", "technical_scenario"}
+    assert kinds == {"behavioral", "technical_scenario"}
     # Persisted in the order the single stream yielded them (positions 0, 1).
     by_pos = sorted(rows, key=lambda r: r.position)
-    assert by_pos[0].question_kind == "experience_check"
+    assert by_pos[0].question_kind == "behavioral"
     assert by_pos[1].question_kind == "technical_scenario"
 
 
@@ -2052,3 +2054,124 @@ async def test_generation_repins_to_latest_confirmed_snapshot(db, monkeypatch):
     questions = await get_bank_questions(db, bank.id)
     assert len(questions) == 1
     assert questions[0].signal_values == ["PythonV2"]
+
+
+# ---------------------------------------------------------------------------
+# Invariant gate — deterministic guarantee + bounded re-pass (Task 5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_gate_guarantees_one_project_deepdive(db, monkeypatch):
+    """The critic returns TWO project_deepdive questions on BOTH passes; the
+    deterministic gate's hard_repair must guarantee EXACTLY ONE in the final
+    persisted bank (the LLM critic can't be trusted to count)."""
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[_signal(value="Python"), _signal(value="Kafka")],
+    )
+    instance, stage = await _make_pipeline_and_stage(
+        db, job=job, stage_type="ai_screening", duration_minutes=20,
+        name="AI Screening",
+    )
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    transition_to_generating(bank)
+    await db.flush()
+
+    def _two_deepdives() -> list[GeneratedQuestion]:
+        return [
+            _build_question(
+                position=0, text="Walk me through the Python service you owned end to end.",
+                signal_values=["Python"], estimated_minutes=8.0,
+                question_kind="project_deepdive",
+            ),
+            _build_question(
+                position=1, text="Now walk me through the Kafka pipeline you designed.",
+                signal_values=["Kafka"], estimated_minutes=8.0,
+                question_kind="project_deepdive",
+            ),
+        ]
+
+    async def _always_two_deepdives(*, draft, **_kwargs):
+        # Critic IGNORES the violations param and returns two deepdives every pass.
+        return _two_deepdives(), "critic returned two deepdives (test stub)."
+
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.run_bank_critic", _always_two_deepdives
+    )
+    _patch_session(monkeypatch, db)
+    # Streamed draft is irrelevant — the critic replaces it; gate runs on critic output.
+    _patch_stream(monkeypatch, _stream_questions(["Python"]))
+
+    await _generate_one_bank(
+        bank_id=bank.id,
+        tenant_id=tenant.id,
+        started_by=user.id,
+    )
+
+    questions = await get_bank_questions(db, bank.id)
+    deepdives = [q for q in questions if q.question_kind == "project_deepdive"]
+    assert len(deepdives) == 1, (
+        f"hard_repair must guarantee exactly one project_deepdive, got {len(deepdives)} "
+        f"(kinds: {[q.question_kind for q in questions]})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_clean_first_pass_skips_repass(db, monkeypatch):
+    """A CLEAN ai_screening bank from the first critic pass triggers no gate
+    violations → no targeted re-pass → run_bank_critic called EXACTLY ONCE."""
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[_signal(value="Python"), _signal(value="Kafka")],
+    )
+    instance, stage = await _make_pipeline_and_stage(
+        db, job=job, stage_type="ai_screening", duration_minutes=20,
+        name="AI Screening",
+    )
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    transition_to_generating(bank)
+    await db.flush()
+
+    call_count = {"n": 0}
+
+    def _clean_bank() -> list[GeneratedQuestion]:
+        return [
+            _build_question(
+                position=0, text="Walk me through the Python service you owned end to end.",
+                signal_values=["Python"], estimated_minutes=8.0,
+                question_kind="project_deepdive",
+            ),
+            _build_question(
+                position=1, text="Design a Kafka consumer that survives a broker outage.",
+                signal_values=["Kafka"], estimated_minutes=8.0,
+                question_kind="technical_scenario",
+            ),
+        ]
+
+    async def _counting_critic(*, draft, **_kwargs):
+        call_count["n"] += 1
+        return _clean_bank(), "clean critic output (test stub)."
+
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.run_bank_critic", _counting_critic
+    )
+    _patch_session(monkeypatch, db)
+    _patch_stream(monkeypatch, _stream_questions(["Python"]))
+
+    await _generate_one_bank(
+        bank_id=bank.id,
+        tenant_id=tenant.id,
+        started_by=user.id,
+    )
+
+    assert call_count["n"] == 1, (
+        f"A clean first pass must NOT trigger a re-pass; run_bank_critic was called "
+        f"{call_count['n']} times (expected 1)."
+    )
+    questions = await get_bank_questions(db, bank.id)
+    assert len(questions) == 2
+    kinds = sorted(q.question_kind for q in questions)
+    assert kinds == ["project_deepdive", "technical_scenario"]
