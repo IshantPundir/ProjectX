@@ -49,6 +49,7 @@ from app.modules.question_bank.errors import (
 from app.modules.question_bank.service import (
     ensure_bank_exists,
     get_bank_questions,
+    get_latest_confirmed_snapshot,
     persist_one_question,
     replace_question_in_place,
     transition_to_failed,
@@ -558,13 +559,24 @@ async def _generate_one_bank(
                 select(JobPosting).where(JobPosting.id == bank.job_posting_id)
             )
         ).scalar_one()
-        snapshot = (
-            await db.execute(
-                select(JobPostingSignalSnapshot).where(
-                    JobPostingSignalSnapshot.id == bank.signal_snapshot_id
-                )
+        # Re-resolve to the latest confirmed snapshot at generation time.
+        # After a re-extraction creates a newer confirmed snapshot, a bank whose
+        # `signal_snapshot_id` still points to an older version would otherwise
+        # generate questions against stale signals.  `get_latest_confirmed_snapshot`
+        # is ORDER BY version DESC so the winner is always the most-recent confirm.
+        snapshot = await get_latest_confirmed_snapshot(db, bank.job_posting_id)
+        if snapshot is None:
+            transition_to_failed(
+                bank, error="No confirmed signal snapshot to generate from."
             )
-        ).scalar_one()
+            await db.commit()
+            raise RuntimeError(
+                f"Cannot generate bank {bank.id}: no confirmed signal snapshot."
+            )
+        # Re-pin the bank to the active snapshot so this and future generations
+        # always use up-to-date signals.
+        bank.signal_snapshot_id = snapshot.id
+        bank.is_stale = False
 
         prompt_name = STAGE_TYPE_TO_PROMPT.get(stage.stage_type)
         if prompt_name is None:

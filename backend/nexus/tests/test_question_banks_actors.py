@@ -1963,3 +1963,92 @@ async def test_generate_one_bank_recovers_from_self_reviewing_on_retry(
     )
     questions = await get_bank_questions(db, bank.id)
     assert len(questions) == 1
+
+
+# ===========================================================================
+# Re-pin to latest confirmed snapshot
+#
+# When a re-extraction creates a newer confirmed snapshot (v2), a bank that
+# was originally pinned to an older snapshot (v1) must re-pin to v2 at
+# generation time — not silently use stale v1 signals.
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_generation_repins_to_latest_confirmed_snapshot(db, monkeypatch):
+    """Generation re-pins bank.signal_snapshot_id to the latest confirmed snapshot.
+
+    Scenario:
+      1. Create a job with a confirmed v1 snapshot (signal "PythonV1").
+      2. Create a bank pinned to v1 (the initial ensure_bank_exists pin).
+      3. Insert a newer confirmed v2 snapshot (signal "PythonV2").
+      4. Run _generate_one_bank — the stream returns a question for "PythonV2".
+      5. After generation:
+         - bank.signal_snapshot_id must equal v2.id (re-pinned)
+         - bank.is_stale must be False (cleared by the re-pin)
+    """
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+
+    # v1 snapshot — the bank will initially be pinned here
+    job, snapshot_v1 = await _make_job_with_signals(
+        db,
+        tenant.id,
+        unit.id,
+        user.id,
+        signals=[_signal(value="PythonV1")],
+        version=1,
+        confirm=True,
+    )
+    instance, stage = await _make_pipeline_and_stage(db, job=job)
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    # Confirm initial pin to v1
+    assert bank.signal_snapshot_id == snapshot_v1.id
+
+    # Mark bank stale (simulating a pipeline edit that happened post-v1)
+    bank.is_stale = True
+    await db.flush()
+
+    # v2 snapshot — newer confirmed snapshot created after a re-extraction
+    snapshot_v2 = JobPostingSignalSnapshot(
+        tenant_id=tenant.id,
+        job_posting_id=job.id,
+        version=2,
+        signals=[_signal(value="PythonV2")],
+        seniority_level="senior",
+        role_summary="Updated senior backend engineer.",
+        prompt_version="v1",
+        confirmed_by=user.id,
+        confirmed_at=datetime.now(UTC),
+    )
+    db.add(snapshot_v2)
+    await db.flush()
+
+    # Verify v2.id != v1.id (sanity check)
+    assert snapshot_v2.id != snapshot_v1.id
+
+    transition_to_generating(bank)
+    await db.flush()
+
+    _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
+    # The stream uses v2's signal value to prove the active snapshot was used
+    _patch_stream(monkeypatch, _stream_questions(["PythonV2"]))
+
+    await _generate_one_bank(
+        bank_id=bank.id,
+        tenant_id=tenant.id,
+        started_by=user.id,
+    )
+
+    # The bank must be re-pinned to v2 and no longer stale
+    assert bank.signal_snapshot_id == snapshot_v2.id, (
+        f"Expected bank to be re-pinned to v2 ({snapshot_v2.id}), "
+        f"but it still points to {bank.signal_snapshot_id}"
+    )
+    assert bank.is_stale is False, (
+        "Expected bank.is_stale to be cleared by re-pin, but it is still True"
+    )
+    assert bank.status == "reviewing"
+    questions = await get_bank_questions(db, bank.id)
+    assert len(questions) == 1
+    assert questions[0].signal_values == ["PythonV2"]
