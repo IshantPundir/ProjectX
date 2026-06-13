@@ -239,7 +239,8 @@ def _build_user_message(
             parts.append(f"  - REQUIRED PRIMARY: {v!r}\n")
         # bundle_eligible includes secondary_only (secondary_only ⊆ bundle_eligible); show the
         # NON-secondary bundle hints here and the secondary-only must-haves in their own block.
-        pure_bundle = [v for v in coverage_plan.bundle_eligible if v not in coverage_plan.secondary_only]
+        _secondary_set = set(coverage_plan.secondary_only)
+        pure_bundle = [v for v in coverage_plan.bundle_eligible if v not in _secondary_set]
         if pure_bundle:
             parts.append(
                 "\nWhere these related skills GENUINELY co-exercise in one realistic task, "

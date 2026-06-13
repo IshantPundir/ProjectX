@@ -2278,7 +2278,8 @@ async def test_coverage_plan_persisted_on_oversubscribed_ai_screening(
 ):
     """Integration: ai_screening stage with 8 weight-3 skill signals and 15-min duration.
 
-    slot_budget = floor(15 / 3.0) = 5. With 8 must-cover skills, 3 overflow into
+    slot_budget = floor(stage_duration / ai_config.question_bank_min_per_scored_slot_minutes)
+             = floor(15 / 3.0) = 5. With 8 must-cover skills, 3 overflow into
     secondary_only. The persisted bank must have:
       - coverage_feasibility["feasible"] is False
       - len(coverage_feasibility["secondary_only"]) == 3
@@ -2330,6 +2331,13 @@ async def test_coverage_plan_persisted_on_oversubscribed_ai_screening(
     assert len(bank.coverage_feasibility["secondary_only"]) == 3, (
         f"expected 3 secondary_only skills (8 must-covers - 5 slots), "
         f"got {bank.coverage_feasibility['secondary_only']}"
+    )
+    # Planner ranks by (priority==required, weight, knockout) descending, then by
+    # original insertion order as a stable tie-break (all 8 signals are equal-rank
+    # here, so the original order is preserved).  Slots 1-5 go to Skill1-Skill5;
+    # the last 3 overflow to secondary_only.
+    assert set(bank.coverage_feasibility["secondary_only"]) == {"Skill6", "Skill7", "Skill8"}, (
+        f"unexpected secondary_only set: {bank.coverage_feasibility['secondary_only']}"
     )
     assert bank.coverage_notes is not None
     assert "OVER-SUBSCRIBED" in bank.coverage_notes, (
