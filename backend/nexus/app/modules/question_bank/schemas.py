@@ -305,6 +305,19 @@ class QuestionResponse(BaseModel):
     updated_at: datetime
 
 
+class CoverageFeasibility(BaseModel):
+    """Typed over-subscription verdict from the coverage planner (recruiter badge source)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    feasible: bool
+    slot_budget: int
+    must_cover_count: int
+    secondary_only: list[str] = Field(default_factory=list)
+    dropped: list[str] = Field(default_factory=list)
+    recommended_minutes: int
+
+
 class BankResponse(BaseModel):
     id: UUID
     stage_id: UUID
@@ -314,6 +327,7 @@ class BankResponse(BaseModel):
     prompt_version: str
     generation_error: str | None
     coverage_notes: str | None
+    coverage_feasibility: CoverageFeasibility | None = None
     generated_at: datetime | None
     generated_by: UUID | None
     confirmed_at: datetime | None

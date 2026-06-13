@@ -66,6 +66,9 @@ class StageQuestionBank(Base):
     extracted_keyterms: Mapped[list[str] | None] = mapped_column(
         JSONB, nullable=True
     )
+    coverage_feasibility: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("NOW()")
     )

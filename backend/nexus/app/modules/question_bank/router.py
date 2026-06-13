@@ -39,6 +39,7 @@ from app.modules.question_bank.schemas import (
     BankResponse,
     BanksOverviewResponse,
     BankWithQuestionsResponse,
+    CoverageFeasibility,
     CreateQuestionBody,
     GenerateResponse,
     PlaceholderBankResponse,
@@ -270,6 +271,10 @@ def _bank_to_response(
         prompt_version=bank.prompt_version,
         generation_error=bank.generation_error,
         coverage_notes=bank.coverage_notes,
+        coverage_feasibility=(
+            CoverageFeasibility(**bank.coverage_feasibility)
+            if bank.coverage_feasibility else None
+        ),
         generated_at=bank.generated_at,
         generated_by=bank.generated_by,
         confirmed_at=bank.confirmed_at,
