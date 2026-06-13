@@ -80,3 +80,40 @@ def check_bank_invariants(
                     False,
                 ))
     return out
+
+
+def _cap_kind(
+    questions: list[GeneratedQuestion], kind: str, n: int
+) -> list[GeneratedQuestion]:
+    idxs = [i for i, q in enumerate(questions) if q.question_kind == kind]
+    if len(idxs) <= n:
+        return questions
+    # Keep `n`: mandatory first, then earliest position; drop the rest.
+    keep = set(sorted(idxs, key=lambda i: (not questions[i].is_mandatory, questions[i].position))[:n])
+    return [q for i, q in enumerate(questions) if q.question_kind != kind or i in keep]
+
+
+def _trim_to_budget(
+    questions: list[GeneratedQuestion], budget_minutes: int
+) -> list[GeneratedQuestion]:
+    qs = list(questions)
+    while sum(float(q.estimated_minutes) for q in qs) > budget_minutes and len(qs) > 1:
+        # Drop the last non-mandatory question (lowest priority); else the last one.
+        drop = next((i for i in range(len(qs) - 1, -1, -1) if not qs[i].is_mandatory), len(qs) - 1)
+        qs.pop(drop)
+    return qs
+
+
+def hard_repair(
+    questions: list[GeneratedQuestion], *, stage_duration_minutes: int
+) -> list[GeneratedQuestion]:
+    """Unconditionally enforce the HARD AI-screen invariants (idempotent on a clean bank):
+    drop forbidden kinds, cap project_deepdive/behavioral to one, trim to budget. Re-packs
+    positions 0..N-1. Does NOT touch the (non-repairable) uncovered-skill case. Pure."""
+    qs = [q for q in questions if q.question_kind not in _FORBIDDEN_KINDS]
+    qs = _cap_kind(qs, "project_deepdive", _MAX_PROJECT_DEEPDIVE)
+    qs = _cap_kind(qs, "behavioral", _MAX_BEHAVIORAL)
+    qs = _trim_to_budget(qs, stage_duration_minutes)
+    for i, q in enumerate(qs):
+        q.position = i
+    return qs
