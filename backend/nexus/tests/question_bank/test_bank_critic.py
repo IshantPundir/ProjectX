@@ -5,8 +5,6 @@ from app.modules.question_bank.schemas import (
     BankCritiqueOutput, GeneratedQuestion, QuestionRubric, FollowUpDimension,
 )
 
-pytestmark = pytest.mark.asyncio
-
 
 def _q(text="Tell me about a project you drove.", kind="project_deepdive"):
     return GeneratedQuestion(
