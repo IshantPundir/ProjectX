@@ -65,6 +65,24 @@ export function BankHeader({
             Regenerate to pick up the latest.
           </div>
         )}
+        {bank.coverage_feasibility && !bank.coverage_feasibility.feasible && (
+          <div
+            className="mt-2 rounded-md border px-2 py-1 text-[11.5px]"
+            style={{
+              color: 'var(--px-caution)',
+              background: 'var(--px-caution-bg)',
+              borderColor: 'var(--px-caution-line)',
+            }}
+          >
+            ⚠ {bank.coverage_feasibility.secondary_only.length} must-have skill
+            {bank.coverage_feasibility.secondary_only.length === 1 ? '' : 's'} don&apos;t fit this
+            screen&apos;s time budget — extend the stage to ~
+            {bank.coverage_feasibility.recommended_minutes} min to score
+            {' '}
+            {bank.coverage_feasibility.secondary_only.join(', ')}
+            {' '}as their own questions.
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-3">

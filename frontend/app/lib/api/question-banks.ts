@@ -2,6 +2,15 @@ import { apiFetch } from '@/lib/api/client'
 
 // --- Types ---
 
+export type CoverageFeasibility = {
+  feasible: boolean
+  slot_budget: number
+  must_cover_count: number
+  secondary_only: string[]
+  dropped: string[]
+  recommended_minutes: number
+}
+
 export type BankStatus =
   | 'draft'
   | 'generating'
@@ -69,6 +78,7 @@ export type BankResponse = {
   prompt_version: string
   generation_error: string | null
   coverage_notes: string | null
+  coverage_feasibility: CoverageFeasibility | null
   generated_at: string | null
   generated_by: string | null
   confirmed_at: string | null
