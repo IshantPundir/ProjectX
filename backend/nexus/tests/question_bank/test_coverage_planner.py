@@ -1,7 +1,7 @@
 from app.modules.question_bank.coverage_planner import build_coverage_plan, CoveragePlan
 
 
-def _sig(value, *, weight=2, priority="required", purpose="skill"):
+def _sig(value, *, weight=2, priority="preferred", purpose="skill"):
     return {"value": value, "weight": weight, "priority": priority,
             "purpose": purpose, "type": "competency"}
 
@@ -92,3 +92,12 @@ def test_report_is_human_readable_string():
     plan = build_coverage_plan(signals, stage_duration_minutes=15, min_per_scored_slot=3.0)
     assert isinstance(plan.report, str) and plan.report
     assert "secondary" in plan.report.lower() or "extend" in plan.report.lower()
+
+
+def test_exact_fit_is_feasible():
+    # must_cover_count == slot_budget (floor(15/3)=5) -> feasible, no overflow.
+    signals = [_sig(f"S{i}") for i in range(5)]
+    plan = build_coverage_plan(signals, stage_duration_minutes=15, min_per_scored_slot=3.0)
+    assert plan.feasible is True
+    assert len(plan.required_primaries) == 5
+    assert plan.secondary_only == []

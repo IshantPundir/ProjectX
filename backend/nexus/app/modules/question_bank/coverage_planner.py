@@ -44,7 +44,7 @@ def _is_must_cover(sig: dict) -> bool:
     return priority == "required" or weight >= 2
 
 
-def _rank_key(sig: dict) -> tuple:
+def _rank_key(sig: dict) -> tuple[bool, int, bool]:
     """Descending importance: required first, then higher weight, then knockout."""
     return (
         sig.get("priority", "preferred") == "required",
@@ -98,8 +98,8 @@ def build_coverage_plan(
         )
         return plan
 
-    # Over-subscription: overflow must-covers ride as secondaries (bundle where coherent),
-    # optionals have no room at all.
+    # Over-subscription: overflow must-covers ride as secondaries (bundle where coherent);
+    # the optional tail has no room and is dropped.
     recommended = math.ceil(must_cover_count * min_per_scored_slot)
     report = (
         f"OVER-SUBSCRIBED: {must_cover_count} must-have skills exceed the "
@@ -111,7 +111,7 @@ def build_coverage_plan(
         slot_budget=slot_budget,
         must_cover_count=must_cover_count,
         required_primaries=primaries,
-        bundle_eligible=overflow + optional_values,
+        bundle_eligible=overflow,
         secondary_only=overflow,
         dropped=optional_values,
         feasible=False,
