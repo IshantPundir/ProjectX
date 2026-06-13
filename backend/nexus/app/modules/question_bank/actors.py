@@ -778,12 +778,15 @@ async def _generate_one_bank(
         # output (or the streamed draft if the critic failed); on violations we do ONE targeted
         # critic re-pass (≤2 critic calls total), then ALWAYS hard-repair before the single
         # wipe+re-persist — so the HARD invariants hold even without the LLM.
-        from app.modules.question_bank.invariants import check_bank_invariants, hard_repair
+        from app.modules.question_bank.invariants import (
+            check_bank_invariants, hard_repair, seniority_requires_deepdive,
+        )
 
+        require_deepdive = seniority_requires_deepdive(seniority)
         working = corrected if corrected is not None else draft_questions
         violations = check_bank_invariants(
             working, stage_type=stage_type, stage_duration_minutes=stage_duration,
-            plan=coverage_plan,
+            plan=coverage_plan, require_deepdive=require_deepdive,
         )
         gate_codes = [v.code for v in violations]
         if violations and corrected is not None:
@@ -804,6 +807,7 @@ async def _generate_one_bank(
         working = hard_repair(
             working, stage_type=stage_type, stage_duration_minutes=stage_duration,
             required_primaries=set(coverage_plan.required_primaries) if coverage_plan else None,
+            require_deepdive=require_deepdive,
         )
         if gate_codes:
             critique_note = (

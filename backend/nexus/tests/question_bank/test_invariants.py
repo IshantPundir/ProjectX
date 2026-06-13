@@ -1,4 +1,4 @@
-from app.modules.question_bank.invariants import check_bank_invariants, Violation, hard_repair
+from app.modules.question_bank.invariants import check_bank_invariants, Violation, hard_repair, seniority_requires_deepdive
 from app.modules.question_bank.schemas import GeneratedQuestion, QuestionRubric, FollowUpDimension
 from app.modules.question_bank.coverage_planner import CoveragePlan
 
@@ -160,3 +160,66 @@ def test_hard_repair_drops_redundant_required_primary_in_pass2():
                       required_primaries={"must"})
     assert len(out) == 1
     assert out[0].primary_signal == "must"
+
+
+# ---------------------------------------------------------------------------
+# Seniority-gated project_deepdive floor tests
+# ---------------------------------------------------------------------------
+
+def test_seniority_requires_deepdive_senior_lead_principal():
+    assert seniority_requires_deepdive("senior") is True
+    assert seniority_requires_deepdive("lead") is True
+    assert seniority_requires_deepdive("principal") is True
+    assert seniority_requires_deepdive("PRINCIPAL") is True  # case-insensitive
+
+
+def test_seniority_requires_deepdive_junior_mid_none():
+    assert seniority_requires_deepdive("junior") is False
+    assert seniority_requires_deepdive("mid") is False
+    assert seniority_requires_deepdive(None) is False
+    assert seniority_requires_deepdive("") is False
+
+
+def test_too_few_project_deepdive_fires_for_senior_when_zero():
+    qs = [_q("technical_scenario", signals=("A",)), _q("technical_scenario", signals=("B",))]
+    vs = check_bank_invariants(qs, stage_type="ai_screening", stage_duration_minutes=20,
+                               plan=None, require_deepdive=True)
+    few = [v for v in vs if v.code == "too_few_project_deepdive"]
+    assert few and few[0].hard_repairable is False
+
+
+def test_too_few_project_deepdive_not_fired_when_one_present():
+    qs = [_q("technical_scenario", signals=("A",)), _q("project_deepdive", signals=("B",))]
+    vs = check_bank_invariants(qs, stage_type="ai_screening", stage_duration_minutes=20,
+                               plan=None, require_deepdive=True)
+    assert all(v.code != "too_few_project_deepdive" for v in vs)
+
+
+def test_too_few_project_deepdive_not_fired_when_not_required():
+    qs = [_q("technical_scenario", signals=("A",)), _q("technical_scenario", signals=("B",))]
+    vs = check_bank_invariants(qs, stage_type="ai_screening", stage_duration_minutes=20,
+                               plan=None, require_deepdive=False)
+    assert all(v.code != "too_few_project_deepdive" for v in vs)
+
+
+def test_hard_repair_protects_sole_deepdive_for_senior_over_budget():
+    # 3 x 8min = 24 > 20. All three have primary 'A' (the deepdive's primary is redundant).
+    # Without protection the reversed scan would drop the deepdive first; require_deepdive
+    # must keep it and drop a redundant scenario instead.
+    qs = [_q("technical_scenario", mins=8.0, pos=0, signals=("A",)),
+          _q("technical_scenario", mins=8.0, pos=1, signals=("A",)),
+          _q("project_deepdive", mins=8.0, pos=2, signals=("A",))]
+    out = hard_repair(qs, stage_type="ai_screening", stage_duration_minutes=20,
+                      required_primaries={"A"}, require_deepdive=True)
+    assert any(q.question_kind == "project_deepdive" for q in out)  # deepdive survived
+    assert sum(float(q.estimated_minutes) for q in out) <= 20
+
+
+def test_hard_repair_does_not_force_protect_deepdive_when_not_required():
+    # require_deepdive=False → normal behavior (deepdive not specially protected).
+    qs = [_q("technical_scenario", mins=8.0, pos=0, signals=("A",)),
+          _q("technical_scenario", mins=8.0, pos=1, signals=("A",)),
+          _q("project_deepdive", mins=8.0, pos=2, signals=("A",))]
+    out = hard_repair(qs, stage_type="ai_screening", stage_duration_minutes=20,
+                      required_primaries={"A"}, require_deepdive=False)
+    assert sum(float(q.estimated_minutes) for q in out) <= 20  # still fits; no crash

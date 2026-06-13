@@ -20,6 +20,16 @@ _MAX_PROJECT_DEEPDIVE = 1
 _MAX_BEHAVIORAL = 1
 _FORBIDDEN_KINDS = ("experience_check", "compliance_binary")
 
+# Seniority levels for which an AI screen MUST include one project_deepdive (the
+# ownership/realness anchor). Junior/mid/operational roles may legitimately have zero,
+# so the FLOOR is seniority-gated; the CEILING (<=1) above is unconditional.
+_SENIORITY_FLOOR_DEEPDIVE = frozenset({"senior", "lead", "principal"})
+
+
+def seniority_requires_deepdive(seniority_level: str | None) -> bool:
+    """True when this seniority must include exactly one project_deepdive (floor=1)."""
+    return (seniority_level or "").strip().lower() in _SENIORITY_FLOOR_DEEPDIVE
+
 
 @dataclass(frozen=True)
 class Violation:
@@ -34,6 +44,7 @@ def check_bank_invariants(
     stage_type: str,
     stage_duration_minutes: int,
     plan: CoveragePlan | None,
+    require_deepdive: bool = False,
 ) -> list[Violation]:
     """Countable invariants for an AI skills screen. Returns [] for other stage types."""
     if stage_type != "ai_screening":
@@ -49,6 +60,15 @@ def check_bank_invariants(
             "EXACTLY ONE. Reduce to one and replace the extra(s) with technical_scenario "
             "questions that test an uncovered high-weight skill.",
             True,
+        ))
+    if require_deepdive and n_dd == 0:
+        out.append(Violation(
+            "too_few_project_deepdive",
+            "This senior-level AI screen has NO project_deepdive; it must include EXACTLY "
+            "ONE (the ownership anchor — a real project the candidate drove, probed for the "
+            "decisions they owned, what they chose it over, what broke, and what they'd "
+            "change). Convert the lowest-value technical_scenario into one project_deepdive.",
+            False,
         ))
     n_beh = kinds.count("behavioral")
     if n_beh > _MAX_BEHAVIORAL:
@@ -108,6 +128,7 @@ def _trim_to_budget(
     questions: list[GeneratedQuestion],
     budget_minutes: int,
     required_primaries: set[str],
+    require_deepdive: bool = False,
 ) -> list[GeneratedQuestion]:
     """Drop lowest-priority questions until within budget — coverage-aware.
 
@@ -117,6 +138,8 @@ def _trim_to_budget(
     questions before redundantly-covered required-primary ones. If only mandatory/protected
     questions remain over budget, stops (a must-cover is never sacrificed for the time budget
     — the planner already reconciled the must-cover set against the slot budget upstream).
+    When require_deepdive is True, the sole project_deepdive is never trimmed (a senior
+    screen must keep its ownership anchor).
     """
     qs = list(questions)
 
@@ -129,19 +152,26 @@ def _trim_to_budget(
     def _is_required_primary(idx: int) -> bool:
         return qs[idx].primary_signal in required_primaries
 
+    def _is_protected_deepdive(idx: int) -> bool:
+        return (
+            require_deepdive
+            and qs[idx].question_kind == "project_deepdive"
+            and sum(1 for q in qs if q.question_kind == "project_deepdive") == 1
+        )
+
     while sum(float(q.estimated_minutes) for q in qs) > budget_minutes and len(qs) > 1:
         drop = None
         # Pass 1: prefer dropping non-mandatory questions whose primary_signal is NOT in
         # required_primaries (pure optional padding — safest drop).
         for i in range(len(qs) - 1, -1, -1):
-            if not qs[i].is_mandatory and not _is_required_primary(i):
+            if not qs[i].is_mandatory and not _is_required_primary(i) and not _is_protected_deepdive(i):
                 drop = i
                 break
         # Pass 2: fall back to non-mandatory redundant required-primary questions (already
         # covered by another question in the bank).
         if drop is None:
             for i in range(len(qs) - 1, -1, -1):
-                if not qs[i].is_mandatory and not _is_sole_required_cover(i):
+                if not qs[i].is_mandatory and not _is_sole_required_cover(i) and not _is_protected_deepdive(i):
                     drop = i
                     break
         if drop is None:
@@ -156,6 +186,7 @@ def hard_repair(
     stage_type: str,
     stage_duration_minutes: int,
     required_primaries: set[str] | None = None,
+    require_deepdive: bool = False,
 ) -> list[GeneratedQuestion]:
     """Unconditionally enforce the HARD AI-screen invariants (idempotent on a clean bank):
     drop forbidden kinds, cap project_deepdive/behavioral to one, coverage-aware trim to
@@ -167,7 +198,7 @@ def hard_repair(
     qs = [q for q in questions if q.question_kind not in _FORBIDDEN_KINDS]
     qs = _cap_kind(qs, "project_deepdive", _MAX_PROJECT_DEEPDIVE)
     qs = _cap_kind(qs, "behavioral", _MAX_BEHAVIORAL)
-    qs = _trim_to_budget(qs, stage_duration_minutes, required_primaries or set())
+    qs = _trim_to_budget(qs, stage_duration_minutes, required_primaries or set(), require_deepdive)
     for i, q in enumerate(qs):
         q.position = i
     return qs
