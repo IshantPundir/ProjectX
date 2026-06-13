@@ -16,10 +16,6 @@ def _q(kind, mins=4.0, signals=("Workato workflow development",), pos=0, mand=Fa
     )
 
 
-def _sig(value, weight=3, purpose="skill"):
-    return {"value": value, "weight": weight, "purpose": purpose, "type": "competency"}
-
-
 def test_two_project_deepdives_flagged():
     qs = [_q("project_deepdive", pos=0), _q("project_deepdive", pos=1)]
     vs = check_bank_invariants(qs, stage_type="ai_screening", stage_duration_minutes=20, plan=None)
@@ -149,7 +145,18 @@ def test_hard_repair_drops_optional_primary_first():
     qs = [_q("technical_scenario", mins=8.0, pos=0, signals=("must",)),
           _q("technical_scenario", mins=8.0, pos=1, signals=("opt",)),
           _q("technical_scenario", mins=8.0, pos=2, signals=("must",))]
-    # Two "must" questions (redundant cover) — the optional one drops first.
+    # "opt" is not a required_primary -> Pass 1 drops it before any "must" question.
     out = hard_repair(qs, stage_type="ai_screening", stage_duration_minutes=20,
                       required_primaries={"must"})
     assert all(q.primary_signal != "opt" for q in out)
+
+
+def test_hard_repair_drops_redundant_required_primary_in_pass2():
+    # No non-required-primary questions remain; Pass 1 finds nothing.
+    # Pass 2 drops the redundant second cover of "must".
+    qs = [_q("technical_scenario", mins=8.0, pos=0, signals=("must",)),
+          _q("technical_scenario", mins=8.0, pos=1, signals=("must",))]
+    out = hard_repair(qs, stage_type="ai_screening", stage_duration_minutes=12,
+                      required_primaries={"must"})
+    assert len(out) == 1
+    assert out[0].primary_signal == "must"
