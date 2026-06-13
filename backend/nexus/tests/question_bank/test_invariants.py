@@ -68,7 +68,7 @@ def test_non_ai_screening_stage_no_rules():
 
 def test_hard_repair_caps_project_deepdive_to_one_keeps_mandatory():
     qs = [_q("project_deepdive", pos=0, mand=False), _q("project_deepdive", pos=1, mand=True)]
-    out = hard_repair(qs, stage_duration_minutes=20)
+    out = hard_repair(qs, stage_type="ai_screening", stage_duration_minutes=20)
     dds = [q for q in out if q.question_kind == "project_deepdive"]
     assert len(dds) == 1 and dds[0].is_mandatory is True  # kept the mandatory one
     assert [q.position for q in out] == list(range(len(out)))  # re-packed
@@ -76,7 +76,7 @@ def test_hard_repair_caps_project_deepdive_to_one_keeps_mandatory():
 
 def test_hard_repair_drops_forbidden_kinds():
     qs = [_q("technical_scenario"), _q("experience_check"), _q("compliance_binary")]
-    out = hard_repair(qs, stage_duration_minutes=20)
+    out = hard_repair(qs, stage_type="ai_screening", stage_duration_minutes=20)
     assert all(q.question_kind not in ("experience_check", "compliance_binary") for q in out)
 
 
@@ -84,12 +84,22 @@ def test_hard_repair_trims_to_budget_keeps_mandatory():
     qs = [_q("technical_scenario", mins=8.0, pos=0, mand=True),
           _q("technical_scenario", mins=8.0, pos=1),
           _q("technical_scenario", mins=8.0, pos=2)]
-    out = hard_repair(qs, stage_duration_minutes=20)
+    out = hard_repair(qs, stage_type="ai_screening", stage_duration_minutes=20)
     assert sum(float(q.estimated_minutes) for q in out) <= 20
     assert any(q.is_mandatory for q in out)  # mandatory survived the trim
 
 
 def test_hard_repair_idempotent_on_clean_bank():
     qs = [_q("technical_scenario", mins=4.0), _q("project_deepdive", mins=4.0)]
-    out = hard_repair(qs, stage_duration_minutes=20)
+    out = hard_repair(qs, stage_type="ai_screening", stage_duration_minutes=20)
     assert len(out) == 2
+
+
+def test_hard_repair_noop_for_phone_screen_keeps_experience_check():
+    qs = [_q("experience_check", pos=0), _q("compliance_binary", pos=1),
+          _q("project_deepdive", pos=2), _q("project_deepdive", pos=3)]
+    out = hard_repair(qs, stage_type="phone_screen", stage_duration_minutes=20)
+    kinds = [q.question_kind for q in out]
+    assert "experience_check" in kinds and "compliance_binary" in kinds  # NOT stripped
+    assert kinds.count("project_deepdive") == 2  # phone_screen has no deepdive cap
+    assert len(out) == 4  # unchanged

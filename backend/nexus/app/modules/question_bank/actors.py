@@ -739,7 +739,7 @@ async def _generate_one_bank(
                     bank_id=str(bank_id), error_type=type(repass_exc).__name__,
                 )
         # ALWAYS hard-repair (idempotent) so the HARD invariants hold even if the critic/re-pass didn't.
-        working = hard_repair(working, stage_duration_minutes=stage_duration)
+        working = hard_repair(working, stage_type=stage_type, stage_duration_minutes=stage_duration)
         if gate_codes:
             critique_note = (
                 f"{critique_note} | gate: {', '.join(sorted(set(gate_codes)))} "

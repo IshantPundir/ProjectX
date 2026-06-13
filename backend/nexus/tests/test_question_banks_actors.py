@@ -2175,3 +2175,85 @@ async def test_clean_first_pass_skips_repass(db, monkeypatch):
     assert len(questions) == 2
     kinds = sorted(q.question_kind for q in questions)
     assert kinds == ["project_deepdive", "technical_scenario"]
+
+
+@pytest.mark.asyncio
+async def test_phone_screen_generation_keeps_experience_check(db, monkeypatch):
+    """Regression guard for the hard_repair stage-guard fix.
+
+    phone_screen legitimately uses experience_check + compliance_binary as core
+    question kinds. Before the fix, hard_repair ran unconditionally and stripped
+    them even for phone_screen banks. This test seeds a phone_screen stage, makes
+    the critic return a bank containing experience_check + compliance_binary, and
+    asserts the persisted bank still contains those kinds.
+    """
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[_signal(value="5y Python experience"), _signal(value="GDPR compliance")],
+    )
+    instance, stage = await _make_pipeline_and_stage(
+        db, job=job, stage_type="phone_screen", duration_minutes=20,
+        name="Phone Screen",
+    )
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    transition_to_generating(bank)
+    await db.flush()
+
+    # The critic returns a bank with experience_check + compliance_binary —
+    # the core kinds for a phone_screen that hard_repair must NOT strip.
+    def _phone_screen_bank() -> list[GeneratedQuestion]:
+        return [
+            _build_question(
+                position=0,
+                text="Walk me through your Python production experience in the last two years.",
+                signal_values=["5y Python experience"],
+                estimated_minutes=5.0,
+                question_kind="experience_check",
+            ),
+            _build_question(
+                position=1,
+                text="Have you handled GDPR subject-access requests before?",
+                signal_values=["GDPR compliance"],
+                estimated_minutes=3.0,
+                question_kind="compliance_binary",
+            ),
+            _build_question(
+                position=2,
+                text="Describe a Python service you owned end to end.",
+                signal_values=["5y Python experience"],
+                estimated_minutes=7.0,
+                question_kind="project_deepdive",
+            ),
+        ]
+
+    async def _phone_screen_critic(*, draft, **_kwargs):
+        return _phone_screen_bank(), "phone_screen critic (test stub)."
+
+    monkeypatch.setattr(
+        "app.modules.question_bank.actors.run_bank_critic", _phone_screen_critic
+    )
+    _patch_session(monkeypatch, db)
+    # The streamed draft doesn't matter — the critic replaces it; hard_repair runs
+    # on the critic output and must be a no-op for phone_screen.
+    _patch_stream(monkeypatch, _stream_questions(["5y Python experience"]))
+
+    await _generate_one_bank(
+        bank_id=bank.id,
+        tenant_id=tenant.id,
+        started_by=user.id,
+    )
+
+    assert bank.status == "reviewing"
+    questions = await get_bank_questions(db, bank.id)
+    kinds = [q.question_kind for q in questions]
+    assert "experience_check" in kinds, (
+        f"hard_repair must NOT strip experience_check from phone_screen banks; "
+        f"persisted kinds: {kinds}"
+    )
+    assert "compliance_binary" in kinds, (
+        f"hard_repair must NOT strip compliance_binary from phone_screen banks; "
+        f"persisted kinds: {kinds}"
+    )
+    assert "project_deepdive" in kinds  # also preserved — no deepdive cap for phone_screen
+    assert len(questions) == 3  # all three questions survived unchanged

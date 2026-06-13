@@ -105,11 +105,14 @@ def _trim_to_budget(
 
 
 def hard_repair(
-    questions: list[GeneratedQuestion], *, stage_duration_minutes: int
+    questions: list[GeneratedQuestion], *, stage_type: str, stage_duration_minutes: int
 ) -> list[GeneratedQuestion]:
     """Unconditionally enforce the HARD AI-screen invariants (idempotent on a clean bank):
     drop forbidden kinds, cap project_deepdive/behavioral to one, trim to budget. Re-packs
-    positions 0..N-1. Does NOT touch the (non-repairable) uncovered-skill case. Pure."""
+    positions 0..N-1. Returns the questions UNCHANGED for non-ai_screening stages (their rules
+    differ — e.g. phone_screen legitimately uses experience_check/compliance_binary). Pure."""
+    if stage_type != "ai_screening":
+        return questions
     qs = [q for q in questions if q.question_kind not in _FORBIDDEN_KINDS]
     qs = _cap_kind(qs, "project_deepdive", _MAX_PROJECT_DEEPDIVE)
     qs = _cap_kind(qs, "behavioral", _MAX_BEHAVIORAL)
