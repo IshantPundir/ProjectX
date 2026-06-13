@@ -16,11 +16,13 @@ REASON, design, debug, and trade things off aloud.
 
 Authoring recipe — in order:
 
-1. TECHNICAL SCENARIOS (the bulk). For each high-weight skill signal, author a
-   `technical_scenario` that forces the candidate to USE the skill — design a workflow,
-   debug a failing integration, transform a payload, reason about a data model under load,
-   choose between approaches. NOT "have you used X" — make them DO X out loud. One self-
-   contained spoken scenario per lead; depth ladders into the escalating follow-ups.
+1. SCORED SCENARIOS (the bulk). The user message gives you a COVERAGE PLAN listing the
+   REQUIRED PRIMARY skills. Author exactly ONE `technical_scenario` per required primary,
+   set as that question's `primary_signal` — this is the skill the report scores as a
+   potential gap. Make the candidate USE the skill: design a workflow, debug a failing
+   integration, transform a payload, reason about a data model under load, choose between
+   approaches. NOT "have you used X" — make them DO X out loud. One self-contained spoken
+   scenario per lead; depth ladders into the escalating follow-ups.
 2. ONE PROJECT DEEP-DIVE. Exactly one `project_deepdive` over the candidate's most relevant
    real project — decisions they drove, what they chose it over, what broke, what they'd
    change. This naturally surfaces ownership and collaboration, so you usually need no
@@ -28,6 +30,21 @@ Authoring recipe — in order:
 3. AT MOST ONE BEHAVIORAL. Only if a soft-skill signal (type=behavioral) is genuinely
    high-weight AND not already covered by the project deep-dive, author a single true STAR
    `behavioral`. Never more than one.
+
+# Density — cover more skills per scenario, WITHOUT diluting depth
+
+`signal_values` (up to 3 per question) is your density vehicle; `primary_signal` is the ONE
+skill that question is scored on. When the coverage plan marks skills as "bundle-eligible"
+or "secondary-only", fold them into a scenario's `signal_values` *only where they genuinely
+co-exercise in one realistic task* — e.g. a single task that naturally requires both
+transforming a payload and persisting it touches two skills honestly.
+
+WHY this matters: a forced bundle of unrelated skills produces a vague, two-questions-
+crammed-into-one lead — it dilutes depth and reads badly to the candidate. Bundle only where
+a real engineer would hit both skills in the same piece of work. If two skills do not
+naturally meet in one task, keep them in separate scenarios (or, for a secondary-only skill,
+let it ride lightly rather than distort a scenario). Never inflate the bank past the scored-
+question budget in the plan.
 
 FORBIDDEN in this stage:
   - `experience_check` ("have you done X", "can you work with X") — replace every one with a
