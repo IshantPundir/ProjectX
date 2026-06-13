@@ -1,5 +1,6 @@
 from app.modules.question_bank.invariants import check_bank_invariants, Violation, hard_repair
 from app.modules.question_bank.schemas import GeneratedQuestion, QuestionRubric, FollowUpDimension
+from app.modules.question_bank.coverage_planner import CoveragePlan
 
 
 def _q(kind, mins=4.0, signals=("Workato workflow development",), pos=0, mand=False):
@@ -21,48 +22,75 @@ def _sig(value, weight=3, purpose="skill"):
 
 def test_two_project_deepdives_flagged():
     qs = [_q("project_deepdive", pos=0), _q("project_deepdive", pos=1)]
-    vs = check_bank_invariants(qs, stage_type="ai_screening", stage_duration_minutes=20, signals=[])
+    vs = check_bank_invariants(qs, stage_type="ai_screening", stage_duration_minutes=20, plan=None)
     assert any(v.code == "too_many_project_deepdive" and v.hard_repairable for v in vs)
 
 
 def test_forbidden_kinds_flagged():
     qs = [_q("experience_check"), _q("compliance_binary")]
-    vs = check_bank_invariants(qs, stage_type="ai_screening", stage_duration_minutes=20, signals=[])
+    vs = check_bank_invariants(qs, stage_type="ai_screening", stage_duration_minutes=20, plan=None)
     assert any(v.code == "forbidden_kind" and v.hard_repairable for v in vs)
 
 
 def test_two_behavioral_flagged():
     qs = [_q("behavioral", pos=0), _q("behavioral", pos=1)]
-    vs = check_bank_invariants(qs, stage_type="ai_screening", stage_duration_minutes=20, signals=[])
+    vs = check_bank_invariants(qs, stage_type="ai_screening", stage_duration_minutes=20, plan=None)
     assert any(v.code == "too_many_behavioral" for v in vs)
 
 
 def test_over_budget_flagged():
     qs = [_q("technical_scenario", mins=15.0), _q("technical_scenario", mins=15.0)]
-    vs = check_bank_invariants(qs, stage_type="ai_screening", stage_duration_minutes=20, signals=[])
+    vs = check_bank_invariants(qs, stage_type="ai_screening", stage_duration_minutes=20, plan=None)
     assert any(v.code == "over_budget" for v in vs)
 
 
-def test_uncovered_high_weight_skill_detected_not_repairable():
+def test_uncovered_required_primary_detected_not_repairable():
     qs = [_q("technical_scenario", signals=("Workato workflow development",))]
-    signals = [_sig("Workato workflow development", 3), _sig("AI-driven workflows", 3)]
-    vs = check_bank_invariants(qs, stage_type="ai_screening", stage_duration_minutes=20, signals=signals)
-    cov = [v for v in vs if v.code == "uncovered_high_weight_skill"]
+    plan = CoveragePlan(
+        slot_budget=6, must_cover_count=2,
+        required_primaries=["Workato workflow development", "AI-driven workflows"],
+    )
+    vs = check_bank_invariants(qs, stage_type="ai_screening",
+                               stage_duration_minutes=20, plan=plan)
+    cov = [v for v in vs if v.code == "uncovered_required_primary"]
     assert cov and cov[0].hard_repairable is False
     assert "AI-driven workflows" in cov[0].description
 
 
-def test_clean_ai_screen_has_no_violations():
-    qs = [_q("technical_scenario", mins=4.0, signals=("Workato workflow development",)),
-          _q("project_deepdive", mins=4.0, signals=("Workato workflow development",))]
-    vs = check_bank_invariants(qs, stage_type="ai_screening", stage_duration_minutes=20,
-                               signals=[_sig("Workato workflow development", 3)])
+def test_covered_required_primary_via_primary_signal_no_violation():
+    # The skill is the question's PRIMARY_SIGNAL -> covered (scored).
+    qs = [_q("technical_scenario", signals=("Workato workflow development",)),
+          _q("project_deepdive", signals=("Workato workflow development",))]
+    plan = CoveragePlan(slot_budget=6, must_cover_count=1,
+                        required_primaries=["Workato workflow development"])
+    vs = check_bank_invariants(qs, stage_type="ai_screening",
+                               stage_duration_minutes=20, plan=plan)
     assert vs == []
+
+
+def test_required_primary_only_in_signal_values_is_NOT_covered():
+    # Skill rides as a SECONDARY (in signal_values, not primary_signal) -> still uncovered
+    # because the report scores primary_signal only.
+    qs = [_q("technical_scenario",
+             signals=("Workato workflow development", "AI-driven workflows"))]
+    # primary_signal == signals[0] == "Workato workflow development" (see _q)
+    plan = CoveragePlan(slot_budget=6, must_cover_count=1,
+                        required_primaries=["AI-driven workflows"])
+    vs = check_bank_invariants(qs, stage_type="ai_screening",
+                               stage_duration_minutes=20, plan=plan)
+    assert any(v.code == "uncovered_required_primary" for v in vs)
+
+
+def test_plan_none_skips_coverage_check():
+    qs = [_q("technical_scenario")]
+    vs = check_bank_invariants(qs, stage_type="ai_screening",
+                               stage_duration_minutes=20, plan=None)
+    assert all(v.code != "uncovered_required_primary" for v in vs)
 
 
 def test_non_ai_screening_stage_no_rules():
     qs = [_q("project_deepdive"), _q("project_deepdive"), _q("experience_check")]
-    vs = check_bank_invariants(qs, stage_type="phone_screen", stage_duration_minutes=10, signals=[])
+    vs = check_bank_invariants(qs, stage_type="phone_screen", stage_duration_minutes=10, plan=None)
     assert vs == []
 
 
@@ -103,3 +131,25 @@ def test_hard_repair_noop_for_phone_screen_keeps_experience_check():
     assert "experience_check" in kinds and "compliance_binary" in kinds  # NOT stripped
     assert kinds.count("project_deepdive") == 2  # phone_screen has no deepdive cap
     assert len(out) == 4  # unchanged
+
+
+def test_hard_repair_coverage_aware_never_drops_sole_required_primary():
+    # 3 x 8min = 24min over a 20min budget. The required-primary's question is the
+    # SOLE cover of "must" and must survive even though it's last/non-mandatory.
+    qs = [_q("technical_scenario", mins=8.0, pos=0, signals=("opt1",)),
+          _q("technical_scenario", mins=8.0, pos=1, signals=("opt2",)),
+          _q("technical_scenario", mins=8.0, pos=2, signals=("must",))]
+    out = hard_repair(qs, stage_type="ai_screening", stage_duration_minutes=20,
+                      required_primaries={"must"})
+    assert any(q.primary_signal == "must" for q in out)  # protected
+    assert sum(float(q.estimated_minutes) for q in out) <= 20
+
+
+def test_hard_repair_drops_optional_primary_first():
+    qs = [_q("technical_scenario", mins=8.0, pos=0, signals=("must",)),
+          _q("technical_scenario", mins=8.0, pos=1, signals=("opt",)),
+          _q("technical_scenario", mins=8.0, pos=2, signals=("must",))]
+    # Two "must" questions (redundant cover) — the optional one drops first.
+    out = hard_repair(qs, stage_type="ai_screening", stage_duration_minutes=20,
+                      required_primaries={"must"})
+    assert all(q.primary_signal != "opt" for q in out)
