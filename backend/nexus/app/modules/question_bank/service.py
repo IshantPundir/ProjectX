@@ -278,15 +278,31 @@ async def get_banks_for_pipeline(
 # Validators (used at confirm time and by LLM post-validation)
 # ---------------------------------------------------------------------------
 
+
+def _signals_for_generation(snapshot_signals: list[dict], *, stage_type: str) -> list[dict]:
+    """The signals a stage's bank targets — the single source of truth shared by the
+    generator (actors._generate_one_bank) AND the confirm-time knockout validator.
+
+    For an AI skills screen, eligibility signals (years/degree/cert — recruiter
+    pre-screened) are excluded; the screen tests SKILLS. Other stage types (e.g.
+    phone_screen) keep all signals. Legacy signals without a `purpose` default to
+    skill (no regression)."""
+    if stage_type != "ai_screening":
+        return list(snapshot_signals)
+    return [s for s in snapshot_signals if s.get("purpose", "skill") != "eligibility"]
+
+
 async def validate_knockout_coverage(
     db: AsyncSession,
     bank: StageQuestionBank,
 ) -> None:
-    """Raise KnockoutUnprobedError if any knockout signal lacks a mandatory question.
+    """Raise KnockoutUnprobedError if an IN-SCOPE knockout signal lacks a mandatory question.
 
-    Knockouts are determined by loading the pinned snapshot and checking the
-    stage's signal_filter.include_types (only knockouts of matching type count
-    — a behavioral knockout doesn't need to be covered in an ai_interview stage).
+    A knockout signal is in scope only if the stage's bank actually targets it — the
+    same predicate the generator uses (`_signals_for_generation`): an AI skills screen
+    tests SKILLS, so eligibility knockouts (recruiter pre-screened) are excluded and do
+    NOT require a mandatory question; phone_screen keeps all signals. The stage's
+    include_types further restricts to stage-appropriate signal types.
     """
     snapshot_result = await db.execute(
         select(JobPostingSignalSnapshot).where(
@@ -310,7 +326,8 @@ async def validate_knockout_coverage(
         if q.is_mandatory:
             mandatory_values.update(q.signal_values)
 
-    for signal in snapshot.signals:
+    scoped_signals = _signals_for_generation(snapshot.signals, stage_type=stage.stage_type)
+    for signal in scoped_signals:
         if not signal.get("knockout", False):
             continue
         if signal.get("type") not in allowed_types:

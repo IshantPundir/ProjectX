@@ -1,4 +1,4 @@
-from app.modules.question_bank.actors import _signals_for_generation
+from app.modules.question_bank.service import _signals_for_generation
 
 
 def _s(value, purpose="skill", type_="competency"):

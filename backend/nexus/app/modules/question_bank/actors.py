@@ -47,6 +47,7 @@ from app.modules.question_bank.errors import (
     SignalValueNotInSnapshotError,
 )
 from app.modules.question_bank.service import (
+    _signals_for_generation,
     ensure_bank_exists,
     get_bank_questions,
     get_latest_confirmed_snapshot,
@@ -102,15 +103,6 @@ STAGE_TYPE_TO_PROMPT = {
     "phone_screen":    "question_bank_phone_screen",
     "ai_screening":    "question_bank_ai_screening",
 }
-
-
-def _signals_for_generation(snapshot_signals: list[dict], *, stage_type: str) -> list[dict]:
-    """The signals the bank generator sees. For an AI skills screen, eligibility signals
-    (years/degree/cert — recruiter pre-screened) are excluded; the screen tests SKILLS.
-    Legacy signals without a `purpose` default to skill (no regression)."""
-    if stage_type != "ai_screening":
-        return list(snapshot_signals)
-    return [s for s in snapshot_signals if s.get("purpose", "skill") != "eligibility"]
 
 
 def _feasibility_dict(plan: CoveragePlan | None) -> dict | None:

@@ -115,6 +115,7 @@ def _signal(
     weight: int = 2,
     knockout: bool = False,
     stage: str = "screen",
+    purpose: str = "skill",
 ) -> dict:
     return {
         "value": value,
@@ -123,6 +124,7 @@ def _signal(
         "weight": weight,
         "knockout": knockout,
         "stage": stage,
+        "purpose": purpose,
         "evaluation_method": "verification",
         "evaluation_hint": None,
         "source": "ai_extracted",
@@ -1373,3 +1375,75 @@ def test_validate_streamed_question_primary_not_in_signal_values_raises():
             snapshot_id=_STREAM_SNAPSHOT_ID,
             allowed_types=["competency", "experience", "behavioral"],
         )
+
+
+# ---------------------------------------------------------------------------
+# confirm-time knockout scope — eligibility purpose exclusion (ai_screening)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_confirm_bank_allows_ai_screening_eligibility_knockout(db):
+    """ai_screening: an ELIGIBILITY knockout (pre-screened, excluded from generation)
+    must NOT require a mandatory question. Confirm should succeed."""
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, _snap = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[
+            _signal(value="Workato recipe development", signal_type="competency",
+                    knockout=False, purpose="skill"),
+            _signal(value="4+ years total professional experience",
+                    signal_type="experience", knockout=True, purpose="eligibility"),
+        ],
+    )
+    _instance, stage = await _make_pipeline_and_stage(db, job=job, stage_type="ai_screening")
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    bank.status = "reviewing"
+    await db.flush()
+
+    # Must NOT raise — the eligibility knockout is out of the ai_screening scope.
+    await confirm_bank(db, bank=bank, user_id=user.id, user_email=user.email)
+    assert bank.status == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_confirm_bank_still_rejects_ai_screening_skill_knockout(db):
+    """ai_screening: a SKILL knockout IS in scope, so it still needs a mandatory question."""
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, _snap = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[
+            _signal(value="Must-have core skill", signal_type="competency",
+                    knockout=True, purpose="skill"),
+        ],
+    )
+    _instance, stage = await _make_pipeline_and_stage(db, job=job, stage_type="ai_screening")
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    bank.status = "reviewing"
+    await db.flush()
+
+    with pytest.raises(KnockoutUnprobedError) as excinfo:
+        await confirm_bank(db, bank=bank, user_id=user.id, user_email=user.email)
+    assert excinfo.value.signal_value == "Must-have core skill"
+
+
+@pytest.mark.asyncio
+async def test_confirm_bank_still_rejects_phone_screen_eligibility_knockout(db):
+    """phone_screen keeps ALL signals, so an eligibility knockout there still needs a
+    mandatory question (regression guard — behavior unchanged for phone_screen)."""
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+    job, _snap = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id,
+        signals=[
+            _signal(value="5+ years experience", signal_type="experience",
+                    knockout=True, purpose="eligibility"),
+        ],
+    )
+    _instance, stage = await _make_pipeline_and_stage(db, job=job, stage_type="phone_screen")
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    bank.status = "reviewing"
+    await db.flush()
+
+    with pytest.raises(KnockoutUnprobedError) as excinfo:
+        await confirm_bank(db, bank=bank, user_id=user.id, user_email=user.email)
+    assert excinfo.value.signal_value == "5+ years experience"
