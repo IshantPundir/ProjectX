@@ -63,6 +63,7 @@ from app.modules.question_bank.context import (
     QuestionContext,
     build_question_context,
 )
+from app.modules.question_bank.coverage_planner import CoveragePlan, build_coverage_plan
 from app.modules.question_bank.critic import run_bank_critic
 from app.modules.question_bank.state_machine import auto_revert_on_edit
 
@@ -112,6 +113,20 @@ def _signals_for_generation(snapshot_signals: list[dict], *, stage_type: str) ->
     return [s for s in snapshot_signals if s.get("purpose", "skill") != "eligibility"]
 
 
+def _feasibility_dict(plan: CoveragePlan | None) -> dict | None:
+    """Serialize a CoveragePlan into the coverage_feasibility JSONB payload (recruiter badge)."""
+    if plan is None:
+        return None
+    return {
+        "feasible": plan.feasible,
+        "slot_budget": plan.slot_budget,
+        "must_cover_count": plan.must_cover_count,
+        "secondary_only": list(plan.secondary_only),
+        "dropped": list(plan.dropped),
+        "recommended_minutes": plan.recommended_minutes,
+    }
+
+
 def _build_user_message(
     *,
     job: JobPosting,
@@ -120,6 +135,7 @@ def _build_user_message(
     stage: JobPipelineStage,
     pipeline_stages: list[dict],
     prior_stages_questions: list[dict],
+    coverage_plan: CoveragePlan | None = None,
 ) -> str:
     """Build the user message — all context for the LLM.
 
@@ -209,44 +225,81 @@ def _build_user_message(
         f"Advance behavior: {stage.advance_behavior}\n"
     )
 
-    # Pre-computed eligibility context. The LLM does NOT do budget arithmetic;
-    # eligibility-after-include_types is computed here so it doesn't have to
-    # filter the snapshot itself. Budget is SOFT GUIDANCE: the DB does not
-    # hard-enforce a cap — a runaway ai_config.question_bank_max_questions per call
-    # is the only hard stop, and an over-budget result logs a soft warning.
-    include_types = stage.signal_filter.get("include_types", [])
-    eligible_signals = [
-        s for s in snapshot.signals if s.get("type") in include_types
-    ]
-    eligible_knockouts = [s for s in eligible_signals if s.get("knockout", False)]
-    eligible_w3 = [
-        s for s in eligible_signals
-        if int(s.get("weight", 1)) == 3 and not s.get("knockout", False)
-    ]
-    eligible_w2 = [s for s in eligible_signals if int(s.get("weight", 1)) == 2]
-    eligible_w1 = [s for s in eligible_signals if int(s.get("weight", 1)) == 1]
+    if coverage_plan is not None:
+        parts.append(
+            "\n# COVERAGE PLAN FOR THIS STAGE (deterministic — follow exactly)\n"
+        )
+        parts.append(
+            f"This ~{stage.duration_minutes}-minute screen fits about "
+            f"{coverage_plan.slot_budget} SCORED questions. Produce EXACTLY ONE scored "
+            "question per REQUIRED PRIMARY below — each as that question's `primary_signal` "
+            "(this is what the report grades as a potential gap):\n"
+        )
+        for v in coverage_plan.required_primaries:
+            parts.append(f"  - REQUIRED PRIMARY: {v!r}\n")
+        # bundle_eligible includes secondary_only (secondary_only ⊆ bundle_eligible); show the
+        # NON-secondary bundle hints here and the secondary-only must-haves in their own block.
+        pure_bundle = [v for v in coverage_plan.bundle_eligible if v not in coverage_plan.secondary_only]
+        if pure_bundle:
+            parts.append(
+                "\nWhere these related skills GENUINELY co-exercise in one realistic task, "
+                "fold them into a scenario's `signal_values` (≤3 total) instead of spending a "
+                "separate scored slot — only where coherent, never force unrelated skills "
+                "together:\n"
+            )
+            for v in pure_bundle:
+                parts.append(f"  - bundle-eligible: {v!r}\n")
+        if coverage_plan.secondary_only:
+            parts.append(
+                "\nThese must-have skills could NOT fit as scored questions (the budget is "
+                "full). Fold them in as secondaries where coherent, but do NOT expand the "
+                "bank beyond the scored-question budget for them:\n"
+            )
+            for v in coverage_plan.secondary_only:
+                parts.append(f"  - secondary-only: {v!r}\n")
+        parts.append(
+            "\nOptimize for SIGNAL DENSITY, not question count. Fewer, deeper, "
+            "skill-revealing scenarios beat a long shallow list.\n"
+        )
+    else:
+        # Pre-computed eligibility context. The LLM does NOT do budget arithmetic;
+        # eligibility-after-include_types is computed here so it doesn't have to
+        # filter the snapshot itself. Budget is SOFT GUIDANCE: the DB does not
+        # hard-enforce a cap — a runaway ai_config.question_bank_max_questions per call
+        # is the only hard stop, and an over-budget result logs a soft warning.
+        include_types = stage.signal_filter.get("include_types", [])
+        eligible_signals = [
+            s for s in snapshot.signals if s.get("type") in include_types
+        ]
+        eligible_knockouts = [s for s in eligible_signals if s.get("knockout", False)]
+        eligible_w3 = [
+            s for s in eligible_signals
+            if int(s.get("weight", 1)) == 3 and not s.get("knockout", False)
+        ]
+        eligible_w2 = [s for s in eligible_signals if int(s.get("weight", 1)) == 2]
+        eligible_w1 = [s for s in eligible_signals if int(s.get("weight", 1)) == 1]
 
-    parts.append(
-        "\n# BUDGET FOR THIS STAGE "
-        "(soft guidance — optimize for signal density, not count)\n"
-    )
-    parts.append(
-        f"Target time: ~{stage.duration_minutes} min "
-        f"(sum of estimated_minutes across the questions you generate)\n"
-        f"Stage duration overall: {stage.duration_minutes} min\n"
-        f"\n"
-        f"Eligible signals (after include_types filter):\n"
-        f"  - knockouts: {len(eligible_knockouts)} "
-        f"(each warrants ONE mandatory question)\n"
-        f"  - weight=3 non-knockout: {len(eligible_w3)} "
-        f"(high-priority depth probes)\n"
-        f"  - weight=2: {len(eligible_w2)} (depth probes)\n"
-        f"  - weight=1: {len(eligible_w1)} "
-        f"(only if every higher-weight signal is covered)\n"
-        f"\n"
-        f"Optimize for SIGNAL DENSITY, not question count. Under-using the budget "
-        f"is fine; padding shallow questions is not.\n"
-    )
+        parts.append(
+            "\n# BUDGET FOR THIS STAGE "
+            "(soft guidance — optimize for signal density, not count)\n"
+        )
+        parts.append(
+            f"Target time: ~{stage.duration_minutes} min "
+            f"(sum of estimated_minutes across the questions you generate)\n"
+            f"Stage duration overall: {stage.duration_minutes} min\n"
+            f"\n"
+            f"Eligible signals (after include_types filter):\n"
+            f"  - knockouts: {len(eligible_knockouts)} "
+            f"(each warrants ONE mandatory question)\n"
+            f"  - weight=3 non-knockout: {len(eligible_w3)} "
+            f"(high-priority depth probes)\n"
+            f"  - weight=2: {len(eligible_w2)} (depth probes)\n"
+            f"  - weight=1: {len(eligible_w1)} "
+            f"(only if every higher-weight signal is covered)\n"
+            f"\n"
+            f"Optimize for SIGNAL DENSITY, not question count. Under-using the budget "
+            f"is fine; padding shallow questions is not.\n"
+        )
 
     parts.append(
         "\nNow generate the structured question bank output as specified "
@@ -293,6 +346,7 @@ async def _stream_bank_questions(
     prompt_name: str,
     start_position: int,
     correlation_id: str = "",
+    coverage_plan: CoveragePlan | None = None,
 ) -> list[GeneratedQuestion]:
     """Stream the bank: build the prompt in a SHORT read session (capture primitives,
     then CLOSE it), then stream + persist + publish BANK_QUESTION_ADDED per question.
@@ -361,6 +415,7 @@ async def _stream_bank_questions(
                 stage=stage,
                 pipeline_stages=ctx.pipeline_stages,
                 prior_stages_questions=ctx.prior_stages_questions,
+                coverage_plan=coverage_plan,
             )
         finally:
             snapshot.signals = original_signals
@@ -597,6 +652,19 @@ async def _generate_one_bank(
         stage_duration = stage.duration_minutes
         stage_difficulty = stage.difficulty
         snapshot_signals = list(snapshot.signals)
+
+        # Deterministic coverage plan (ai_screening only): which must-have skills own a
+        # scored primary_signal slot vs. ride as bundled secondaries within the time budget.
+        coverage_plan = (
+            build_coverage_plan(
+                _signals_for_generation(snapshot_signals, stage_type=stage_type),
+                stage_duration_minutes=stage_duration,
+                min_per_scored_slot=ai_config.question_bank_min_per_scored_slot_minutes,
+            )
+            if stage_type == "ai_screening"
+            else None
+        )
+
         pipeline_version = instance.pipeline_version
         stage_config_snapshot = {
             "signal_filter": stage.signal_filter,
@@ -624,6 +692,7 @@ async def _generate_one_bank(
             prompt_name=prompt_name,
             start_position=0,
             correlation_id=correlation_id,
+            coverage_plan=coverage_plan,
         )
 
         # ---- Phase B2: enter self-review (durable status drives the UI animation) ----
@@ -721,7 +790,7 @@ async def _generate_one_bank(
         working = corrected if corrected is not None else draft_questions
         violations = check_bank_invariants(
             working, stage_type=stage_type, stage_duration_minutes=stage_duration,
-            signals=snapshot_signals,
+            plan=coverage_plan,
         )
         gate_codes = [v.code for v in violations]
         if violations and corrected is not None:
@@ -739,12 +808,17 @@ async def _generate_one_bank(
                     bank_id=str(bank_id), error_type=type(repass_exc).__name__,
                 )
         # ALWAYS hard-repair (idempotent) so the HARD invariants hold even if the critic/re-pass didn't.
-        working = hard_repair(working, stage_type=stage_type, stage_duration_minutes=stage_duration)
+        working = hard_repair(
+            working, stage_type=stage_type, stage_duration_minutes=stage_duration,
+            required_primaries=set(coverage_plan.required_primaries) if coverage_plan else None,
+        )
         if gate_codes:
             critique_note = (
                 f"{critique_note} | gate: {', '.join(sorted(set(gate_codes)))} "
                 "(re-pass + hard-repair applied)."
             )
+        if coverage_plan is not None and coverage_plan.report:
+            critique_note = f"{critique_note} | coverage: {coverage_plan.report}"
 
         # Replace the draft with the final (critic + gate + repaired) bank. SINGLE wipe+
         # re-persist covering BOTH paths: on critic success `working` = critic output, on
@@ -885,6 +959,7 @@ async def _generate_one_bank(
             # write the critique log + metadata and transition
             # self_reviewing -> reviewing.
             bank.coverage_notes = critique_note
+            bank.coverage_feasibility = _feasibility_dict(coverage_plan)
             bank.prompt_version = ai_config.question_bank_prompt_version
             bank.pipeline_version_at_generation = pipeline_version
             bank.stage_config_snapshot = stage_config_snapshot

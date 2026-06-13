@@ -1861,7 +1861,15 @@ async def test_generate_one_bank_critic_success_replaces_draft(db, monkeypatch):
     )
 
     assert bank.status == "reviewing"
-    assert bank.coverage_notes == critique
+    # The coverage plan report is appended to the critic note for ai_screening banks.
+    # Check that the original critique is present as the leading component.
+    assert bank.coverage_notes is not None
+    assert bank.coverage_notes.startswith(critique), (
+        f"coverage_notes must start with the critic note; got: {bank.coverage_notes!r}"
+    )
+    assert "coverage:" in bank.coverage_notes, (
+        "coverage plan report must be appended for ai_screening banks"
+    )
 
     questions = await get_bank_questions(db, bank.id)
     assert len(questions) == 1, (
@@ -2257,3 +2265,73 @@ async def test_phone_screen_generation_keeps_experience_check(db, monkeypatch):
     )
     assert "project_deepdive" in kinds  # also preserved — no deepdive cap for phone_screen
     assert len(questions) == 3  # all three questions survived unchanged
+
+
+# ---------------------------------------------------------------------------
+# Coverage planner integration (Task 6)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_coverage_plan_persisted_on_oversubscribed_ai_screening(
+    db, monkeypatch
+):
+    """Integration: ai_screening stage with 8 weight-3 skill signals and 15-min duration.
+
+    slot_budget = floor(15 / 3.0) = 5. With 8 must-cover skills, 3 overflow into
+    secondary_only. The persisted bank must have:
+      - coverage_feasibility["feasible"] is False
+      - len(coverage_feasibility["secondary_only"]) == 3
+      - "OVER-SUBSCRIBED" in coverage_notes (the coverage plan report is appended)
+    """
+    tenant, user, unit = await _setup_tenant_user_unit(db)
+
+    # 8 weight-3 skill signals — all must-cover, all competency type.
+    skill_names = [f"Skill{i}" for i in range(1, 9)]
+    signals = [
+        _signal(value=name, weight=3, priority="required", signal_type="competency")
+        for name in skill_names
+    ]
+    job, snapshot = await _make_job_with_signals(
+        db, tenant.id, unit.id, user.id, signals=signals,
+    )
+    # ai_screening stage, 15 min → slot_budget = 5, 3 overflow to secondary_only
+    instance, stage = await _make_pipeline_and_stage(
+        db, job=job,
+        stage_type="ai_screening",
+        duration_minutes=15,
+        name="AI Screening",
+        signal_filter={"include_types": ["competency"]},
+    )
+    bank = await ensure_bank_exists(db, stage=stage, job=job)
+    transition_to_generating(bank)
+    await db.flush()
+
+    _patch_session(monkeypatch, db)
+    _patch_critic_passthrough(monkeypatch)
+    # Stream 5 questions covering the 5 required primaries (first 5 skills).
+    # The coverage plan will have required_primaries = first 5 skills,
+    # secondary_only = last 3 skills.
+    _patch_stream(monkeypatch, _stream_questions(skill_names[:5], estimated_minutes=3.0))
+
+    await _generate_one_bank(
+        bank_id=bank.id,
+        tenant_id=tenant.id,
+        started_by=user.id,
+    )
+
+    assert bank.status == "reviewing"
+    assert bank.coverage_feasibility is not None, (
+        "coverage_feasibility must be persisted for ai_screening banks"
+    )
+    assert bank.coverage_feasibility["feasible"] is False, (
+        "feasible must be False for over-subscribed (8 skills > 5 slots)"
+    )
+    assert len(bank.coverage_feasibility["secondary_only"]) == 3, (
+        f"expected 3 secondary_only skills (8 must-covers - 5 slots), "
+        f"got {bank.coverage_feasibility['secondary_only']}"
+    )
+    assert bank.coverage_notes is not None
+    assert "OVER-SUBSCRIBED" in bank.coverage_notes, (
+        f"coverage plan report must appear in coverage_notes; got: {bank.coverage_notes!r}"
+    )
