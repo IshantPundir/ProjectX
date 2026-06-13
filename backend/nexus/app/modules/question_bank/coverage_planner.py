@@ -61,8 +61,9 @@ def build_coverage_plan(
 ) -> CoveragePlan:
     """Compute the scored-slot plan from the skill-filtered snapshot signals.
 
-    `signals` must already exclude eligibility signals (pass
-    `_signals_for_generation(snapshot_signals, stage_type="ai_screening")`).
+    `signals` is normally the skill-filtered set (pass
+    `_signals_for_generation(snapshot_signals, stage_type="ai_screening")`); the planner
+    also re-filters on purpose=="skill" defensively, so passing the full set is safe too.
     """
     slot_budget = max(1, math.floor(stage_duration_minutes / min_per_scored_slot))
 
