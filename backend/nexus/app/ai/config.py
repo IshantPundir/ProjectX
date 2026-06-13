@@ -91,6 +91,15 @@ class AIConfig:
         return self._settings.openai_question_bank_max_questions
 
     @property
+    def question_bank_min_per_scored_slot_minutes(self) -> float:
+        # Planning estimate: minutes a single SCORED question (a scenario lead + its
+        # escalation ladder) consumes. Sizes the coverage planner's scored-slot budget
+        # (slot_budget = floor(stage_duration / this)). NOT a hard runtime cap — the
+        # post-gen over-budget invariant + coverage-aware trim reconcile against the
+        # LLM's actual estimated_minutes. Env-overridable; never hardcode at call sites.
+        return self._settings.question_bank_min_per_scored_slot_minutes
+
+    @property
     def question_bank_prompt_version(self) -> str:
         return self._settings.question_bank_prompt_version
 

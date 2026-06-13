@@ -229,6 +229,12 @@ class Settings(BaseSettings):
     # Hard runaway-stop on streamed bank generation (NOT a time budget — a safety
     # cap on questions emitted per generation call). Config-driven, never hardcoded.
     openai_question_bank_max_questions: int = 12
+    # Planning estimate: minutes a single SCORED question (a scenario lead + its
+    # escalation ladder) consumes. Sizes the coverage planner's scored-slot budget
+    # (slot_budget = floor(stage_duration / this)). NOT a hard runtime cap — the
+    # post-gen over-budget invariant + coverage-aware trim reconcile against the
+    # LLM's actual estimated_minutes. Env-overridable; never hardcode at call sites.
+    question_bank_min_per_scored_slot_minutes: float = 3.0
     # Bank-gen prompts: spoken-question rewrite lives in prompts/v2 (engine-v2 M2).
     question_bank_prompt_version: str = "v3"
     # JD signal-extraction prompt version. v2 = SOTA rewrite (AI Screening as a
