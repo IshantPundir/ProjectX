@@ -1,5 +1,41 @@
 """Render arg builders — pure tests (lean nexus image; ffmpeg shelled out)."""
-from app.modules.reel.render import build_card_segment_cmd, build_concat_file
+from app.modules.reel.render import (
+    _clip_to_video,
+    build_card_segment_cmd,
+    build_concat_file,
+)
+
+
+class _Beat:
+    def __init__(self, words):
+        self.words = words
+
+
+def _w(text, turn_start_ms, rel_start_ms, rel_end_ms):
+    return {"text": text, "turn_start_ms": turn_start_ms,
+            "rel_start_ms": rel_start_ms, "rel_end_ms": rel_end_ms}
+
+
+def test_clip_to_video_maps_session_ms_plus_offset():
+    # video_ms = turn_start_ms + rel + offset
+    beat = _Beat([_w("a", 5000, 0, 300), _w("b", 5000, 400, 700)])
+    start, end, caption_words = _clip_to_video(beat, offset_ms=90)
+    assert start == 5000 + 0 + 90        # first word video start
+    assert end == 5000 + 700 + 90        # last word video end
+    # clean_caption_words sentence-cases the lead word; compare case-insensitively
+    assert [c["text"].lower() for c in caption_words] == ["a", "b"]
+    assert caption_words[0]["start_ms"] == 5090
+    assert caption_words[1]["end_ms"] == 5790
+
+
+def test_clip_to_video_multi_turn_uses_each_words_own_turn_start():
+    # two turns: each word carries its own turn_start_ms -> one contiguous cut
+    beat = _Beat([_w("w2", 1000, 2000, 2900), _w("w3", 1000, 3000, 3900),
+                  _w("x0", 8000, 0, 800)])
+    start, end, _ = _clip_to_video(beat, offset_ms=50)
+    assert start == 1000 + 2000 + 50     # first word in turn t-1
+    assert end == 8000 + 800 + 50        # last word in turn t-2
+
 
 
 def test_concat_file_lists_abspaths_one_per_line():

@@ -5,7 +5,7 @@ Cards (title/match/point/outro) become a still image under Arjun narration; clip
 is normalized to identical codec/params (1280x720, 30fps, H.264 yuv420p, AAC 48k
 stereo) so the concat demuxer joins them with a stream copy -- fast, glitch-free.
 
-Imports of cards/tts/clips/timing are top-level but import-light (Pillow / livekit
+Imports of cards/tts/clips are top-level but import-light (Pillow / livekit
 / ffmpeg are all lazy or shelled out), so this stays importable in the lean image;
 ``render_reel`` is only CALLED in the vision image.
 """
@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 
-from app.modules.reel import captions, cards, clips, timing, tts
+from app.modules.reel import captions, cards, clips, tts
 
 # Render-side minimum card hold times (s) — a card lasts max(floor, narration+tail).
 _CARD_FLOOR_S = {"title": 3.0, "match": 4.0, "point": 3.0, "outro": 4.0}
@@ -69,22 +69,6 @@ async def card_segment(*, image_path: str, out_path: str, duration_ms: int,
 _CARD_KINDS = ("title", "match", "point", "outro")
 
 
-async def prepare_anchor(events: list[dict], recording_path: str,
-                         recording_started_at_ms: int
-                         ) -> tuple[int, list[tuple[int, int]]]:
-    """Compute ``anchor`` (video_ms = t_ms + anchor) + the VAD speaking intervals.
-
-    ``anchor = wall_anchor - pipeline_lag``; the lag is measured per session by
-    cross-correlating the candidate VAD envelope against the recording's speech
-    envelope (calibration only). Requires ffmpeg — call only in the vision image.
-    """
-    wall_anchor = timing.wall_anchor(events, recording_started_at_ms)
-    speaking = timing.speaking_intervals(events)
-    rec_speech = await timing.recording_speech_intervals(recording_path)
-    pipeline_lag = timing.measure_pipeline_lag(speaking, rec_speech, wall_anchor)
-    return wall_anchor - pipeline_lag, speaking
-
-
 async def probe_duration_ms(path: str) -> int:
     """Exact media duration (ms) via ffprobe — for accurate chapter offsets."""
     proc = await asyncio.create_subprocess_exec(
@@ -105,46 +89,31 @@ def _chapter_label(beat) -> str:
     return {"clip": "Candidate", "experience": "Candidate"}.get(beat.kind, beat.kind.title())
 
 
-def _clip_to_video(beat, events: list[dict], speaking: list[tuple[int, int]],
-                   anchor: int) -> tuple[int, int, list[dict]] | None:
+def _clip_to_video(beat, offset_ms: int) -> tuple[int, int, list[dict]]:
     """Map a clip beat's words -> (video_start, video_end, cleaned caption words).
 
-    Each word maps to video via ITS OWN turn's VAD span (so a multi-turn clip is
-    one contiguous cut). Returns None if any source turn's span can't be resolved.
+    Each word carries its own ``turn_start_ms`` (session-relative) + turn-relative
+    ms; the gen-3 video map is ``video_ms = turn_start_ms + rel_ms + offset_ms``,
+    so a multi-turn clip is one contiguous cut on the recording's clock.
     """
-    span_cache: dict[int, tuple[int, int] | None] = {}
-
-    def base(turn_commit: int) -> int | None:
-        if turn_commit not in span_cache:
-            span_cache[turn_commit] = timing.answer_span(events, speaking, turn_commit)
-        sp = span_cache[turn_commit]
-        return None if sp is None else sp[0] + anchor
-
-    mapped: list[dict] = []
-    for w in beat.words:
-        b = base(int(w["turn_commit"]))
-        if b is None:
-            return None
-        mapped.append({"text": w["text"],
-                       "start_ms": b + int(w["rel_start_ms"]),
-                       "end_ms": b + int(w["rel_end_ms"])})
-    if not mapped:
-        return None
+    mapped = [{"text": w["text"],
+               "start_ms": int(w["turn_start_ms"]) + int(w["rel_start_ms"]) + offset_ms,
+               "end_ms": int(w["turn_start_ms"]) + int(w["rel_end_ms"]) + offset_ms}
+              for w in beat.words]
     video_start, video_end = mapped[0]["start_ms"], mapped[-1]["end_ms"]
     return video_start, video_end, captions.clean_caption_words(mapped)
 
 
-async def render_reel(*, beats: list, recording_path: str, events: list[dict],
-                      speaking: list[tuple[int, int]], anchor: int,
+async def render_reel(*, beats: list, recording_path: str, offset_ms: int,
                       tmp_dir: str, out_path: str, tts_enabled: bool = True
                       ) -> tuple[str, list[dict]]:
     """Render a validated EDL into one MP4 + chapter metadata.
 
-    Card+narration beats are interleaved with candidate clips. ``anchor`` maps
-    engine t_ms to the video clock (``video_ms = t_ms + anchor``; see timing.py).
-    Clip beats whose VAD span can't be resolved are skipped. Returns
-    ``(out_path, chapters)`` where chapters = ``[{kind, label, start_ms}]`` at the
-    exact (ffprobe-measured) offset of each rendered segment.
+    Card+narration beats are interleaved with candidate clips. ``offset_ms`` maps
+    engine session ms to the video clock (``video_ms = session_ms + offset_ms``;
+    see timing.py). Returns ``(out_path, chapters)`` where chapters =
+    ``[{kind, label, start_ms}]`` at the exact (ffprobe-measured) offset of each
+    rendered segment.
     """
     rendered: list[tuple[str, object]] = []   # (segment_path, beat)
     for i, b in enumerate(beats):
@@ -166,10 +135,7 @@ async def render_reel(*, beats: list, recording_path: str, events: list[dict],
                                duration_ms=duration_ms, audio_path=audio_path)
             rendered.append((seg, b))
         else:  # clip / experience
-            mapped = _clip_to_video(b, events, speaking, anchor)
-            if mapped is None:
-                continue
-            video_start, video_end, caption_words = mapped
+            video_start, video_end, caption_words = _clip_to_video(b, offset_ms)
             await clips.cut_clip(
                 recording_path=recording_path, out_path=seg, words=caption_words,
                 start_ms=video_start, end_ms=video_end, offset_ms=0)
