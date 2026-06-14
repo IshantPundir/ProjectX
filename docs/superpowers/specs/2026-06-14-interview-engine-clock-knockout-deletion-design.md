@@ -81,7 +81,7 @@ identification and the must-have-met ceiling.
 | **Resolver tier/overflow** (dead once the clock is gone) | `ResolverQuestion.tier` / `weight` / `estimated_minutes` / `is_mandatory` consumption; overflow-by-weight + mandatory-first branches; `covered_signals` param; `QuestionTier`; `QuestionRecord.tier`; `SessionMeta.questions_core_total` / `questions_overflow_asked` | `preferred_next_signal` (brain naturalness hint, now honored unconditionally); `resolve_next` collapses to "next unasked by position" |
 | **Knockout — engine** | `BrainTurnOutput.knockout_confirmed`; `BrainTurnInput.knockout_pending` / `knockout_reflected`; `CoverageProjection.knockout_pending()`; `gate_knockout` + `KnockoutTracker` / `KnockoutStep`; `_steer_knockout` / `confirmed_knockout_signals` / `_knockout_reflect_offered` / `_KNOCKOUT_REFLECT_LINE`; KNOCKOUT prompt section + render blocks | `end_requested` (candidate may always end); `move=close` / `confirm`; `scrub_composed_say`; `coerce_probe_dimension` |
 | **Knockout — durable + report + DB** | `KnockoutOutcome`; `SessionEvidence.knockout`; `CompletionReason.knockout_close`; `KnockoutFailure` + `SessionResult.knockout_failures` + orphaned `_scrub_pii`/regexes; report `is_knockout_close` / `knockout_signal` gate (`evidence_adapter`, `holistic`, verdict); `"knockout_close"` response key; `tenant_settings.engine_knockout_policy` + `KnockoutPolicy`; migration dropping `sessions.knockout_failures` + `tenant_settings.engine_knockout_policy` | report must-have logic driven by `signal.knockout` (identification, must-have-met ceiling, narrative tagging) |
-| **Bank metadata** | engine stops *consuming* `estimated_minutes` / `is_mandatory` | `stage_questions.estimated_minutes` + `is_mandatory` remain in DB/wire as generation metadata; `build_session_config` question ordering simplifies to `position` only |
+| **Bank metadata** | engine-wire `QuestionConfig.estimated_minutes` + `QuestionConfig.is_mandatory` + their `build_session_config` projection (the engine was their sole consumer); `build_session_config` question ordering → `position` only | `stage_questions.estimated_minutes` + `is_mandatory` **DB columns** — the reporting actor (`reporting/actors.py`) reads them off `StageQuestion` directly |
 
 ---
 
@@ -136,9 +136,14 @@ def resolve_next(*, questions, asked_ids, preferred_next_signal=None) -> Resolve
   resolver call simplified.
 - **`driver.py`** — delete `_time_remaining_s`, `_budget_cfg`,
   `_BrainAdapter.time_remaining_s`; build `ResolverQuestion` with
-  `{id, primary_signal, position}`; `build_session_config` ordering → `position`
-  only; `finalize` stops computing `questions_core_total` /
-  `questions_overflow_asked`.
+  `{id, primary_signal, position}`; `finalize` stops computing
+  `questions_core_total` / `questions_overflow_asked`.
+- **`interview_runtime/schemas.py` + `interview_runtime/service.py`** — remove
+  `QuestionConfig.estimated_minutes` + `QuestionConfig.is_mandatory` (the engine
+  was the sole consumer); `build_session_config` stops projecting them and orders
+  questions by `position` only. The `stage_questions.estimated_minutes` /
+  `is_mandatory` **DB columns stay** — `reporting/actors.py` reads them off
+  `StageQuestion` directly.
 - **`app/ai/config.py`** + **`app/config.py`** — delete `engine_close_reserve_s`,
   `engine_winding_down_s`.
 - **`prompts/v4/engine/brain.system.txt`** — delete the winding-down sentence;
@@ -206,10 +211,12 @@ Dependency order: engine → durable → reporting → settings → DB → tests
 ### 6.4 Settings + DB
 - **`tenant_settings/{models,schemas}.py`** — delete `engine_knockout_policy` +
   `KnockoutPolicy`.
-- **New migration `0054_drop_knockout`** — drop
+- **New migration `0059_drop_knockout`** (current head is
+  `0058_bank_coverage_feasibility`) — drop
   `tenant_settings.engine_knockout_policy` (+ its check constraint) and
   `sessions.knockout_failures`; full `downgrade()` restoring both. Migrations
-  `0027` / `0030` remain as historical record.
+  `0027` (added both columns) / `0030` (changed the policy default) remain as
+  historical record.
 
 ### 6.5 Tests
 Delete the knockout test files/cases: `test_policy.py` knockout classes,
