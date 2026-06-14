@@ -54,7 +54,6 @@ async def get_tenant_settings(db: AsyncSession, tenant_id: UUID) -> TenantSettin
         return DEFAULT_TENANT_SETTINGS(tenant_id)
     return TenantSettings(
         tenant_id=row.tenant_id,
-        engine_knockout_policy=row.engine_knockout_policy,
         engine_agent_name=row.engine_agent_name,
         proctoring_enabled=row.proctoring_enabled,
         proctoring_soft_violation_limit=row.proctoring_soft_violation_limit,
