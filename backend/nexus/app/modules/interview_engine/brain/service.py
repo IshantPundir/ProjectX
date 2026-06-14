@@ -53,7 +53,6 @@ from app.modules.interview_engine.contracts import (
     Directive,
     DirectiveAct,
     DirectiveTone,
-    SignalSpec,
 )
 
 if TYPE_CHECKING:
@@ -96,8 +95,6 @@ class ControlPlane:
         Mutable CoverageProjection that accumulates signal observations.
     resolver_questions:
         Compact bank view (ResolverQuestion list) — used to resolve next question.
-    all_specs:
-        Full SignalSpec list — used by the projection helpers.
     llm_call:
         INJECTABLE SEAM for tests.  None → use _default_brain_llm (real API call).
     """
@@ -109,14 +106,12 @@ class ControlPlane:
         system_prompt: str,
         projection: CoverageProjection,
         resolver_questions: list[ResolverQuestion],
-        all_specs: list[SignalSpec],
         llm_call: Callable[[list[dict]], Awaitable[BrainTurnOutput]] | None = None,
     ) -> None:
         self._session_context = session_context
         self._system_prompt = system_prompt
         self._projection = projection
         self._resolver_questions = resolver_questions
-        self._all_specs = all_specs
         self._llm_call: Callable[[list[dict]], Awaitable[BrainTurnOutput]] = (
             llm_call if llm_call is not None else self._default_brain_llm
         )
@@ -437,8 +432,8 @@ def build_control_plane(
     """Assemble a ControlPlane from a SessionConfig.
 
     Reads the brain system prompt from prompts/v4/engine/brain.system.txt
-    (version from ai_config.engine_brain_prompt_version). Builds session context,
-    resolver questions, and all_specs.
+    (version from ai_config.engine_brain_prompt_version). Builds session context
+    and resolver questions.
 
     Used by the engine loop (F1) at session start. Tests should construct
     ControlPlane directly with small fixtures.
@@ -465,14 +460,10 @@ def build_control_plane(
             )
         )
 
-    # All signal specs (from session_context.signals — already built)
-    all_specs: list[SignalSpec] = session_context.signals
-
     return ControlPlane(
         session_context=session_context,
         system_prompt=system_prompt,
         projection=projection or CoverageProjection(),
         resolver_questions=resolver_questions,
-        all_specs=all_specs,
         llm_call=None,  # use _default_brain_llm in production
     )

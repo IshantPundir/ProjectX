@@ -35,14 +35,11 @@ from app.modules.interview_engine.contracts import (
     BrainTurnOutput,
     DirectiveAct,
     SignalObservation,
-    SignalSpec,
 )
 from app.modules.interview_runtime.evidence import (
     CoverageState,
     EvidenceStance,
     EvidenceTexture,
-    SignalPriority,
-    SignalType,
 )
 from app.modules.interview_runtime.schemas import (
     CandidateContext,
@@ -202,19 +199,11 @@ def _make_resolver_questions() -> list[ResolverQuestion]:
     ]
 
 
-def _make_all_specs() -> list[SignalSpec]:
-    return [
-        SignalSpec(signal="distributed_systems", signal_type=SignalType.competency, weight=3, priority=SignalPriority.required, knockout=False),
-        SignalSpec(signal="incident_response", signal_type=SignalType.competency, weight=2, priority=SignalPriority.preferred, knockout=False),
-    ]
-
-
 def _make_control_plane(
     *,
     llm_call=None,
     projection: CoverageProjection | None = None,
     resolver_questions: list[ResolverQuestion] | None = None,
-    all_specs: list[SignalSpec] | None = None,
 ) -> ControlPlane:
     config = _make_session_config()
     session_context = build_session_context(config)
@@ -223,7 +212,6 @@ def _make_control_plane(
         system_prompt="You are a helpful interview brain.",
         projection=projection or CoverageProjection(),
         resolver_questions=resolver_questions or _make_resolver_questions(),
-        all_specs=all_specs or _make_all_specs(),
         llm_call=llm_call,
     )
 
@@ -534,7 +522,7 @@ async def test_probe_exhausted_falls_back_to_ask():
 
 @pytest.mark.asyncio
 async def test_close_say_none_and_terminal():
-    """move=close with no knockout_pending → directive.act==close, say is None, is_terminal True."""
+    """move=close → directive.act==close, say is None, is_terminal True."""
     canned = BrainTurnOutput(
         reasoning="All done.",
         observations=[],
@@ -544,13 +532,8 @@ async def test_close_say_none_and_terminal():
         composed_say=None,
     )
     llm = _fake_llm(canned)
-    # No knockout specs → gate passes
-    all_specs = [
-        SignalSpec(signal="distributed_systems", signal_type=SignalType.competency, weight=3, priority=SignalPriority.required, knockout=False),
-    ]
-    cp = _make_control_plane(llm_call=llm, all_specs=all_specs)
-    # No knockout_pending in turn input
-    turn = _make_turn_input(knockout_pending=[])
+    cp = _make_control_plane(llm_call=llm)
+    turn = _make_turn_input()
 
     decision = await cp.decide(turn, asked_ids={"q-001", "q-002"})
 

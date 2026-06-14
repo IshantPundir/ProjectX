@@ -35,7 +35,7 @@ def _cp(output):
     return ControlPlane(
         session_context=ctx, system_prompt="sys", projection=CoverageProjection(),
         resolver_questions=[ResolverQuestion(question_id="q1", primary_signal="s", position=0)],
-        all_specs=ctx.signals, llm_call=fake_llm,
+        llm_call=fake_llm,
     )
 
 
