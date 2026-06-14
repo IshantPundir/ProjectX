@@ -80,19 +80,19 @@ _UNCONFIRMED_LEVELS = frozenset({"not_reached", "thin"})
 
 
 def must_have_cap(
-    must_haves: list[ScoredSignal], *, is_knockout_close: bool, coverage: float
+    must_haves: list[ScoredSignal], *, coverage: float
 ) -> int | None:
     """Fit ceiling from must-have status (the gate from spec §6)."""
-    if is_knockout_close or any(s.level in _REJECT_LEVELS for s in must_haves):
+    if any(s.level in _REJECT_LEVELS for s in must_haves):
         return REJECT_CEILING
     if any(s.level in _UNCONFIRMED_LEVELS for s in must_haves) or coverage < MIN_COVERAGE_FOR_ADVANCE:
         return BORDERLINE_CEILING
     return None
 
 
-def signal_ceiling(must_haves: list[ScoredSignal], *, is_knockout_close: bool, coverage: float) -> int | None:
+def signal_ceiling(must_haves: list[ScoredSignal], *, coverage: float) -> int | None:
     """Back-compat alias used by the orchestrator."""
-    return must_have_cap(must_haves, is_knockout_close=is_knockout_close, coverage=coverage)
+    return must_have_cap(must_haves, coverage=coverage)
 
 
 def clamp_to_ceiling(value: int | None, ceiling: int | None) -> int | None:
@@ -116,13 +116,10 @@ def apply_holistic(
 
 
 def resolve_verdict(
-    *, overall: int | None, coverage: float, is_knockout_close: bool,
-    knockout_signal: str | None, must_haves: list[ScoredSignal],
+    *, overall: int | None, coverage: float, must_haves: list[ScoredSignal],
 ) -> VerdictResult:
     """Score-driven verdict; categorical must-have backstops first.
     The overall is assumed already ceiling-capped by the caller."""
-    if is_knockout_close:
-        return VerdictResult("reject", f"Interview closed on a must-have gap: {knockout_signal or 'a must-have'}")
     absent_mh = next((s for s in must_haves if s.level in _REJECT_LEVELS), None)
     if absent_mh is not None:
         return VerdictResult("reject", f"failed must-have: {absent_mh.value}")

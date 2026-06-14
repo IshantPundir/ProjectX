@@ -66,17 +66,6 @@ def test_candidate_transcript_text_excludes_agent_turns():
     assert view.candidate_transcript_text == "I built X in Python"
 
 
-def test_knockout_close_detection():
-    ev = _evidence(
-        meta={**_evidence().meta.model_dump(mode="json"), "completion": "knockout_close"},
-        knockout={"signal": "python", "or_alternatives_checked": [],
-                  "reflect_confirmed": True, "evidence_note_seqs": [1]},
-    )
-    view = EvidenceView(ev)
-    assert view.knockout_signal == "python"
-    assert view.is_knockout_close is True
-
-
 def test_notes_by_question_groups_by_from_question_id():
     ev = _evidence(
         notes=[

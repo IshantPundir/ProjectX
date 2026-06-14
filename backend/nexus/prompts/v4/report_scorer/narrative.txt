@@ -12,7 +12,6 @@ You are given a JSON object with:
   ({quote, texture, stance, via_probe} — the engine's per-turn observations). Use these to ground
   every claim about a signal.
 - `transcript` — the candidate's spoken turns this screen (verbatim STT; clean noise when quoting).
-- `knockout_close` — present when the interview ended early on a must-have gap.
 - `human_verify[]` — {signal, note}: facts a reviewer should confirm (e.g. a stated tenure whose
   hands-on substance was not fully elicited). These are reviewer to-dos, NOT candidate deficiencies.
 </inputs>
@@ -25,8 +24,8 @@ You are given a JSON object with:
   real strengths too. Surface charity flags (a long silence, a cut-off question, a possible
   audio/technical issue) as things to confirm — never use them to penalize.
 - SEVERITY IS GATED, NOT A VIBE. Assign concern severity strictly:
-  • `deal_breaker` ONLY for a gating failure — the `knockout_close` signal, or a `must_have`
-    signal whose state is `failed`. Nothing else qualifies.
+  • `deal_breaker` ONLY for a gating failure — a `must_have` signal whose state is `failed`.
+    Nothing else qualifies.
   • `major` for a `must_have` left unconfirmed (state partial/none), or a clearly weak answer on
     an important non-gating area.
   • `moderate` for thin/partial answers on non-gating signals, or process observations (e.g.

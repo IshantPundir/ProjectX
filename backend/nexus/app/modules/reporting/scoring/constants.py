@@ -1,7 +1,7 @@
 """Scoring constants. All policy numbers live here (configurable later)."""
 from __future__ import annotations
 
-ADVANCE_THRESHOLD = 65          # Overall >= → advance (when not knockout-capped)
+ADVANCE_THRESHOLD = 65          # Overall >= → advance (when not must-have-capped)
 REJECT_THRESHOLD = 40           # Overall <  → reject
 MIN_COVERAGE_FOR_ADVANCE = 0.6  # below this, a high Overall is forced to borderline
 
@@ -22,7 +22,7 @@ SCORECARD_EVIDENCE_MAX = 5               # max fallback quotes per signal scorec
 
 # Fit-aware aggregation ceilings (the score MEANS role-fit, so a must-have
 # gap caps it — this is the metric's definition, not a post-hoc clamp).
-REJECT_CEILING = 35      # failed must-have / knockout_close → score forced into reject band (<40)
+REJECT_CEILING = 35      # failed must-have → score forced into reject band (<40)
 BORDERLINE_CEILING = 60  # unconfirmed must-have / low coverage → at most borderline (<65)
 
 # Bound on the Layer-2.5 holistic adjustment (±5 pts = ±0.5 on the /10 scale).
