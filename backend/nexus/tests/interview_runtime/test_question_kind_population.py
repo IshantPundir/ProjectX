@@ -23,17 +23,14 @@ def _valid_kwargs(**overrides: object) -> dict[str, object]:
     """Build a minimal-but-valid QuestionConfig kwargs dict.
 
     Matches every required field on the current schema (id, position, text,
-    signal_values, estimated_minutes, is_mandatory, follow_ups,
-    positive_evidence, red_flags, rubric, evaluation_hint). Tests override
-    only the field they care about.
+    signal_values, follow_ups, positive_evidence, red_flags, rubric,
+    evaluation_hint). Tests override only the field they care about.
     """
     base: dict[str, object] = dict(
         id="q-1",
         position=0,
         text="What is your approach to handling network failures in distributed systems?",
         signal_values=["sig"],
-        estimated_minutes=3.0,
-        is_mandatory=True,
         follow_ups=[],
         positive_evidence=["evidence one", "evidence two", "evidence three"],
         red_flags=["red flag one", "red flag two"],

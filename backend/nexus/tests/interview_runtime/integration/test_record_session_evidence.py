@@ -25,7 +25,6 @@ from app.modules.interview_runtime.evidence import (
     EvidenceTexture,
     QuestionOutcome,
     QuestionRecord,
-    QuestionTier,
     SessionEvidence,
     SessionMeta,
     SignalEvidence,
@@ -110,7 +109,6 @@ def _build_minimal_evidence(
     question_rec = QuestionRecord(
         question_id="q1",
         primary_signal="python_proficiency",
-        tier=QuestionTier.core,
         outcome=QuestionOutcome.asked,
         closure=ThreadClosure.satisfied,
         asked_at_turn="turn-001",
@@ -144,14 +142,11 @@ def _build_minimal_evidence(
             time_budget_s=1800.0,
             completion=CompletionReason.completed,
             questions_asked=1,
-            questions_core_total=3,
-            questions_overflow_asked=0,
         ),
         signals=[signal_ev],
         notes=[note],
         questions=[question_rec],
         transcript=[transcript_turn],
-        knockout=None,
     )
 
 

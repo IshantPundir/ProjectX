@@ -1,6 +1,6 @@
 from app.modules.interview_runtime.evidence import (
     SessionEvidence, SignalEvidence, EvidenceNote, QuestionRecord, TranscriptTurn,
-    SessionMeta, TimeSpan, Provenance, EvidenceStance, EvidenceTexture, QuestionTier,
+    SessionMeta, TimeSpan, Provenance, EvidenceStance, EvidenceTexture,
     QuestionOutcome, ThreadClosure, CoverageState, CompletionReason, SignalType, SignalPriority, Speaker,
 )
 

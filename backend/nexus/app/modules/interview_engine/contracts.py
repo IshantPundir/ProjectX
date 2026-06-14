@@ -12,7 +12,7 @@ Module layout:
   1. Shared vocabulary imports from evidence (single source).
   2. Brain output (LEAN): BrainMove, SignalObservation, BrainTurnOutput.
   3. Brain input (cache-split: STABLE PREFIX → DYNAMIC SUFFIX):
-     BudgetPhase, SignalSpec, BankQuestionIndex, BrainSessionContext,
+     SignalSpec, BankQuestionIndex, BrainSessionContext,
      ActiveQuestionRubric, SignalRead, WindowTurn, BrainTurnInput.
   4. Directive + mouth: DirectiveAct, DirectiveTone, Directive, MouthTurnInput, BridgeRequest.
   5. Brain service result: BrainDecision (loop contract; after Directive + SignalObservation).
@@ -59,7 +59,7 @@ class BrainMove(StrEnum):
     confirm = "confirm"          # garbled / possibly-misheard answer → reflect back before grading
     answer_meta = "answer_meta"  # candidate asked the agent something → answer, then return
     repeat = "repeat"            # replay the last question verbatim
-    close = "close"              # terminal (full coverage / verified knockout / candidate ended)
+    close = "close"              # terminal (full coverage / candidate ended)
 
 
 class SignalObservation(BaseModel):
@@ -117,10 +117,9 @@ class BrainTurnOutput(BaseModel):
     preferred_next_signal: str | None = Field(
         default=None,
         description="OPTIONAL soft hint (a signal/topic) for what would flow well NEXT, for naturalness. "
-                    "The deterministic resolver HONORS it only when budget has slack AND it doesn't break "
-                    "the mandatory-coverage guarantee; otherwise it falls back to mandatory-first. The brain "
-                    "NEVER hard-selects the next main question (resolver owns repeat + coverage + budget "
-                    "safety). None → let the resolver choose by position/weight.",
+                    "The deterministic resolver HONORS it when an unasked question matches that signal; "
+                    "otherwise it returns the lowest-position unasked question. The brain NEVER hard-selects "
+                    "the next main question (the resolver owns ordering). None → let the resolver choose by position.",
     )
     composed_say: str | None = Field(
         default=None, max_length=400,
@@ -134,30 +133,14 @@ class BrainTurnOutput(BaseModel):
         default=False,
         description="True ONLY when the candidate EXPLICITLY asked to end/stop the screen "
                     "(\"I'd like to end now\", \"please stop the session\"). Paired with move=close it is "
-                    "honored IMMEDIATELY and BYPASSES the knockout-verification gate — a candidate may "
-                    "always end the screen. Leave False for a brain-decided close (full coverage reached "
-                    "or a verified knockout).",
-    )
-    knockout_confirmed: bool = Field(
-        default=False,
-        description="True ONLY when you have CONFIRMED (in-conversation: a clear disclaim, then ONE "
-                    "reflect-back confirm) that a MANDATORY signal listed in `knockout_pending` is "
-                    "genuinely absent. Paired with move=close it ends the screen early and RECORDS the "
-                    "knockout for the report (records-never-rejects — a human still decides). The engine "
-                    "honors it ONLY for a signal it actually flagged in `knockout_pending` (you cannot "
-                    "fabricate a knockout). Leave False for an ordinary full-coverage close.",
+                    "honored IMMEDIATELY — a candidate may always end the screen. Leave False for a "
+                    "brain-decided close (full coverage reached).",
     )
 
 
 # ============================================================================
 # 2. BRAIN INPUT — STABLE PREFIX (built once per session, byte-identical → cached)
 # ============================================================================
-
-class BudgetPhase(StrEnum):
-    """The ONLY time signal the brain sees (the time arithmetic lives in the engine resolver)."""
-    on_track = "on_track"          # plenty of budget — probe normally when warranted
-    winding_down = "winding_down"  # little left — at most one quick elicitation, then let it advance
-
 
 class SignalSpec(BaseModel):
     """One JD signal the screen collects. The FULL set is in the prefix so the brain can credit an
@@ -178,8 +161,6 @@ class BankQuestionIndex(BaseModel):
     signals: list[str]          # the broader coverable set
     kind: str                   # experience_check | behavioral | technical_scenario | compliance_binary
     difficulty: str             # easy | medium | hard
-    is_mandatory: bool
-    tier: str                   # core | coverage
     text: str
     follow_ups: list[FollowUpDimension]   # the pre-written probe dimensions
 
@@ -286,23 +267,10 @@ class BrainTurnInput(BaseModel):
     )
 
     # --- steering signals (compact) ---
-    budget_phase: BudgetPhase
     uncovered_signals: list[str] = Field(
         default_factory=list,
         description="High-value signals still uncovered (weight-ranked) — focuses the brain's "
                     "cross-crediting + tells it what still matters. NOT a question picker (engine resolves that).",
-    )
-    knockout_pending: list[str] = Field(
-        default_factory=list,
-        description="Mandatory signals currently looking ABSENT — a loud flag to run the verified-knockout "
-                    "flow (probe → check OR-alternatives → reflect-confirm) before concluding absence.",
-    )
-    knockout_reflected: list[str] = Field(
-        default_factory=list,
-        description="Knockout signals whose absence you have ALREADY reflected back to the candidate on a "
-                    "PRIOR turn (deterministic — the engine tracks it). If a signal here is still pending and "
-                    "the candidate has now affirmed the absence, CLOSE (knockout_confirmed) — do NOT reflect "
-                    "it back a second time. One reflect-back is enough.",
     )
 
 

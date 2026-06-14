@@ -17,8 +17,6 @@ def _make_question(**overrides):
         position=0,
         text="A long enough placeholder question text body goes here.",
         signal_values=["python"],
-        estimated_minutes=3.0,
-        is_mandatory=True,
         follow_ups=[],
         positive_evidence=["evidence_a", "evidence_b", "evidence_c"],
         red_flags=["red_flag_a", "red_flag_b"],
@@ -150,8 +148,8 @@ def test_question_config_question_kind_accepts_any_str():
     from app.modules.interview_runtime.schemas import QuestionConfig, QuestionRubric
 
     base = dict(
-        id="q1", position=0, text="x" * 12, signal_values=["s"], estimated_minutes=1.0,
-        is_mandatory=False, follow_ups=[], positive_evidence=["a", "b", "c"],
+        id="q1", position=0, text="x" * 12, signal_values=["s"], follow_ups=[],
+        positive_evidence=["a", "b", "c"],
         red_flags=["x", "y"],
         rubric=QuestionRubric(excellent="e", meets_bar="m", below_bar="b"),
         evaluation_hint="hint text ok",
@@ -164,8 +162,8 @@ def test_question_config_primary_signal_optional():
     from app.modules.interview_runtime.schemas import QuestionConfig, QuestionRubric
 
     cfg = QuestionConfig(
-        id="q1", position=0, text="x" * 12, signal_values=["s"], estimated_minutes=1.0,
-        is_mandatory=False, follow_ups=[], positive_evidence=["a", "b", "c"],
+        id="q1", position=0, text="x" * 12, signal_values=["s"], follow_ups=[],
+        positive_evidence=["a", "b", "c"],
         red_flags=["x", "y"],
         rubric=QuestionRubric(excellent="e", meets_bar="m", below_bar="b"),
         evaluation_hint="hint text ok", question_kind="behavioral", primary_signal="s",

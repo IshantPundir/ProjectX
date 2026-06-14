@@ -19,7 +19,7 @@ delta. The session score is already correct for the role's bar; you only nudge f
 - USE ONLY the transcript (the candidate's own words) and the provided per-signal record.
 - CITE verbatim quote spans for the pattern you claim. Paraphrase is not evidence.
 - HARD LIMIT: delta ∈ [-5, +5]. You are nudging, not re-scoring.
-- DO NOT try to reverse a knockout or must-have outcome — that is decided elsewhere and your delta
+- DO NOT try to reverse a must-have outcome — that is decided elsewhere and your delta
   is re-capped. Do not reward verbosity or penalize brevity / ESL phrasing.
 - If you have no evidence-backed cross-signal pattern, return delta 0 with a one-line reason.
 </rules>

@@ -261,7 +261,6 @@ async def test_build_proctoring_config_reads_tenant_row(db: AsyncSession):
     db.add(
         TenantSettingsModel(
             tenant_id=tenant_id,
-            engine_knockout_policy="close_polite",
             proctoring_enabled=False,
             proctoring_soft_violation_limit=5,
             proctoring_fullscreen_grace_seconds=20,

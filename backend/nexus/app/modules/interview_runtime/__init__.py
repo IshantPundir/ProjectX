@@ -24,7 +24,6 @@ from app.modules.interview_runtime.results import (
 from app.modules.interview_runtime.schemas import (
     CandidateContext,
     CompanyContext,
-    KnockoutFailure,
     QuestionConfig,
     QuestionRubric,
     SessionConfig,
@@ -57,7 +56,6 @@ __all__ = [
     "CompanyContext",
     "CompanyProfileMissingError",
     "CoverageState",
-    "KnockoutFailure",
     "LedgerEntry",
     "QuestionBankNotReadyError",
     "QuestionConfig",

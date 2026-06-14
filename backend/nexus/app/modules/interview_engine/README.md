@@ -93,10 +93,9 @@ subprocess) per interview. The FastAPI/nexus web process never loads LiveKit at 
   `Directive` — speakable text plus delivery metadata. So the mouth is structurally
   *incapable* of telling the candidate "great answer" or "we're looking for X."
 - **Deterministic detection → the brain decides.** Turn-level facts (a pure-backchannel
-  turn, a cut-off floor, a stalled candidate, which knockouts are pending / already
-  reflected) are computed in plain Python and fed to the brain as **boolean/ list hints** on
-  its existing call. The engine adds **no extra LLM call** to detect them; the brain makes
-  the semantic decision.
+  turn, a cut-off floor, a stalled candidate, the high-value uncovered signals) are computed
+  in plain Python and fed to the brain as **boolean / list hints** on its existing call. The
+  engine adds **no extra LLM call** to detect them; the brain makes the semantic decision.
 
 ---
 
@@ -125,10 +124,10 @@ subprocess) per interview. The FastAPI/nexus web process never loads LiveKit at 
 ### The brain (control plane — `brain/`)
 | File | What it does |
 |---|---|
-| `service.py` | `ControlPlane.decide()` — one structured LLM call per turn → update the coverage projection → derive a no-leak `Directive` (apply the candidate-end bypass, the brain-driven verified-knockout close + reflect backstop, the knockout gate, then map the move). Also `confirmed_knockout_signals()` (read at finalize). `build_control_plane()` assembles it from a `SessionConfig`. |
-| `input_builder.py` | Pure prompt assembly + the `CoverageProjection` (ephemeral per-signal read state: `update`, `signal_reads`, `uncovered_signals`, `knockout_pending`). Builds the cache-stable prefix (system + role context + compact bank index) and the dynamic suffix (active rubric + coverage + uncovered/knockout-pending/already-reflected hints + transcript window + the candidate utterance, fenced as DATA). |
-| `resolver.py` | `resolve_next()` — the deterministic next-**main**-question picker (bank position / mandatory-first when winding down / time budget / no-repeat; honors the brain's `preferred_next_signal` only when budget allows). Plus `compute_budget_phase`, `build_question_records`, `budget_config_from_ai_config`. The LLM never authors main questions. |
-| `policy.py` | Deterministic, never-raising gates: `KnockoutTracker` (per-signal verified-knockout state), `gate_knockout` (blocks a premature blind close), `scrub_composed_say` (literal known-rubric-string no-leak scrub), `coerce_probe_dimension` (fire-once per dimension slug + hard per-thread probe cap). |
+| `service.py` | `ControlPlane.decide()` — one structured LLM call per turn → update the coverage projection → derive a no-leak `Directive` (apply the candidate-end bypass, then map the move). `build_control_plane()` assembles it from a `SessionConfig`. |
+| `input_builder.py` | Pure prompt assembly + the `CoverageProjection` (ephemeral per-signal read state: `update`, `signal_reads`, `uncovered_signals`). Builds the cache-stable prefix (system + role context + compact bank index) and the dynamic suffix (active rubric + coverage + uncovered signals + the floor-interrupted/stalled hints + transcript window + the candidate utterance, fenced as DATA). |
+| `resolver.py` | `resolve_next()` — the deterministic next-**main**-question picker. Selection is **purely positional**: the lowest-`position` unasked question, honoring the brain's optional `preferred_next_signal` hint only when an unasked question matches; `None` when all are asked (→ close). Plus `build_question_records` (session-end `QuestionRecord` builder). The LLM never authors or reorders main questions. |
+| `policy.py` | Deterministic, never-raising gates: `scrub_composed_say` (literal known-rubric-string no-leak scrub) and `coerce_probe_dimension` (fire-once per dimension slug + hard per-thread probe cap). |
 
 ### The mouth (conversation plane — `mouth/`)
 | File | What it does |
@@ -198,8 +197,7 @@ After editing an engine prompt, restart with
 2. **Backchannel drop:** a pure-engagement turn (`is_backchannel`) is dropped before the
    brain — it never moves the floor.
 3. Build the `BridgeRequest` (recent openers) and the `BrainTurnInput` (active rubric +
-   coverage + the deterministic hints: `floor_interrupted`, `stalled`, `uncovered_signals`,
-   `knockout_pending`, `knockout_reflected`).
+   coverage + the deterministic hints: `floor_interrupted`, `stalled`, `uncovered_signals`).
 4. `run_turn`: **bridge ∥ brain → real line**, appending each signal observation to the
    `NoteLog` (see [§3 · loop.py](#the-drive-loop-looppy--pure-no-livekit)).
 5. Advance state from the `BrainDecision`: on `ask`, move the active-question pointer to the
@@ -211,9 +209,7 @@ After editing an engine prompt, restart with
 
 ### 4.5 Close + record (`finalize`)
 - Build per-signal `SignalEvidence`, compute `provenance` deterministically from the notes +
-  question closures, build the `QuestionRecord` list, assemble `SessionMeta`, and record a
-  `KnockoutOutcome` for any knockout signal the brain verified absent
-  (`confirmed_knockout_signals()`).
+  question closures, build the `QuestionRecord` list, and assemble `SessionMeta`.
 - `NoteLog.to_session_evidence()` → `record_session_evidence()` persists the
   `SessionEvidence` to `sessions.session_evidence_json` and commits the completion (which
   enqueues report scoring). Idempotent + safe against an externally-terminated row.
@@ -228,24 +224,26 @@ Everything the engine needs, assembled before the call:
   industry / hiring_bar).
 - **Candidate:** `candidate.name`.
 - **The question bank** (`stage.questions`): each `QuestionConfig` carries `id`, `position`,
-  `text`, `signal_values`, `primary_signal`, `question_kind`, `difficulty`, `is_mandatory`,
+  `text`, `signal_values`, `primary_signal`, `question_kind`, `difficulty`,
   `follow_ups`, and the grading detail — `rubric` (excellent / meets_bar / below_bar),
   `positive_evidence`, `red_flags`, `evaluation_hint`.
-- **Signals** + `signal_metadata` (weight / priority / **knockout** flags) and STT `keyterms`.
+- **Signals** + `signal_metadata` (weight / priority / **knockout** must-have flag) and STT
+  `keyterms`. The `knockout` flag is pure DATA — it marks a signal as a must-have so the
+  report can identify it; the engine no longer ends the screen early on a missing must-have.
 
 ### Output — `SessionEvidence` (to `interview_runtime` → reporting)
 Persisted by `record_session_evidence()` to `sessions.session_evidence_json`
 (migration `0054`). **Append-only by design — the engine RECORDS; the report derives
 coverage, score, and verdict.**
 - `meta` — `SessionMeta` (completion reason, timing, counts).
-- `signals[]` — one `SignalEvidence` per role signal: identity + weight + knockout flag +
-  computed `provenance` (`not_reached` | `asked_directly` | `cross_credited` | `probed_absent`).
+- `signals[]` — one `SignalEvidence` per role signal: identity + weight + the `knockout`
+  must-have flag + computed `provenance` (`not_reached` | `asked_directly` | `cross_credited`
+  | `probed_absent`).
 - `notes[]` — the append-only `EvidenceNote` ledger: per observation, the signal, stance
   (`supports`/`contradicts`), texture (`thin`/`concrete`/`strong`), verbatim quote, span,
   question on the floor, via-probe, and any retraction link.
 - `questions[]` — `QuestionRecord` per asked question (closure, probes fired).
 - `transcript[]` — role-tagged turns.
-- `knockout` — a `KnockoutOutcome` if a mandatory signal was verified absent (else `null`).
 
 The reporting module reads this structured evidence as the **spine** of the post-session
 report — it projects the per-signal notes onto role signals rather than re-grading from
@@ -287,15 +285,15 @@ the gen-3 engine actually reads:
 | `engine_brain_prompt_cache_key` / `engine_mouth_prompt_cache_key` | OpenAI prompt-cache keys. |
 | `engine_bridge_timeout_s` | Hard cap on the bridge call → canned `"Mm, okay…"` fallback. |
 | `engine_endpointing_mode` / `engine_endpointing_min_delay_s` / `engine_endpointing_max_delay_s` | Dynamic endpointing — how long the turn detector holds open for think-pauses. |
-| `engine_v2_turn_detector_unlikely_threshold` | The turn detector's `unlikely_threshold` (default `None` = model default). |
-| `engine_close_reserve_s` / `engine_winding_down_s` | Time-budget knobs for the resolver's `budget_phase`. |
+| `engine_turn_detector_unlikely_threshold` | The turn detector's `unlikely_threshold` (default `None` = model default). |
 | `engine_stall_reposes_before_advance` | Consecutive non-answer turns before the brain gets a `⚠️ STALLED` hint. |
 | `engine_heartbeat_interval_seconds` | Liveness pulse cadence for the reaper. |
 | `engine_agent_name` | The LiveKit fleet routing label / mouth persona fallback. |
 
-> Naming note: a few settings keep the historical `engine_v2_*` prefix and the engine logs
-> emit `engine.*` strings. There is **only one engine**; the `v2` token on
-> `engine_v2_turn_detector_unlikely_threshold` is a vestigial label, not a version switch.
+> Naming note: the turn-handling settings are consolidated under the `engine_*` prefix in
+> `config.py` (the historical `engine_v2_*` knobs were removed in the 2026-06-10 cleanup).
+> There is **only one engine**; any lingering `v2` token (e.g. in some log strings) is a
+> vestigial label, not a version switch.
 
 ---
 
@@ -323,7 +321,7 @@ Run the suite: `docker compose run --rm nexus pytest tests/interview_engine_v3 -
 | **Bridge** | The immediate short mouth beat fired in parallel with the brain to mask its latency. Never a question, never rubric. |
 | **Directive** | The single object brain → mouth. Speakable text + delivery metadata; never rubric. |
 | **Coverage** | Per-signal evidence state (`none`/`partial`/`sufficient`), credited across the whole conversation (not per question). Ephemeral runtime steering; the durable record is the append-only notes. |
-| **Knockout** | A signal flagged mandatory (`knockout=True`). When verified absent (disclaim → one reflect-back → close), the screen ends early. **Records, never rejects** — borderline is a human's decision. |
+| **Knockout** | A signal flagged a must-have (`knockout=True`) — pure DATA the report uses to identify must-haves. A missing must-have drives a reject verdict via the report's score ceiling; the engine does **not** end the screen early on it (the dedicated knockout early-close was deleted). **Records, never rejects** — borderline is a human's decision. |
 | **Floor** | The question currently on the floor (the last `ask`/`probe`). `repeat`/`clarify` re-pose *this*, even after a non-question turn. |
 | **Provenance** | How each signal was reached, computed deterministically at close: `not_reached` / `asked_directly` / `cross_credited` / `probed_absent`. |
-| **Deterministic hint** | A turn-level fact computed in code (backchannel, `floor_interrupted`, `stalled`, `knockout_pending`, `knockout_reflected`) and fed to the brain — the engine detects, the brain decides. No extra LLM call. |
+| **Deterministic hint** | A turn-level fact computed in code (backchannel, `floor_interrupted`, `stalled`, `uncovered_signals`) and fed to the brain — the engine detects, the brain decides. No extra LLM call. |

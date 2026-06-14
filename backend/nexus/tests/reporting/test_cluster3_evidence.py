@@ -109,7 +109,6 @@ def _shared_signal_evidence_dict():
         ],
         "transcript": [{"turn_ref": "t-1", "speaker": "candidate", "text": "Eight, nine years",
                         "span": {"start_ms": 0, "end_ms": 1}, "pre_turn_gap_ms": 0}],
-        "knockout": None,
     }
 
 

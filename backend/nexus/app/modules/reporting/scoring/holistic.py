@@ -33,7 +33,7 @@ def _signal_digest(scored: list[ScoredSignal]) -> str:
 
 
 async def score_holistic(
-    *, session_score: int | None, scored: list[ScoredSignal], is_knockout_close: bool,
+    *, session_score: int | None, scored: list[ScoredSignal],
     coverage: float, transcript_text: str, demonstrated_secondaries: list[str],
     correlation_id: str,
 ) -> HolisticAdjustmentOut:
@@ -46,7 +46,7 @@ async def score_holistic(
     prefix = (
         f"{system_prompt}\n\n"
         f"<session_score>\n{session_score}\n</session_score>\n\n"
-        f"<facts>\nknockout_close={is_knockout_close}, coverage={coverage:.2f}\n</facts>\n\n"
+        f"<facts>\ncoverage={coverage:.2f}\n</facts>\n\n"
         f"<per_signal>\n{_signal_digest(scored)}\n</per_signal>\n\n"
         f"<demonstrated_extra_signals>\n{', '.join(demonstrated_secondaries) or '(none)'}"
         f"\n</demonstrated_extra_signals>"

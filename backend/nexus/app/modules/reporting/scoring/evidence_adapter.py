@@ -7,7 +7,6 @@ NOT SessionEvidence.signals[] (which is the full role set; see spec §3.1).
 from __future__ import annotations
 
 from app.modules.interview_runtime.evidence import (
-    CompletionReason,
     EvidenceNote,
     EvidenceStance,
     Provenance,
@@ -77,14 +76,6 @@ class EvidenceView:
         return "\n".join(
             t.text for t in self._ev.transcript if t.speaker == Speaker.candidate
         )
-
-    @property
-    def is_knockout_close(self) -> bool:
-        return self._ev.meta.completion == CompletionReason.knockout_close
-
-    @property
-    def knockout_signal(self) -> str | None:
-        return self._ev.knockout.signal if self._ev.knockout else None
 
     def has_supporting_notes(self, signal: str) -> bool:
         return any(

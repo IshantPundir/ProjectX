@@ -77,15 +77,9 @@ class EvidenceTexture(StrEnum):
 
 class CompletionReason(StrEnum):
     completed = "completed"            # ran the planned screen to the end
-    knockout_close = "knockout_close"  # mandatory signal verified absent → early, warm close
     candidate_ended = "candidate_ended"
     unresponsive = "unresponsive"
     error = "error"
-
-
-class QuestionTier(StrEnum):
-    core = "core"          # time-budgeted core set — ALWAYS attempted (never skipped for coverage)
-    coverage = "coverage"  # overflow pool — reached only if time/threads allowed
 
 
 class QuestionOutcome(StrEnum):
@@ -183,13 +177,12 @@ class QuestionRecord(BaseModel):
     for coverage — a dedicated question always runs if reached)."""
     question_id: str
     primary_signal: str
-    tier: QuestionTier
     outcome: QuestionOutcome
     closure: ThreadClosure | None = Field(
         default=None,
         description="Set ONLY when outcome == asked. Engine-inferred from the brain's final "
-                    "coverage_after + stance + whether the time-resolver force-closed the thread. "
-                    "This is what lets the session-close pass tell `probed_absent` from `not_reached`.",
+                    "coverage_after + stance (and `truncated` when the session ended with the thread "
+                    "still open). This is what lets the session-close pass tell `probed_absent` from `not_reached`.",
     )
     asked_at_turn: str | None = None
     probes_used: list[int] = Field(
@@ -197,16 +190,6 @@ class QuestionRecord(BaseModel):
     )
     probes_available: int = Field(ge=0, description="How many follow-ups the bank offered for this question.")
     time_spent_s: float = Field(ge=0, default=0.0)
-
-
-class KnockoutOutcome(BaseModel):
-    """Recorded ONLY when a mandatory signal was VERIFIED absent (probe → all OR-alternatives
-    checked → reflect-confirmed). The engine RECORDS; the report/human decides the consequence.
-    The engine never auto-rejects (borderline → human)."""
-    signal: str
-    or_alternatives_checked: list[str] = Field(default_factory=list)
-    reflect_confirmed: bool
-    evidence_note_seqs: list[int] = Field(default_factory=list, description="seqs of the notes that ground this.")
 
 
 class TranscriptTurn(BaseModel):
@@ -233,8 +216,6 @@ class SessionMeta(BaseModel):
     time_budget_s: float = Field(ge=0, description="The stage's planned time budget.")
     completion: CompletionReason
     questions_asked: int = Field(ge=0)
-    questions_core_total: int = Field(ge=0)
-    questions_overflow_asked: int = Field(ge=0)
 
 
 class SessionEvidence(BaseModel):
@@ -246,4 +227,3 @@ class SessionEvidence(BaseModel):
     notes: list[EvidenceNote]          # APPEND-ONLY source of truth, chronological by `seq`
     questions: list[QuestionRecord]
     transcript: list[TranscriptTurn]
-    knockout: KnockoutOutcome | None = None

@@ -8,7 +8,7 @@ Design under test (notes.py):
   - note.retracts_seq == seq of most-recent prior note with same signal (if obs.retracts is True),
     else None (and None if obs.retracts is True but no prior same-signal note exists)
 - notes property returns a copy of the accumulated list
-- to_session_evidence(meta, signals, questions, transcript, knockout) → SessionEvidence
+- to_session_evidence(meta, signals, questions, transcript) → SessionEvidence
   - packages accumulated notes with the supplied objects; round-trips via model_dump/model_validate
 """
 from __future__ import annotations
@@ -29,11 +29,9 @@ from app.modules.interview_runtime.evidence import (
     SignalEvidence,
     QuestionRecord,
     TranscriptTurn,
-    KnockoutOutcome,
     SignalType,
     SignalPriority,
     Provenance,
-    QuestionTier,
     QuestionOutcome,
     Speaker,
     CompletionReason,
@@ -79,8 +77,6 @@ def _session_meta() -> SessionMeta:
         time_budget_s=300.0,
         completion=CompletionReason.completed,
         questions_asked=3,
-        questions_core_total=3,
-        questions_overflow_asked=0,
     )
 
 
@@ -99,7 +95,6 @@ def _question_record(question_id: str = "q-1") -> QuestionRecord:
     return QuestionRecord(
         question_id=question_id,
         primary_signal="test_signal",
-        tier=QuestionTier.core,
         outcome=QuestionOutcome.asked,
         probes_available=2,
     )
@@ -277,7 +272,6 @@ def test_to_session_evidence_packages_and_round_trips():
         signals=signals,
         questions=questions,
         transcript=transcript,
-        knockout=None,
     )
 
     assert isinstance(evidence, SessionEvidence)
@@ -292,7 +286,6 @@ def test_to_session_evidence_packages_and_round_trips():
     assert evidence.signals == signals
     assert evidence.questions == questions
     assert evidence.transcript == transcript
-    assert evidence.knockout is None
 
     # Round-trip: must survive model_dump → model_validate
     dumped = evidence.model_dump()

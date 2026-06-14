@@ -74,7 +74,7 @@ def _signal_dict(
 def test_question_config_accepts_explicit_difficulty():
     q = QuestionConfig(
         id="q1", position=0, text="A question about the topic, walk me through it.",
-        signal_values=["s1"], estimated_minutes=2.0, is_mandatory=True, follow_ups=[],
+        signal_values=["s1"], follow_ups=[],
         positive_evidence=["a", "b", "c"], red_flags=["x", "y"],
         rubric={"excellent": "x"*20, "meets_bar": "y"*20, "below_bar": "z"*20},
         evaluation_hint="Look for specifics here.", question_kind="technical_scenario",
@@ -86,7 +86,7 @@ def test_question_config_accepts_explicit_difficulty():
 def test_question_config_difficulty_defaults_to_medium_when_omitted():
     q = QuestionConfig(
         id="q1", position=0, text="A question about the topic, walk me through it.",
-        signal_values=["s1"], estimated_minutes=2.0, is_mandatory=True, follow_ups=[],
+        signal_values=["s1"], follow_ups=[],
         positive_evidence=["a", "b", "c"], red_flags=["x", "y"],
         rubric={"excellent": "x"*20, "meets_bar": "y"*20, "below_bar": "z"*20},
         evaluation_hint="Look for specifics here.", question_kind="technical_scenario",

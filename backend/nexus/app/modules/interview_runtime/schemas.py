@@ -13,10 +13,9 @@ Two contract invariants worth calling out:
 
 from __future__ import annotations
 
-import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.interview_runtime.results import (
     ClaimsPoolSnapshot,
@@ -94,8 +93,6 @@ class QuestionConfig(BaseModel):
     position: int = Field(ge=0)
     text: str = Field(min_length=10, max_length=500)
     signal_values: list[str] = Field(min_length=1, max_length=3)
-    estimated_minutes: float = Field(gt=0, le=15)
-    is_mandatory: bool
     # max_length intentionally absent — the write-path bound lives on
     # question_bank.GeneratedQuestion.follow_ups; this wire-read projection is permissive.
     follow_ups: list[FollowUpDimension] = Field(
@@ -353,61 +350,6 @@ class SteeringObservation(BaseModel):
 from app.modules.interview_runtime.models import TranscriptEntry, WordTiming  # noqa: F401
 
 
-# ---------------------------------------------------------------------------
-# Knockout failure (Phase 5) — persisted summary of a hard-requirement
-# failure surfaced by the engine's `disqualify_knockout` shared tool.
-#
-# Defense-in-depth PII boundary: the LLM prompt instructs the agent never
-# to include PII in `knockout_reason`; this validator runs `_scrub_pii` on
-# every construction path (including model_validate from a DB read) as
-# a backstop. RLS on the `sessions` table enforces tenant isolation at
-# the storage layer. Three layers; PII has to fail through all three.
-# ---------------------------------------------------------------------------
-
-_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
-_PHONE_RE = re.compile(r"\b\+?\d[\d\s().-]{7,}\d\b")
-
-
-def _scrub_pii(text: str) -> str:
-    """Replace email + phone-number matches with `[redacted]`.
-
-    Idempotent. Runs unconditionally on every KnockoutFailure
-    construction (validator mode='before') including model_validate
-    from a DB read.
-    """
-    text = _EMAIL_RE.sub("[redacted]", text)
-    text = _PHONE_RE.sub("[redacted]", text)
-    return text
-
-
-class KnockoutFailure(BaseModel):
-    """Persisted record of a knockout failure (Phase 5).
-
-    Authored by the engine's `disqualify_knockout` shared tool when a
-    candidate self-discloses something that invalidates a hard
-    requirement (e.g. "I cannot work UK shift hours"). Engine records,
-    never auto-rejects — Phase 3D analytics consumes this list.
-
-    `reason` is LLM-authored 1-3 sentence factual summary; the
-    `_scrub_reason` validator strips emails + phone numbers as
-    defense-in-depth.
-    """
-
-    question_id: str = Field(min_length=1)
-    reason: str = Field(min_length=1, max_length=500)
-    signal_values: list[str] = Field(min_length=1)
-    occurred_at_ms: int = Field(ge=0)
-
-    @field_validator("reason", mode="before")
-    @classmethod
-    def _scrub_reason(cls, v: object) -> object:
-        if not isinstance(v, str):
-            # Let the str-coercion / min_length validator produce the
-            # right ValidationError downstream. Don't shadow it here.
-            return v
-        return _scrub_pii(v)
-
-
 class SessionResult(BaseModel):
     """Complete output of an interview session.
 
@@ -426,14 +368,6 @@ class SessionResult(BaseModel):
     full_transcript: list[TranscriptEntry]
     completed_at: str = Field(
         description="ISO 8601 timestamp of session completion.",
-    )
-    knockout_failures: list[KnockoutFailure] = Field(
-        default_factory=list,
-        description=(
-            "Hard-requirement failures recorded during the interview "
-            "(self-disclosed, factual). Engine records, never auto-rejects "
-            "— Phase 3D analytics consumes this list."
-        ),
     )
     audio_tuning_summary: dict[str, object] | None = Field(
         default=None,

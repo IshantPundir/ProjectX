@@ -1,22 +1,13 @@
 """Pydantic models for the tenant_settings module."""
 from __future__ import annotations
 
-from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
 
-KnockoutPolicy = Literal["record_only", "close_polite"]
-
-
 class TenantSettings(BaseModel):
     """Per-tenant engine configuration.
-
-    `engine_knockout_policy` defaults to ``"close_polite"`` — the
-    enterprise-default expectation that a hard-requirement failure
-    ends the interview. Operators who want to keep gathering data
-    after a knockout flip the column to ``"record_only"``.
 
     `engine_agent_name` is None-able; null means "use the env fallback
     `settings.engine_agent_name`". The override applies only at the
@@ -29,7 +20,6 @@ class TenantSettings(BaseModel):
     """
 
     tenant_id: UUID
-    engine_knockout_policy: KnockoutPolicy = "close_polite"
     engine_agent_name: str | None = None
     proctoring_enabled: bool = True
     proctoring_soft_violation_limit: int = Field(default=3, ge=1, le=20)

@@ -25,10 +25,10 @@ from app.modules.reporting.scoring.aggregate import (
     clamp_to_ceiling,
     confidence_from_coverage,
     make_scored_signal,
+    must_have_cap,
     resolve_verdict,
     score_dimension,
     score_overall,
-    signal_ceiling,
 )
 from app.modules.reporting.scoring.constants import (
     BEHAVIORAL_TYPES,
@@ -189,12 +189,11 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id,
     base, coverage = score_overall(scored)
 
     must_haves = [s for s in scored if s.knockout]
-    ceiling = signal_ceiling(
-        must_haves, is_knockout_close=view.is_knockout_close, coverage=coverage)
+    ceiling = must_have_cap(must_haves, coverage=coverage)
     session_score = clamp_to_ceiling(base, ceiling)
 
     adjustment = await score_holistic(
-        session_score=session_score, scored=scored, is_knockout_close=view.is_knockout_close,
+        session_score=session_score, scored=scored,
         coverage=coverage, transcript_text=view.candidate_transcript_text,
         demonstrated_secondaries=sorted(view.demonstrated_secondaries),
         correlation_id=correlation_id)
@@ -204,9 +203,7 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id,
                                      correlation_id=correlation_id)
     comm_score = _COMM_POINTS[comm.level]
 
-    verdict = resolve_verdict(overall=overall, coverage=coverage,
-                              is_knockout_close=view.is_knockout_close,
-                              knockout_signal=view.knockout_signal, must_haves=must_haves)
+    verdict = resolve_verdict(overall=overall, coverage=coverage, must_haves=must_haves)
 
     # Per-signal evidence quotes (dedicated-grade grounded, else engine supporting notes) —
     # computed once and reused by both the scorecards and the narrative ground truth.
@@ -243,7 +240,6 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id,
         "verdict": verdict.verdict, "verdict_reason": verdict.reason,
         "scores": {"overall": overall, "technical": tech.score,
                    "behavioral": beh.score, "communication": comm_score},
-        "knockout_close": ({"signal": view.knockout_signal} if view.is_knockout_close else None),
         "signals": [{"signal": s.value, "type": s.type, "level": s.level,
                      "provenance": _provenance_str(s.value), "must_have": s.knockout,
                      "priority": s.priority,
@@ -387,7 +383,6 @@ async def persist_report(
             float(report.overall_coverage) if report.overall_coverage is not None else None),
         overall_confidence=report.overall_confidence,
         dimension_scores={k: v.model_dump(mode="json") for k, v in report.scores.items()},
-        knockout_results=[],
         signal_scorecards=[s.model_dump(mode="json") for s in report.signal_assessments],
         question_scorecards=[q.model_dump(mode="json") for q in report.questions],
         summary={

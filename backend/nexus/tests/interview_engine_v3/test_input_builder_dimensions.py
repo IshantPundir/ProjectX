@@ -1,14 +1,13 @@
 from app.modules.interview_engine.brain.input_builder import (
     active_question_rubric, render_suffix, build_turn_input, CoverageProjection,
 )
-from app.modules.interview_engine.contracts import BudgetPhase
 from app.modules.interview_runtime.schemas import QuestionConfig, QuestionRubric
 
 
 def _q():
     return QuestionConfig(
         id="q1", position=0, text="How would you assess a messy tenant?",
-        signal_values=["intune_admin"], estimated_minutes=3.0, is_mandatory=True,
+        signal_values=["intune_admin"],
         follow_ups=[{
             "dimension": "validate_impact", "intent": "verify impact",
             "seed_probe": "How would you validate impact?",
@@ -32,7 +31,7 @@ def test_render_suffix_shows_dimension_intent_listen_for():
     ti = build_turn_input(
         turn_ref="t1", active_question=r, on_the_floor="...", candidate_utterance="hi",
         thread_turn_count=1, projection=CoverageProjection(), all_specs=[],
-        transcript_window=[], budget_phase=BudgetPhase.on_track,
+        transcript_window=[],
     )
     content = render_suffix(ti)[0]["content"]
     assert "validate_impact" in content     # dimension slug

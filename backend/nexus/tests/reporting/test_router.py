@@ -206,7 +206,6 @@ async def _seed_report(
                 "coverage": 1.0,
             },
         },
-        knockout_results=[],
         signal_scorecards=[],
         question_scorecards=[],
         # summary houses the prose-layer fields that ReportRead unpacks

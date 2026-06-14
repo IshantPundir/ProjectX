@@ -20,7 +20,7 @@ async def test_secondary_breadth_passed_to_prompt():
     with patch("app.modules.reporting.scoring.holistic.get_raw_openai_client") as c:
         c.return_value.responses.parse = AsyncMock(side_effect=_parse)
         out = await score_holistic(
-            session_score=70, scored=[_s("solid", 80)], is_knockout_close=False,
+            session_score=70, scored=[_s("solid", 80)],
             coverage=0.8, transcript_text="...", demonstrated_secondaries=["kubernetes", "graphql"],
             correlation_id="cid")
     assert out.delta == 3
@@ -30,7 +30,7 @@ async def test_secondary_breadth_passed_to_prompt():
 
 @pytest.mark.asyncio
 async def test_none_session_score_skips():
-    out = await score_holistic(session_score=None, scored=[], is_knockout_close=False,
+    out = await score_holistic(session_score=None, scored=[],
                                coverage=0.0, transcript_text="", demonstrated_secondaries=[],
                                correlation_id="cid")
     assert out.delta == 0

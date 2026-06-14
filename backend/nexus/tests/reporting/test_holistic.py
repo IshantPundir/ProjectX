@@ -14,7 +14,7 @@ async def test_score_holistic_bounds_delta_and_grounds_quotes():
     client.responses.parse = AsyncMock(return_value=_Resp(parsed))
     with patch("app.modules.reporting.scoring.holistic.get_raw_openai_client", return_value=client):
         out = await score_holistic(
-            session_score=55, scored=[], is_knockout_close=False, coverage=0.8,
+            session_score=55, scored=[], coverage=0.8,
             transcript_text="... I just used the library ...", demonstrated_secondaries=[],
             correlation_id="c1")
     assert out.delta == -5                       # hard-bounded
@@ -25,7 +25,7 @@ async def test_score_holistic_refusal_returns_zero_delta():
     client = AsyncMock()
     client.responses.parse = AsyncMock(return_value=_Resp(None))
     with patch("app.modules.reporting.scoring.holistic.get_raw_openai_client", return_value=client):
-        out = await score_holistic(session_score=55, scored=[], is_knockout_close=False,
+        out = await score_holistic(session_score=55, scored=[],
                                    coverage=0.8, transcript_text="x", demonstrated_secondaries=[],
                                    correlation_id="c1")
     assert out.delta == 0
@@ -35,7 +35,7 @@ async def test_score_holistic_api_error_returns_zero_delta():
     client = AsyncMock()
     client.responses.parse = AsyncMock(side_effect=RuntimeError("boom"))
     with patch("app.modules.reporting.scoring.holistic.get_raw_openai_client", return_value=client):
-        out = await score_holistic(session_score=55, scored=[], is_knockout_close=False,
+        out = await score_holistic(session_score=55, scored=[],
                                    coverage=0.8, transcript_text="x", demonstrated_secondaries=[],
                                    correlation_id="c1")
     assert out.delta == 0

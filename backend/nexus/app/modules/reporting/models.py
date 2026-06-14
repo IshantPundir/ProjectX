@@ -61,7 +61,6 @@ class SessionReport(Base):
     overall_coverage: Mapped[float | None] = mapped_column(Numeric)
     overall_confidence: Mapped[str | None] = mapped_column(Text)
     dimension_scores: Mapped[dict | None] = mapped_column(JSONB)
-    knockout_results: Mapped[list | None] = mapped_column(JSONB)
     signal_scorecards: Mapped[list | None] = mapped_column(JSONB)
     question_scorecards: Mapped[list | None] = mapped_column(JSONB)
     summary: Mapped[dict | None] = mapped_column(JSONB)
