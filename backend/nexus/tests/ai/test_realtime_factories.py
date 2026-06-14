@@ -12,6 +12,7 @@ from app.ai.realtime import (
     build_stt_plugin,
     build_tts_plugin,
     build_vad,
+    prewarm_tts_plugin,
 )
 
 
@@ -102,3 +103,36 @@ class TestBuildTtsPlugin:
             mock_config.interview_tts_provider = "bogus"
             with pytest.raises(ValueError, match="Unknown interview_tts_provider"):
                 build_tts_plugin()
+
+
+class TestPrewarmTtsPlugin:
+    """prewarm_tts_plugin() import-registers the configured TTS plugin.
+
+    Import-only (no plugin instance → no API keys). It is what the vision
+    worker calls on its main thread so the later worker-thread import reuses
+    the cached module (LiveKit requires plugin registration on the main thread).
+    """
+
+    def test_default_provider_runs_and_caches_module(self) -> None:
+        # Default provider is sarvam; calling must not raise and must leave the
+        # plugin module registered in sys.modules.
+        prewarm_tts_plugin()
+        assert "livekit.plugins.sarvam" in sys.modules
+
+    def test_idempotent(self) -> None:
+        # A second call hits the sys.modules cache and re-runs nothing.
+        prewarm_tts_plugin()
+        prewarm_tts_plugin()
+        assert "livekit.plugins.sarvam" in sys.modules
+
+    def test_openai_provider_imports_openai_plugin(self) -> None:
+        with patch("app.ai.realtime.ai_config") as mock_config:
+            mock_config.interview_tts_provider = "openai"
+            prewarm_tts_plugin()
+        assert "livekit.plugins.openai" in sys.modules
+
+    def test_cartesia_provider_imports_cartesia_plugin(self) -> None:
+        with patch("app.ai.realtime.ai_config") as mock_config:
+            mock_config.interview_tts_provider = "cartesia"
+            prewarm_tts_plugin()
+        assert "livekit.plugins.cartesia" in sys.modules

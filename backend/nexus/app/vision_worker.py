@@ -26,6 +26,7 @@ from opentelemetry import trace
 
 from app import brokers  # noqa: F401  (side effect: init broker before actor import)
 from app.ai.otel import bootstrap_tracer_provider
+from app.ai.realtime import prewarm_tts_plugin
 from app.config import settings
 from app.model_registry import configure_all_models
 from app.modules.reel import actors as reel_actors  # noqa: F401  (register reel actor, queue "reel")
@@ -53,6 +54,14 @@ trace.set_tracer_provider(_otel_provider)
 # `sessions`; without importing every model + configure(), the first query fails
 # with NoReferencedTableError. Shared with app/main.py — single source of truth.
 configure_all_models()
+
+# Register the configured TTS plugin on the MAIN thread. The reel renders
+# narration (reel/tts.py → realtime.build_tts_plugin) inside Dramatiq
+# worker-thread actors, and LiveKit requires plugin registration on the main
+# thread (Plugin.register_plugin raises otherwise). Dramatiq imports this
+# entrypoint on the main thread at startup, so registering here means the later
+# worker-thread import reuses the cached module. See realtime.prewarm_tts_plugin.
+prewarm_tts_plugin()
 
 # Flush OTel batched spans on worker exit.
 atexit.register(_otel_provider.shutdown)

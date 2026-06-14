@@ -167,6 +167,29 @@ def build_tts_plugin() -> "_BaseTTS":
     )
 
 
+def prewarm_tts_plugin() -> None:
+    """Import-register the configured TTS plugin on the CURRENT thread.
+
+    LiveKit registers a plugin at import time and requires the main thread
+    (``Plugin.register_plugin`` raises otherwise). The reel renders TTS
+    narration inside Dramatiq worker-thread actors, so the registering import
+    must happen at worker bootstrap (main thread); the later worker-thread
+    import reuses the cached module. Mirrors agent.py's top-level
+    plugin-registration imports.
+
+    Import-only — does NOT construct a plugin instance (which would need API
+    keys / network). Idempotent: a second call hits the ``sys.modules`` cache
+    and re-runs nothing.
+    """
+    provider = ai_config.interview_tts_provider
+    if provider == "sarvam":
+        from livekit.plugins import sarvam  # noqa: F401
+    elif provider == "openai":
+        from livekit.plugins import openai  # noqa: F401
+    elif provider == "cartesia":
+        from livekit.plugins import cartesia  # noqa: F401
+
+
 def _build_tts_sarvam() -> "_BaseTTS":
     """Sarvam TTS (default). Indian-language tuned (bulbul:v3, speaker
     ``shubh`` by default). Auth via SARVAM_API_KEY env.
