@@ -599,7 +599,9 @@ class Settings(BaseSettings):
     # --- timeline thumbnails (Report Review Theater) ---
     vision_thumbnail_width_px: int = 320
     vision_thumbnail_webp_quality: int = 80
-    vision_thumbnail_top_flag_count: int = 6
+    # Safety cap: a thumbnail is saved for EVERY flagged interval (one per
+    # proctoring violation); this only bounds a pathological run.
+    vision_thumbnail_max_flag_count: int = 100
 
     # --- Reporting — offline report scorer (Phase 3D+ post-session) ---
     # The report scorer is an async LLM judge that runs after a session

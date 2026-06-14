@@ -1,34 +1,51 @@
 from __future__ import annotations
 
-from app.modules.interview_runtime import question_asked_at_ms, relative_words, turn_bounds
+from app.modules.interview_runtime import (
+    asked_at_ms_by_question_evidence,
+    relative_words,
+    turn_bounds,
+)
 from app.modules.interview_runtime.models import WordTiming
 
 
-# --- question_asked_at_ms (pre-existing; restored after an accidental overwrite) ---
+# --- asked_at_ms_by_question_evidence (gen-3: over session_evidence_json["transcript"]) ---
+#
+# Gen-3 turn dict shape (SessionEvidence.transcript dumped to JSON):
+#   {"speaker": "agent"|"candidate", "question_id": str|None,
+#    "span": {"start_ms": int, "end_ms": int}, "words": [...]}
 
-def test_picks_earliest_agent_timestamp_per_question():
+def test_picks_earliest_agent_span_start_per_question():
     transcript = [
-        {"role": "agent", "text": "Q1?", "timestamp_ms": 1000, "question_id": "q1"},
-        {"role": "candidate", "text": "...", "timestamp_ms": 1500, "question_id": "q1"},
-        {"role": "agent", "text": "probe q1", "timestamp_ms": 2000, "question_id": "q1"},
-        # earlier timestamp appearing LATER in the list must still win (out-of-order guard):
-        {"role": "agent", "text": "resend q1", "timestamp_ms": 500, "question_id": "q1"},
-        {"role": "agent", "text": "Q2?", "timestamp_ms": 3000, "question_id": "q2"},
+        {"speaker": "agent", "question_id": "q1", "span": {"start_ms": 1000, "end_ms": 1500}},
+        {"speaker": "candidate", "question_id": "q1", "span": {"start_ms": 1600, "end_ms": 2000}},
+        {"speaker": "agent", "question_id": "q1", "span": {"start_ms": 2000, "end_ms": 2400}},
+        # earlier start appearing LATER in the list must still win (out-of-order guard):
+        {"speaker": "agent", "question_id": "q1", "span": {"start_ms": 500, "end_ms": 900}},
+        {"speaker": "agent", "question_id": "q2", "span": {"start_ms": 3000, "end_ms": 3400}},
     ]
-    assert question_asked_at_ms(transcript) == {"q1": 500, "q2": 3000}
+    assert asked_at_ms_by_question_evidence(transcript) == {"q1": 500, "q2": 3000}
 
 
-def test_ignores_candidate_and_untagged_lines():
+def test_ignores_candidate_and_untagged_agent_turns():
     transcript = [
-        {"role": "agent", "text": "filler", "timestamp_ms": 100, "question_id": None},
-        {"role": "candidate", "text": "hi", "timestamp_ms": 200, "question_id": "q1"},
-        {"role": "agent", "text": "Q1?", "timestamp_ms": 300, "question_id": "q1"},
+        {"speaker": "agent", "question_id": None, "span": {"start_ms": 100, "end_ms": 150}},
+        {"speaker": "candidate", "question_id": "q1", "span": {"start_ms": 200, "end_ms": 300}},
+        {"speaker": "agent", "question_id": "q1", "span": {"start_ms": 300, "end_ms": 700}},
     ]
-    assert question_asked_at_ms(transcript) == {"q1": 300}
+    assert asked_at_ms_by_question_evidence(transcript) == {"q1": 300}
+
+
+def test_skips_turns_missing_span_or_start_ms():
+    transcript = [
+        {"speaker": "agent", "question_id": "q1"},  # no span
+        {"speaker": "agent", "question_id": "q1", "span": {}},  # span, no start_ms
+        {"speaker": "agent", "question_id": "q1", "span": {"start_ms": 800, "end_ms": 900}},
+    ]
+    assert asked_at_ms_by_question_evidence(transcript) == {"q1": 800}
 
 
 def test_empty_transcript_returns_empty():
-    assert question_asked_at_ms([]) == {}
+    assert asked_at_ms_by_question_evidence([]) == {}
 
 
 # --- relative_words / turn_bounds (Phase 1 candidate-reel helpers) ---
