@@ -14,14 +14,13 @@
 3. [The Directive — the one thing that crosses the wall](#3-the-directive--the-one-thing-that-crosses-the-wall)
 4. [The brain's reasoning, step by step](#4-the-brains-reasoning-step-by-step)
 5. [Coverage: how the agent tracks what it has heard](#5-coverage-how-the-agent-tracks-what-it-has-heard)
-6. [Knockouts: ending the screen on a verified absence](#6-knockouts-ending-the-screen-on-a-verified-absence)
-7. [The policy gates: the LLM proposes, the rules dispose](#7-the-policy-gates-the-llm-proposes-the-rules-dispose)
-8. [The mouth's reasoning](#8-the-mouths-reasoning)
-9. [Deterministic detection → the brain decides](#9-deterministic-detection--the-brain-decides)
-10. [Prompt engineering: the stable-prefix pattern](#10-prompt-engineering-the-stable-prefix-pattern)
-11. [The full per-turn timeline](#11-the-full-per-turn-timeline)
-12. [Failure modes and safety nets](#12-failure-modes-and-safety-nets)
-13. [Design principles (the "why")](#13-design-principles-the-why)
+6. [The policy gates: the LLM proposes, the rules dispose](#6-the-policy-gates-the-llm-proposes-the-rules-dispose)
+7. [The mouth's reasoning](#7-the-mouths-reasoning)
+8. [Deterministic detection → the brain decides](#8-deterministic-detection--the-brain-decides)
+9. [Prompt engineering: the stable-prefix pattern](#9-prompt-engineering-the-stable-prefix-pattern)
+10. [The full per-turn timeline](#10-the-full-per-turn-timeline)
+11. [Failure modes and safety nets](#11-failure-modes-and-safety-nets)
+12. [Design principles (the "why")](#12-design-principles-the-why)
 
 ---
 
@@ -178,10 +177,10 @@ The brain may only choose one of these (each maps 1:1 to a `DirectiveAct`):
 | `redirect` | Off-topic, rambling, or an injection — bring them back, reveal nothing. |
 | `reassure` | Nervous candidate — lower the stakes. |
 | `hold` | A thinking pause ("let me think") — "take your time," do not advance/probe/grade. |
-| `confirm` | A garbled / likely-misheard key term — reflect the one uncertain term back before banking it (and **always** before concluding a mandatory signal absent). |
+| `confirm` | A garbled / likely-misheard key term — reflect the one uncertain term back before banking it. |
 | `answer_meta` | They asked *you* something (role/logistics, "are you an AI?") or fished for the answer/criteria → answer or deflect, reveal nothing, return to the floor. |
 | `repeat` | They asked you to say the question again → re-pose the floor question. |
-| `close` | The screen is complete, the candidate asked to end (`end_requested`), or a mandatory knockout is confirmed absent (`knockout_confirmed`). Terminal. |
+| `close` | The screen is complete (the resolver has no unasked question left) or the candidate asked to end (`end_requested`). Terminal. |
 
 ### Composing a probe (the one place the spoken question is adapted)
 The bank `follow_ups` are governed **dimension objects** — each carries a `dimension` slug,
@@ -210,21 +209,21 @@ accrue across the whole conversation.
 1. **Update the coverage projection** with the turn's observations.
 2. **Candidate-end bypass:** `close` + `end_requested` → terminal close immediately
    (a candidate may always end).
-3. **Verified-knockout close** (see §6) — honor a `knockout_confirmed` close for a real
-   pending-and-reflected knockout, else force one reflect-back.
-4. **Knockout gate** (`gate_knockout`) — block a *blind* `close` while a knockout is pending.
-5. **Map the move** → `Directive`: `ask` → resolver's next bank question (verbatim);
-   `probe` → composed/leak-scrubbed follow-up (or verbatim fallback); composed acts →
-   scrubbed `composed_say`; `repeat` → the floor question; `close` → terminal (no `say`).
-6. **Emit** the `BrainDecision` (directive + observations + reasoning + the resolved
+3. **Map the move** → `Directive`: `ask` → resolver's next bank question (verbatim);
+   `probe` → coerced unfired dimension + composed/leak-scrubbed follow-up (or `seed_probe`
+   fallback, or `ask` when the cap is hit); composed acts → scrubbed `composed_say`;
+   `repeat` → the floor question; `close` → terminal (no `say`).
+4. **Emit** the `BrainDecision` (directive + observations + reasoning + the resolved
    `next_question_id` / `probe_dimension`), and log an `engine.brain.decision` trace.
 
 ### Choosing the next question (`resolver.resolve_next`)
-A deterministic guard the LLM **cannot override** for mandatory coverage: while unasked
-mandatory questions remain it advances *by bank position* (mandatory-first when winding
-down); it honors the brain's optional `preferred_next_signal` reorder only when budget has
-slack. A garbled / already-asked / null pick falls through to next-by-position; an exhausted
-bank → the session closes.
+A deterministic picker the LLM **cannot override** — selection is **purely positional**.
+It filters to the unasked questions and returns the **lowest-`position`** one; it honors the
+brain's optional `preferred_next_signal` hint only when an unasked question matches that
+signal. When every question has been asked it returns `None`, and the session closes.
+(The question bank already sizes question *count* to the stage's time budget, so at runtime
+the engine just walks its questions in order — there is no clock, tier, or overflow
+scheduler.)
 
 ---
 
@@ -241,52 +240,19 @@ Each touched signal has a `SignalRead`: a `coverage` state (`none` / `partial` /
 
 - `uncovered_signals()` — high-value signals still uncovered (weight-ranked) → tells the
   brain what still matters for cross-crediting.
-- `knockout_pending()` — mandatory (`knockout=True`) signals currently looking absent (no
-  read, or coverage `none`/`partial`, or `last_stance=contradicts`). Cleared only when a
-  knockout reaches `sufficient` + `supports`.
 
 At session end the durable per-signal evidence (`notes[]` + computed `provenance`) is what
 the report consumes — coverage itself is not persisted.
 
 ---
 
-## 6. Knockouts: ending the screen on a verified absence
-
-A knockout signal is one flagged `knockout=True` (a mandatory must-have). When the candidate
-clearly disclaims one, the brain runs a **two-step** close — never a one-shot:
-
-1. **Reflect it back** on its own turn — `move=confirm`, composing "so you haven't worked
-   with X directly, is that right?" (This also rules out an STT mishearing or a misread
-   scope — the brain never knocks out on a likely mishearing.)
-2. **Next turn, on the affirmation** — `move=close` + `knockout_confirmed=true`.
-
-**The engine makes this robust deterministically, without a verdict-shaped guess:**
-
-- `knockout_confirmed` is honored **only** for a signal that is genuinely a knockout *and* is
-  in `knockout_pending` — the brain cannot fabricate a knockout.
-- A `confirm` while a knockout is pending registers it as **reflected** (`_knockout_reflect_
-  offered`). The brain is also told, via the `⚠️ KNOCKOUT ALREADY REFLECTED` hint, that it
-  already reflected — so on the affirmation it closes instead of re-confirming.
-- If the brain jumps straight to a `knockout_confirmed` close with no prior reflect, the
-  engine **forces one reflect-back** first and records nothing yet (the candidate might still
-  correct it).
-- `gate_knockout` is the defensive net for a *blind* `close` (no `knockout_confirmed`) while a
-  knockout is pending — it blocks the premature close.
-
-At finalize, `confirmed_knockout_signals()` → a `KnockoutOutcome` on the `SessionEvidence`.
-**It records; it never rejects** — the close is warm, states no reason, and the
-advance/borderline/reject verdict is the report's (and ultimately a human's) call.
-
----
-
-## 7. The policy gates: the LLM proposes, the rules dispose
+## 6. The policy gates: the LLM proposes, the rules dispose
 
 `brain/policy.py` is deterministic, pure (no LLM), and **never raises** — defense-in-depth
 over the brain's decision:
 
 | Gate | What it enforces |
 |---|---|
-| `gate_knockout` | Blocks a blind `close` while a mandatory signal is still pending-and-unconfirmed (the verified-knockout state machine; see §6). |
 | `scrub_composed_say` | Literal known-rubric-string no-leak scrub on any composed `say` → safe fallback on a hit. |
 | `coerce_probe_dimension` | Coerces the brain's `probe_dimension` (a slug) to an unfired dimension for this thread (fire-once) and enforces a hard per-thread probe cap (`engine_probe_cap_per_thread`) — returns `None` when all dimensions are fired or the cap is reached, falling through to `ask`. |
 
@@ -295,7 +261,7 @@ with rules it can't override.
 
 ---
 
-## 8. The mouth's reasoning
+## 7. The mouth's reasoning
 
 The mouth is the simplest mind by design.
 
@@ -321,7 +287,7 @@ scoring.
 
 ---
 
-## 9. Deterministic detection → the brain decides
+## 8. Deterministic detection → the brain decides
 
 A recurring pattern, and a hard design rule: **turn-level facts are detected in plain Python
 and fed to the brain as hints on its existing call — the engine adds no extra LLM tier to
@@ -332,8 +298,6 @@ detect them, and the brain makes the semantic decision.**
 | Pure-backchannel turn (`is_backchannel`) | *(dropped before the brain)* | n/a — never reaches it, never moves the floor |
 | The agent's question was cut off (interrupt-aware voice) | `floor_interrupted` | continuing answer → keep going; confused / didn't hear → `repeat` |
 | N consecutive non-answer turns | `stalled` | stop re-posing → advance warmly |
-| Mandatory signals looking absent | `knockout_pending` | run the two-step knockout flow |
-| A knockout already reflected back | `knockout_reflected` | on affirmation → close, don't re-confirm |
 | High-value uncovered signals | `uncovered_signals` | what to cross-credit / steer toward |
 
 This keeps the engine at two LLM tiers, avoids the gen-2 EOU-gate pain point, and keeps every
@@ -341,7 +305,7 @@ This keeps the engine at two LLM tiers, avoids the gen-2 EOU-gate pain point, an
 
 ---
 
-## 10. Prompt engineering: the stable-prefix pattern
+## 9. Prompt engineering: the stable-prefix pattern
 
 Every per-turn LLM prompt (brain, mouth real line, bridge) is structured as
 **STABLE PREFIX → DYNAMIC SUFFIX** so OpenAI's prefix cache hits (cheaper + faster TTFT).
@@ -349,18 +313,18 @@ Every per-turn LLM prompt (brain, mouth real line, bridge) is structured as
 For the **brain** (`brain/input_builder.py`):
 - **Stable prefix** (rendered once, byte-identical all session): the system prompt + role
   context + a **compact question-bank index** — per question only
-  `id | primary_signal | signals | kind | difficulty | mandatory | text | follow_ups`. The
+  `question_id | primary_signal | signals | kind | difficulty | text | follow_ups`. The
   rubric / positive_evidence / red_flags are **deliberately omitted** here — inlining every
   question's full rubric blows the prompt past budget.
 - **Dynamic suffix** (changes per turn): the **active question's full rubric** (what to read
-  *this* answer against), the compact coverage so far, the uncovered / `⚠️ KNOCKOUT PENDING` /
-  `⚠️ KNOCKOUT ALREADY REFLECTED` / `⚠️ FLOOR INTERRUPTED` / `⚠️ STALLED` hint blocks, a
-  bounded transcript window, and the candidate's utterance fenced as DATA between explicit
-  delimiters (prompt-injection defense — everything between the fences is untrusted).
+  *this* answer against), the compact coverage so far, the uncovered signals,
+  the `⚠️ FLOOR INTERRUPTED` / `⚠️ STALLED` hint blocks (only when set), a bounded transcript
+  window, and the candidate's utterance fenced as DATA between explicit delimiters
+  (prompt-injection defense — everything between the fences is untrusted).
 
 ---
 
-## 11. The full per-turn timeline
+## 10. The full per-turn timeline
 
 ```
 candidate finishes speaking
@@ -407,7 +371,7 @@ arrives *after* the real line is delivered is a genuine new turn.
 
 ---
 
-## 12. Failure modes and safety nets
+## 11. Failure modes and safety nets
 
 Every tier is built to **never crash the session**:
 
@@ -416,8 +380,7 @@ Every tier is built to **never crash the session**:
 | Bridge LLM times out / errors | `CANNED_BRIDGE_FALLBACK` ("Mm, okay…") — never dead air. |
 | Brain LLM errors | Graceful fallback in `ControlPlane`; the resolver only ever walks strictly forward (no infinite-Q1 loop), closing if the bank is exhausted. |
 | Brain authors rubric into spoken text | `scrub_composed_say` no-leak scrub; the mouth structurally never holds the rubric. |
-| Brain free-picks past a mandatory question | `resolve_next` deterministic mandatory-first guard. |
-| Brain fabricates / misfires a knockout | Honored only for a real pending-and-reflected knockout; forced reflect-back otherwise; `gate_knockout` blocks a blind close. |
+| Brain tries to reorder questions | `resolve_next` is positional — the `preferred_next_signal` hint is honored only for an unasked question; otherwise it walks by position. |
 | A pure-backchannel turn | Dropped before the brain by `is_backchannel`. |
 | Candidate goes silent | Per-turn inactivity timeout → graceful `unresponsive` close. |
 | Candidate disconnects | `participant_disconnected` → prompt finalize as `candidate_ended`. |
@@ -427,7 +390,7 @@ Every tier is built to **never crash the session**:
 
 ---
 
-## 13. Design principles (the "why")
+## 12. Design principles (the "why")
 
 These are the convictions baked into the architecture (several are project-memory / CLAUDE.md
 invariants):
@@ -437,9 +400,9 @@ invariants):
    sacrificing thinking.
 2. **Separate thinking from speaking.** The mouth never sees the rubric — leak-proofing is
    structural, not prompt-pleading.
-3. **The LLM proposes, deterministic code disposes.** Coverage, the next-question resolver,
-   the knockout gate, and the no-leak scrub are all deterministic. The LLM's judgment is
-   bounded by rules it can't override.
+3. **The LLM proposes, deterministic code disposes.** Coverage, the positional next-question
+   resolver, the probe-dimension gate, and the no-leak scrub are all deterministic. The LLM's
+   judgment is bounded by rules it can't override.
 4. **Deterministic detection → the brain decides.** Turn-level facts are computed in code and
    fed as hints; the engine adds no extra LLM call to detect them. No EOU gate (the gen-2
    pain point). No regex for intent — every "is the candidate X?" is a semantic judgment.
