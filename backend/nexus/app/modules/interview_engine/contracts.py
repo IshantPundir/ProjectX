@@ -133,18 +133,8 @@ class BrainTurnOutput(BaseModel):
         default=False,
         description="True ONLY when the candidate EXPLICITLY asked to end/stop the screen "
                     "(\"I'd like to end now\", \"please stop the session\"). Paired with move=close it is "
-                    "honored IMMEDIATELY and BYPASSES the knockout-verification gate — a candidate may "
-                    "always end the screen. Leave False for a brain-decided close (full coverage reached "
-                    "or a verified knockout).",
-    )
-    knockout_confirmed: bool = Field(
-        default=False,
-        description="True ONLY when you have CONFIRMED (in-conversation: a clear disclaim, then ONE "
-                    "reflect-back confirm) that a MANDATORY signal listed in `knockout_pending` is "
-                    "genuinely absent. Paired with move=close it ends the screen early and RECORDS the "
-                    "knockout for the report (records-never-rejects — a human still decides). The engine "
-                    "honors it ONLY for a signal it actually flagged in `knockout_pending` (you cannot "
-                    "fabricate a knockout). Leave False for an ordinary full-coverage close.",
+                    "honored IMMEDIATELY — a candidate may always end the screen. Leave False for a "
+                    "brain-decided close (full coverage reached).",
     )
 
 
@@ -281,18 +271,6 @@ class BrainTurnInput(BaseModel):
         default_factory=list,
         description="High-value signals still uncovered (weight-ranked) — focuses the brain's "
                     "cross-crediting + tells it what still matters. NOT a question picker (engine resolves that).",
-    )
-    knockout_pending: list[str] = Field(
-        default_factory=list,
-        description="Mandatory signals currently looking ABSENT — a loud flag to run the verified-knockout "
-                    "flow (probe → check OR-alternatives → reflect-confirm) before concluding absence.",
-    )
-    knockout_reflected: list[str] = Field(
-        default_factory=list,
-        description="Knockout signals whose absence you have ALREADY reflected back to the candidate on a "
-                    "PRIOR turn (deterministic — the engine tracks it). If a signal here is still pending and "
-                    "the candidate has now affirmed the absence, CLOSE (knockout_confirmed) — do NOT reflect "
-                    "it back a second time. One reflect-back is enough.",
     )
 
 

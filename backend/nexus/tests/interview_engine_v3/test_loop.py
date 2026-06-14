@@ -113,7 +113,6 @@ def _brain_turn_input() -> BrainTurnInput:
         evidence_so_far=[],
         transcript_window=[],
         uncovered_signals=[],
-        knockout_pending=[],
     )
 
 

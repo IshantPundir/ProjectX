@@ -705,32 +705,6 @@ def test_render_suffix_floor_interrupted_note() -> None:
     assert "FLOOR INTERRUPTED" not in render_suffix(_ti(False))[0]["content"]
 
 
-def test_render_suffix_knockout_reflected_note() -> None:
-    """render_suffix surfaces the KNOCKOUT ALREADY REFLECTED note iff knockout_reflected is non-empty."""
-    from app.modules.interview_engine.brain.input_builder import render_suffix
-    from app.modules.interview_engine.contracts import (
-        ActiveQuestionRubric,
-        BrainTurnInput,
-    )
-
-    def _ti(reflected: list[str]) -> BrainTurnInput:
-        return BrainTurnInput(
-            turn_ref="t-1",
-            active_question=ActiveQuestionRubric(
-                question_id="q1", text="What is X?",
-                excellent="Excellent answer rubric text here",
-                meets_bar="Meets the bar rubric text here",
-                below_bar="below", positive_evidence=[], red_flags=[],
-                evaluation_hint="hint", follow_ups=[], fired_dimensions=[],
-            ),
-            on_the_floor="What is X?",
-            candidate_utterance="hi", thread_turn_count=1,
-            knockout_pending=["workato"], knockout_reflected=reflected,
-        )
-
-    assert "KNOCKOUT ALREADY REFLECTED" in render_suffix(_ti(["workato"]))[0]["content"]
-    assert "KNOCKOUT ALREADY REFLECTED" not in render_suffix(_ti([]))[0]["content"]
-
 
 async def test_mouth_adapter_combines_bridge_and_real_line():
     """Regression: run_turn needs ONE mouth with both bridge() + real_line().

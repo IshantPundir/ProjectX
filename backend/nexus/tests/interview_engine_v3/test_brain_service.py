@@ -167,7 +167,6 @@ def _make_active_rubric(qid: str = "q-001", fired_dimensions: list[str] | None =
 def _make_turn_input(
     active_rubric: ActiveQuestionRubric | None = None,
     candidate_utterance: str = "I worked on Kafka-based pipelines for three years.",
-    knockout_pending: list[str] | None = None,
     on_the_floor: str = _Q1_TEXT,
 ) -> BrainTurnInput:
     rubric = active_rubric or _make_active_rubric()
@@ -180,7 +179,6 @@ def _make_turn_input(
         evidence_so_far=[],
         transcript_window=[],
         uncovered_signals=["distributed_systems", "incident_response"],
-        knockout_pending=knockout_pending or [],
     )
 
 

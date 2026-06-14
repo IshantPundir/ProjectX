@@ -6,7 +6,7 @@ D1 task — verifies:
 2.  render_prefix is byte-identical across calls (cache-stable prefix).
 3.  No rubric text leaks into the prefix.
 4.  Candidate utterance is fenced as DATA in the suffix.
-5.  CoverageProjection: update, signal_reads, uncovered_signals (weight-ranked), knockout_pending.
+5.  CoverageProjection: update, signal_reads, uncovered_signals (weight-ranked).
 6.  Suffix only carries the ACTIVE question's rubric — other questions' rubric text is absent.
 """
 
@@ -538,81 +538,6 @@ class TestCoverageProjection:
         proj = CoverageProjection()  # nothing updated
         uncovered = proj.uncovered_signals(specs)
         assert set(uncovered) == {"distributed_systems", "incident_response", "python_proficiency"}
-
-    def test_knockout_pending_absent_signal(self):
-        specs = self._make_specs()
-        proj = CoverageProjection()  # python_proficiency is knockout, not touched
-
-        pending = proj.knockout_pending(specs)
-        assert "python_proficiency" in pending
-
-    def test_knockout_pending_cleared_when_sufficient_supports(self):
-        from app.modules.interview_engine.contracts import SignalObservation
-        specs = self._make_specs()
-        proj = CoverageProjection()
-
-        obs = SignalObservation(
-            signal="python_proficiency",
-            stance=EvidenceStance.supports,
-            texture=EvidenceTexture.concrete,
-            coverage_after=CoverageState.sufficient,
-        )
-        proj.update([obs])
-
-        pending = proj.knockout_pending(specs)
-        assert "python_proficiency" not in pending
-
-    def test_knockout_pending_still_listed_when_partial(self):
-        from app.modules.interview_engine.contracts import SignalObservation
-        specs = self._make_specs()
-        proj = CoverageProjection()
-
-        obs = SignalObservation(
-            signal="python_proficiency",
-            stance=EvidenceStance.supports,
-            texture=EvidenceTexture.thin,
-            coverage_after=CoverageState.partial,
-        )
-        proj.update([obs])
-
-        pending = proj.knockout_pending(specs)
-        # partial coverage on a knockout signal → still pending
-        assert "python_proficiency" in pending
-
-    def test_knockout_pending_still_listed_when_contradicts(self):
-        from app.modules.interview_engine.contracts import SignalObservation
-        specs = self._make_specs()
-        proj = CoverageProjection()
-
-        # sufficient coverage but stance is contradicts → still pending (absence confirmed)
-        obs = SignalObservation(
-            signal="python_proficiency",
-            stance=EvidenceStance.contradicts,
-            texture=EvidenceTexture.concrete,
-            coverage_after=CoverageState.sufficient,
-        )
-        proj.update([obs])
-
-        pending = proj.knockout_pending(specs)
-        assert "python_proficiency" in pending
-
-    def test_non_knockout_signal_never_in_knockout_pending(self):
-        """A non-knockout signal with contradicts stance must NOT appear in knockout_pending."""
-        from app.modules.interview_engine.contracts import SignalObservation
-        specs = self._make_specs()
-        proj = CoverageProjection()
-
-        # distributed_systems has knockout=False
-        obs = SignalObservation(
-            signal="distributed_systems",
-            stance=EvidenceStance.contradicts,
-            texture=EvidenceTexture.thin,
-            coverage_after=CoverageState.none,
-        )
-        proj.update([obs])
-
-        pending = proj.knockout_pending(specs)
-        assert "distributed_systems" not in pending
 
     def test_multiple_updates_overwrite_coverage(self):
         from app.modules.interview_engine.contracts import SignalObservation

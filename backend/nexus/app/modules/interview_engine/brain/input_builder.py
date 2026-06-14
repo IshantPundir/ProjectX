@@ -11,7 +11,8 @@ Responsibilities:
 
   3. CoverageProjection
        Ephemeral per-session runtime state: folds SignalObservation events forward into
-       SignalRead records. Plain Python, no pydantic, no livekit — lives only in memory.
+       SignalRead records (uncovered_signals, signal_reads). Plain Python, no pydantic,
+       no livekit — lives only in memory.
 
   4. build_turn_input(...) → BrainTurnInput
        Assembles the full per-turn struct the brain LLM reads (the dynamic suffix).
@@ -31,7 +32,7 @@ Responsibilities:
 Fallback documented:
   When SessionConfig.signal_metadata is empty, build_session_context falls back to one
   minimal SignalSpec per entry in SessionConfig.signals with:
-    signal_type = competency, weight = 1, priority = preferred, knockout = False.
+    signal_type = competency, weight = 1, preferred, knockout = False.
   This keeps the builder functional for legacy/test configs that predate signal_metadata.
 """
 
@@ -52,7 +53,6 @@ from app.modules.interview_engine.contracts import (
 )
 from app.modules.interview_runtime.evidence import (
     CoverageState,
-    EvidenceStance,
     SignalPriority,
     SignalType,
 )
@@ -253,34 +253,6 @@ class CoverageProjection:
         uncovered.sort(key=lambda t: t[0], reverse=True)
         return [sig for _, sig in uncovered]
 
-    def knockout_pending(self, all_specs: list[SignalSpec]) -> list[str]:
-        """Return knockout signals that are currently ABSENT (not yet verified present).
-
-        A knockout signal is pending when:
-          - it has no read yet (never touched), OR
-          - its coverage is none or partial, OR
-          - its last_stance is contradicts
-
-        Once a knockout signal reaches coverage=sufficient AND last_stance=supports,
-        it is considered resolved and dropped from this list.
-        """
-        pending: list[str] = []
-        for spec in all_specs:
-            if not spec.knockout:
-                continue
-            read = self._reads.get(spec.signal)
-            if read is None:
-                pending.append(spec.signal)
-                continue
-            # Resolved: sufficient coverage + supports stance → cleared
-            if (
-                read.coverage == CoverageState.sufficient
-                and read.last_stance == EvidenceStance.supports
-            ):
-                continue
-            pending.append(spec.signal)
-        return pending
-
 
 # ---------------------------------------------------------------------------
 # 4. build_turn_input
@@ -316,7 +288,6 @@ def build_turn_input(
         evidence_so_far=projection.signal_reads(),
         transcript_window=transcript_window,
         uncovered_signals=projection.uncovered_signals(all_specs),
-        knockout_pending=projection.knockout_pending(all_specs),
     )
 
 
@@ -374,9 +345,6 @@ def render_suffix(turn_input: BrainTurnInput) -> list[dict]:
       ## Uncovered Signals (weight-ranked)
       ... (uncovered_signals list)
 
-      ## Knockout Pending
-      ... (knockout_pending list — empty when no knockouts are at risk)
-
       ## Transcript Window
       ... (last K turns, candidate turns flagged as DATA)
 
@@ -428,26 +396,6 @@ def render_suffix(turn_input: BrainTurnInput) -> list[dict]:
     else:
         uncovered_block = "## Uncovered Signals (weight-ranked)\n  (all covered)"
 
-    knockout = turn_input.knockout_pending
-    if knockout:
-        knockout_block = (
-            "## Knockout Pending\n"
-            + "\n".join(f"  - {s}" for s in knockout)
-        )
-    else:
-        knockout_block = "## Knockout Pending\n  (none)"
-
-    reflected = turn_input.knockout_reflected
-    knockout_reflected_block = (
-        "## ⚠️ KNOCKOUT ALREADY REFLECTED\n"
-        "You already reflected these mandatory-skill absences back to the candidate on a PRIOR turn:\n"
-        + "\n".join(f"  - {s}" for s in reflected)
-        + "\nIf one is still pending AND the candidate has now AFFIRMED the absence, CLOSE "
-          "(move=close, knockout_confirmed=true) — do NOT reflect it back again. One reflect-back is enough."
-        if reflected
-        else ""
-    )
-
     window = turn_input.transcript_window
     if window:
         window_lines = "\n".join(
@@ -490,8 +438,6 @@ def render_suffix(turn_input: BrainTurnInput) -> list[dict]:
             rubric_block,
             coverage_block,
             uncovered_block,
-            knockout_block,
-            knockout_reflected_block,  # only present once a knockout has been reflected back
             window_block,
             floor_block,    # only present when the floor was interrupted
             stalled_block,  # only present when the candidate has stalled on this question
