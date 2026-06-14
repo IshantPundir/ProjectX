@@ -57,14 +57,13 @@ def _texts(beat):
 
 def test_clip_resolves_to_words_with_turn_and_rel_ms():
     # one run -> ref 0; turn_start_ms 7000
-    edl = ReelEdlOut(beats=[_clip(0, 3, 8, caption="hi")])
+    edl = ReelEdlOut(beats=[_clip(0, 3, 8)])
     clip = _by_kind(validate_edl(edl, [_cand("t-1", 20, start_ms=7000)]), "clip")[0]
     assert clip.source_turn_ref == 0
     assert clip.words[0]["rel_start_ms"] == 3000          # word 3 start
     assert clip.words[-1]["rel_end_ms"] == 8 * 1000 + 900  # word 8 end
     assert all(w["turn_ref"] == "t-1" for w in clip.words)
     assert all(w["turn_start_ms"] == 7000 for w in clip.words)
-    assert clip.caption == "hi"
 
 
 def test_experience_beat_is_resolved_like_a_clip():

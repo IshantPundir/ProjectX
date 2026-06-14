@@ -42,7 +42,7 @@ EST_BOUNDARY_PAUSE_MS = 500  # estimated inter-turn pause inside a multi-turn cl
 SPEAK_WPS = 2.75             # ~165 wpm, Arjun narration, for card duration estimate
 _CARD_FLOOR_MS = {"title": 3_000, "match": 4_000, "point": 3_500, "outro": 4_000}
 
-# Edge-only disfluency/discourse tokens trimmed off a clip's IN/OUT (and captions).
+# Edge-only disfluency/discourse tokens trimmed off a clip's IN/OUT.
 # This is lexical edge cleanup, NOT semantic intent classification.
 _EDGE_TRIM = {"um", "uh", "uhh", "umm", "mm", "mmm", "er", "ah", "hmm", "so",
               "like", "yeah", "okay", "ok", "sure", "well", "right"}
@@ -63,7 +63,6 @@ class ReelBeat(BaseModel):
     in_word: int | None = None           # index into the run's words[]
     out_word: int | None = None
     on_screen_text: str | None = None    # card copy (title/ask/credit/outro)
-    caption: str | None = None           # optional hint; words[] is the caption truth
     narration_text: str | None = None    # Arjun TTS script for card beats
 
 
@@ -82,7 +81,6 @@ class ValidatedBeat:
     # multi-turn clip to one contiguous cut.
     words: list[dict] = field(default_factory=list)
     on_screen_text: str | None = None
-    caption: str | None = None
     narration_text: str | None = None
 
 
@@ -152,7 +150,7 @@ def _resolve_clip(beat: ReelBeat, runs_by_ref: dict[int, AnswerRun]) -> Validate
     return ValidatedBeat(
         kind=beat.kind, duration_ms=_estimate_clip_duration(words),
         source_turn_ref=ref, words=words, on_screen_text=beat.on_screen_text,
-        caption=beat.caption, narration_text=beat.narration_text,
+        narration_text=beat.narration_text,
     )
 
 
@@ -169,7 +167,7 @@ def _estimate_card(beat: ReelBeat) -> ValidatedBeat:
     dur = max(_CARD_FLOOR_MS.get(beat.kind, 2_000), est)
     return ValidatedBeat(
         kind=beat.kind, duration_ms=dur, on_screen_text=beat.on_screen_text,
-        caption=beat.caption, narration_text=beat.narration_text,
+        narration_text=beat.narration_text,
     )
 
 
