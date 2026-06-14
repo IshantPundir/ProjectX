@@ -789,7 +789,6 @@ class SessionDriver:
             signals=signals_with_prov,
             questions=questions,
             transcript=self._transcript,
-            knockout=None,
         )
 
         # 6. Persist

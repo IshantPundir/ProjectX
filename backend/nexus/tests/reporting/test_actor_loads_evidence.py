@@ -14,6 +14,6 @@ def test_inputs_helper_parses_evidence():
                      "started_at": "2026-06-08T10:00:00Z", "ended_at": "2026-06-08T10:20:00Z",
                      "duration_s": 1.0, "time_budget_s": 1.0, "completion": "completed",
                      "questions_asked": 0, "questions_core_total": 0, "questions_overflow_asked": 0},
-            "signals": [], "notes": [], "questions": [], "transcript": [], "knockout": None}
+            "signals": [], "notes": [], "questions": [], "transcript": []}
     ev = _build_report_inputs_from_session(_Sess())
     assert ev.meta.session_id == "s1"

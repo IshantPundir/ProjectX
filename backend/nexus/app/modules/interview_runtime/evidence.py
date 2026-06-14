@@ -77,7 +77,6 @@ class EvidenceTexture(StrEnum):
 
 class CompletionReason(StrEnum):
     completed = "completed"            # ran the planned screen to the end
-    knockout_close = "knockout_close"  # mandatory signal verified absent → early, warm close
     candidate_ended = "candidate_ended"
     unresponsive = "unresponsive"
     error = "error"
@@ -193,16 +192,6 @@ class QuestionRecord(BaseModel):
     time_spent_s: float = Field(ge=0, default=0.0)
 
 
-class KnockoutOutcome(BaseModel):
-    """Recorded ONLY when a mandatory signal was VERIFIED absent (probe → all OR-alternatives
-    checked → reflect-confirmed). The engine RECORDS; the report/human decides the consequence.
-    The engine never auto-rejects (borderline → human)."""
-    signal: str
-    or_alternatives_checked: list[str] = Field(default_factory=list)
-    reflect_confirmed: bool
-    evidence_note_seqs: list[int] = Field(default_factory=list, description="seqs of the notes that ground this.")
-
-
 class TranscriptTurn(BaseModel):
     """A word-timed turn. `pre_turn_gap_ms` is the cheap, IRRECOVERABLE signal the raw text loses
     (think-time before the candidate spoke); the report derives 'flatline / copilot' patterns from it
@@ -238,4 +227,3 @@ class SessionEvidence(BaseModel):
     notes: list[EvidenceNote]          # APPEND-ONLY source of truth, chronological by `seq`
     questions: list[QuestionRecord]
     transcript: list[TranscriptTurn]
-    knockout: KnockoutOutcome | None = None

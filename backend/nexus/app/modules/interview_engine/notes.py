@@ -30,7 +30,6 @@ from __future__ import annotations
 from app.modules.interview_runtime.evidence import (
     EvidenceNote,
     EvidenceStance,
-    KnockoutOutcome,
     Provenance,
     QuestionOutcome,
     QuestionRecord,
@@ -153,7 +152,6 @@ class NoteLog:
         signals: list[SignalEvidence],
         questions: list[QuestionRecord],
         transcript: list[TranscriptTurn],
-        knockout: KnockoutOutcome | None = None,
     ) -> SessionEvidence:
         """Assemble a `SessionEvidence` from all accumulated notes.
 
@@ -168,8 +166,6 @@ class NoteLog:
                 by the caller's session-close pass).
             questions: What the screen did with each bank question.
             transcript: Word-timed turn list (the raw timing record).
-            knockout: Recorded only when a mandatory signal was verified absent.
-                None when no knockout occurred.
 
         Returns:
             A validated `SessionEvidence` ready to be passed to
@@ -181,7 +177,6 @@ class NoteLog:
             notes=list(self._notes),
             questions=questions,
             transcript=transcript,
-            knockout=knockout,
         )
 
 

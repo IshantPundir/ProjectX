@@ -152,7 +152,6 @@ def _build_minimal_evidence(
         notes=[note],
         questions=[question_rec],
         transcript=[transcript_turn],
-        knockout=None,
     )
 
 

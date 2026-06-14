@@ -40,7 +40,6 @@ def _evidence(**overrides) -> SessionEvidence:
             {"turn_ref": "t-0", "speaker": "agent", "text": "Tell me about Python",
              "span": {"start_ms": 0, "end_ms": 100}, "pre_turn_gap_ms": 0},
         ],
-        "knockout": None,
     }
     base.update(overrides)
     return SessionEvidence.model_validate(base)

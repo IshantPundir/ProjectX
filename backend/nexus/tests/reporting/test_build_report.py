@@ -25,7 +25,6 @@ def _evidence_dict():
                        "probes_available": 2}],
         "transcript": [{"turn_ref": "t-1", "speaker": "candidate", "text": "built an ETL in Python",
                         "span": {"start_ms": 0, "end_ms": 1}, "pre_turn_gap_ms": 0}],
-        "knockout": None,
     }
 
 
@@ -76,7 +75,6 @@ async def test_must_have_identity_recovered_from_engine_when_metadata_missing():
         "questions": [{"question_id": "q1", "primary_signal": "python", "tier": "core",
                        "outcome": "asked", "closure": "absent", "probes_used": [], "probes_available": 2}],
         "transcript": [],
-        "knockout": None,
     }
     evidence = SessionEvidence.model_validate(ev_dict)
     questions = [{"id": "q1", "text": "Python?", "signal_values": ["python"],

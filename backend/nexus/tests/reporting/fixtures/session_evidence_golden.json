@@ -70,8 +70,11 @@
       "signal": "python",
       "stance": "supports",
       "texture": "strong",
-      "quote": "I built a data pipeline in Python using asyncio and Pydantic — handled 50k events per second with p99 under 20ms. We hit a GIL contention issue and I resolved it by moving the CPU-heavy transform to a ProcessPoolExecutor.",
-      "span": {"start_ms": 12000, "end_ms": 45000},
+      "quote": "I built a data pipeline in Python using asyncio and Pydantic \u2014 handled 50k events per second with p99 under 20ms. We hit a GIL contention issue and I resolved it by moving the CPU-heavy transform to a ProcessPoolExecutor.",
+      "span": {
+        "start_ms": 12000,
+        "end_ms": 45000
+      },
       "from_question_id": "q_python",
       "via_probe": false,
       "retracts_seq": null
@@ -82,8 +85,11 @@
       "signal": "python",
       "stance": "supports",
       "texture": "strong",
-      "quote": "For the type-safety layer I used Pydantic v2 with custom validators — that caught a whole class of runtime errors at parse time rather than mid-pipeline.",
-      "span": {"start_ms": 62000, "end_ms": 89000},
+      "quote": "For the type-safety layer I used Pydantic v2 with custom validators \u2014 that caught a whole class of runtime errors at parse time rather than mid-pipeline.",
+      "span": {
+        "start_ms": 62000,
+        "end_ms": 89000
+      },
       "from_question_id": "q_python",
       "via_probe": true,
       "retracts_seq": null
@@ -94,8 +100,11 @@
       "signal": "docker",
       "stance": "supports",
       "texture": "concrete",
-      "quote": "We containerised the whole pipeline with Docker — multi-stage builds to keep the image under 150MB, then pushed to ECR.",
-      "span": {"start_ms": 92000, "end_ms": 118000},
+      "quote": "We containerised the whole pipeline with Docker \u2014 multi-stage builds to keep the image under 150MB, then pushed to ECR.",
+      "span": {
+        "start_ms": 92000,
+        "end_ms": 118000
+      },
       "from_question_id": "q_python",
       "via_probe": false,
       "retracts_seq": null
@@ -107,7 +116,10 @@
       "stance": "supports",
       "texture": "thin",
       "quote": "I would probably use a message queue to decouple the services and add some horizontal scaling on the consumer side.",
-      "span": {"start_ms": 185000, "end_ms": 212000},
+      "span": {
+        "start_ms": 185000,
+        "end_ms": 212000
+      },
       "from_question_id": "q_sysdesign",
       "via_probe": false,
       "retracts_seq": null
@@ -118,8 +130,11 @@
       "signal": "collaboration",
       "stance": "supports",
       "texture": "concrete",
-      "quote": "During that Python project I pair-programmed with a junior engineer for two sprints — I did deliberate knowledge-transfer sessions so they could own the module independently after.",
-      "span": {"start_ms": 95000, "end_ms": 121000},
+      "quote": "During that Python project I pair-programmed with a junior engineer for two sprints \u2014 I did deliberate knowledge-transfer sessions so they could own the module independently after.",
+      "span": {
+        "start_ms": 95000,
+        "end_ms": 121000
+      },
       "from_question_id": "q_python",
       "via_probe": false,
       "retracts_seq": null
@@ -133,7 +148,9 @@
       "outcome": "asked",
       "closure": "satisfied",
       "asked_at_turn": "t-01",
-      "probes_used": [0],
+      "probes_used": [
+        0
+      ],
       "probes_available": 3,
       "time_spent_s": 140.0
     },
@@ -176,7 +193,10 @@
       "turn_ref": "t-00",
       "speaker": "agent",
       "text": "Let's start. Can you walk me through a project where you used Python at scale?",
-      "span": {"start_ms": 5000, "end_ms": 11000},
+      "span": {
+        "start_ms": 5000,
+        "end_ms": 11000
+      },
       "pre_turn_gap_ms": 2000,
       "words": [],
       "question_id": "q_python"
@@ -184,8 +204,11 @@
     {
       "turn_ref": "t-01",
       "speaker": "candidate",
-      "text": "I built a data pipeline in Python using asyncio and Pydantic — handled 50k events per second with p99 under 20ms. We hit a GIL contention issue and I resolved it by moving the CPU-heavy transform to a ProcessPoolExecutor.",
-      "span": {"start_ms": 12000, "end_ms": 45000},
+      "text": "I built a data pipeline in Python using asyncio and Pydantic \u2014 handled 50k events per second with p99 under 20ms. We hit a GIL contention issue and I resolved it by moving the CPU-heavy transform to a ProcessPoolExecutor.",
+      "span": {
+        "start_ms": 12000,
+        "end_ms": 45000
+      },
       "pre_turn_gap_ms": 1200,
       "words": [],
       "question_id": "q_python"
@@ -193,8 +216,11 @@
     {
       "turn_ref": "t-02",
       "speaker": "candidate",
-      "text": "For the type-safety layer I used Pydantic v2 with custom validators — that caught a whole class of runtime errors at parse time rather than mid-pipeline.",
-      "span": {"start_ms": 62000, "end_ms": 89000},
+      "text": "For the type-safety layer I used Pydantic v2 with custom validators \u2014 that caught a whole class of runtime errors at parse time rather than mid-pipeline.",
+      "span": {
+        "start_ms": 62000,
+        "end_ms": 89000
+      },
       "pre_turn_gap_ms": 4200,
       "words": [],
       "question_id": "q_python"
@@ -202,8 +228,11 @@
     {
       "turn_ref": "t-03",
       "speaker": "candidate",
-      "text": "We containerised the whole pipeline with Docker — multi-stage builds to keep the image under 150MB, then pushed to ECR.",
-      "span": {"start_ms": 92000, "end_ms": 118000},
+      "text": "We containerised the whole pipeline with Docker \u2014 multi-stage builds to keep the image under 150MB, then pushed to ECR.",
+      "span": {
+        "start_ms": 92000,
+        "end_ms": 118000
+      },
       "pre_turn_gap_ms": 2800,
       "words": [],
       "question_id": "q_python"
@@ -212,7 +241,10 @@
       "turn_ref": "t-04",
       "speaker": "candidate",
       "text": "I would probably use a message queue to decouple the services and add some horizontal scaling on the consumer side.",
-      "span": {"start_ms": 185000, "end_ms": 212000},
+      "span": {
+        "start_ms": 185000,
+        "end_ms": 212000
+      },
       "pre_turn_gap_ms": 3500,
       "words": [],
       "question_id": "q_sysdesign"
@@ -221,7 +253,10 @@
       "turn_ref": "t-05",
       "speaker": "agent",
       "text": "Thanks. Let's talk about how you work in a team environment.",
-      "span": {"start_ms": 820000, "end_ms": 827000},
+      "span": {
+        "start_ms": 820000,
+        "end_ms": 827000
+      },
       "pre_turn_gap_ms": 1100,
       "words": [],
       "question_id": "q_collab"
@@ -229,8 +264,11 @@
     {
       "turn_ref": "t-06",
       "speaker": "candidate",
-      "text": "During that Python project I pair-programmed with a junior engineer for two sprints — I did deliberate knowledge-transfer sessions so they could own the module independently after.",
-      "span": {"start_ms": 829000, "end_ms": 865000},
+      "text": "During that Python project I pair-programmed with a junior engineer for two sprints \u2014 I did deliberate knowledge-transfer sessions so they could own the module independently after.",
+      "span": {
+        "start_ms": 829000,
+        "end_ms": 865000
+      },
       "pre_turn_gap_ms": 2000,
       "words": [],
       "question_id": "q_collab"
@@ -239,11 +277,13 @@
       "turn_ref": "t-07",
       "speaker": "agent",
       "text": "Good. That's all the questions I have for you today. Thank you for your time.",
-      "span": {"start_ms": 1430000, "end_ms": 1439000},
+      "span": {
+        "start_ms": 1430000,
+        "end_ms": 1439000
+      },
       "pre_turn_gap_ms": 900,
       "words": [],
       "question_id": null
     }
-  ],
-  "knockout": null
+  ]
 }
