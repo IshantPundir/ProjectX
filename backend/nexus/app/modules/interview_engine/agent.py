@@ -39,6 +39,7 @@ from livekit.agents import (
     StopResponse,
     TurnHandlingOptions,
     room_io,
+    stt as _lk_stt,
 )
 from livekit.plugins import silero as _silero_vad  # noqa: F401  — register for download-files
 from livekit.plugins import (
@@ -72,6 +73,7 @@ from app.modules.interview_runtime import (
     build_session_config,
     record_engine_heartbeat,
 )
+from app.modules.interview_runtime.transcript_timing import RawWord
 from app.modules.session import classify_engine_exception, transition_to_error
 
 log = structlog.get_logger("interview_engine")
@@ -119,6 +121,46 @@ server.setup_fnc = prewarm
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _as_float(value: object) -> float:
+    """Coerce a possibly-NotGiven STT timing/confidence value to a plain float.
+
+    livekit-agents 1.5.17 ``TimedString.start_time`` / ``.end_time`` / the
+    alternative ``.confidence`` are ``NotGivenOr[float]`` — a NotGiven sentinel
+    (not a float) when the provider omits the value. ``RawWord`` requires floats,
+    so anything non-numeric falls back to ``0.0``.
+    """
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def words_from_final_transcript(ev) -> list[RawWord]:
+    """Extract per-word ``RawWord`` tuples from a final-transcript ``SpeechEvent``.
+
+    Reads the first alternative (``ev.alternatives[0]`` — a ``SpeechData``): its
+    ``.words`` (``list[TimedString] | None``) and ``.confidence``. Each
+    ``TimedString`` is a ``str`` subclass, so ``str(word)`` is the text and
+    ``.start_time`` / ``.end_time`` are stream-clock seconds. The alternative's
+    ``.confidence`` is applied to every word (Deepgram reports per-alternative,
+    not per-word, confidence). Returns the ``RawWord`` shape consumed by
+    ``interview_runtime.transcript_timing.relative_words``:
+    ``(text, start_s, end_s, confidence)``. None/empty-safe → ``[]``.
+    """
+    alternatives = getattr(ev, "alternatives", None) or []
+    if not alternatives:
+        return []
+    alt = alternatives[0]
+    words = getattr(alt, "words", None) or []
+    confidence = _as_float(getattr(alt, "confidence", 0.0))
+    return [
+        (
+            str(word),
+            _as_float(getattr(word, "start_time", 0.0)),
+            _as_float(getattr(word, "end_time", 0.0)),
+            confidence,
+        )
+        for word in words
+    ]
 
 
 def assemble_v2_keyterms(*, candidate_first_name: str, bank_keyterms: list[str]) -> list[str]:
@@ -171,6 +213,24 @@ class _EngineAgent(Agent):
     def __init__(self, *, assembler: TurnAssembler, **kwargs) -> None:
         super().__init__(**kwargs)
         self._assembler = assembler
+        # Latest committed turn's per-word STT timings, stashed by ``stt_node``
+        # from the most recent FINAL_TRANSCRIPT. Task 3 reads + clears this in
+        # ``on_user_turn_completed`` to attach word timing to the transcript.
+        self._pending_words: list[RawWord] = []
+
+    async def stt_node(self, audio, model_settings):  # type: ignore[override]
+        """Pass-through STT tap that stashes the latest final transcript's word timings.
+
+        Delegates to the default STT node (``Agent.default.stt_node``) and yields
+        EVERY event unchanged — it must not alter STT or turn-detection behavior.
+        For each FINAL_TRANSCRIPT it records the per-word timings on
+        ``self._pending_words`` so the next ``on_user_turn_completed`` (Task 3)
+        can emit them on the transcript / hand them to the assembler.
+        """
+        async for event in Agent.default.stt_node(self, audio, model_settings):
+            if event.type == _lk_stt.SpeechEventType.FINAL_TRANSCRIPT:
+                self._pending_words = words_from_final_transcript(event)
+            yield event
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:  # type: ignore[override]
         """Feed the committed fragment to the assembler; suppress the built-in reply."""
