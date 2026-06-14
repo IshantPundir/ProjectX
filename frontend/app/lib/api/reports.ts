@@ -41,6 +41,8 @@ export interface QuestionOut {
   thumbnail_url: string | null
   /** Rubric-anchored level for the question (bank card grading). */
   level?: QuestionLevel
+  /** Engine per-question closure — satisfied|tapped_out|absent|truncated; null if never asked. */
+  closure?: string | null
   /** Difficulty label from the bank card; null if not set. */
   difficulty?: QuestionDifficulty | null
   /** Bank card listen-for criteria that the candidate hit. */

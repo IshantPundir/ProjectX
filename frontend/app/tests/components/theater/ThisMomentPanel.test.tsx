@@ -31,4 +31,24 @@ describe('ThisMomentPanel', () => {
     expect(screen.getByText(/extract metadata/)).toBeInTheDocument()
     expect(screen.getByText(/workable but no validation/)).toBeInTheDocument()
   })
+
+  it('renders the agent verdict (humanized closure + grade) when present', () => {
+    const graded: QuestionOut = { ...question, closure: 'tapped_out', level: 'strong' }
+    render(
+      <ThisMomentPanel selection={{ type: 'question', question: graded }} decision={decision} onJump={() => {}} />,
+    )
+    expect(screen.getByText('Agent verdict')).toBeInTheDocument()
+    expect(screen.getByText('Tapped out')).toBeInTheDocument()
+    expect(screen.getByText('Strong')).toBeInTheDocument()
+  })
+
+  it('omits the agent verdict when closure is null and no grade exists', () => {
+    const ungraded: QuestionOut = { ...question, closure: null }
+    render(
+      <ThisMomentPanel selection={{ type: 'question', question: ungraded }} decision={decision} onJump={() => {}} />,
+    )
+    expect(screen.queryByText('Agent verdict')).not.toBeInTheDocument()
+    // still renders the rest of the panel without crashing
+    expect(screen.getByText(/How would you design the flow/)).toBeInTheDocument()
+  })
 })
