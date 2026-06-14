@@ -300,5 +300,4 @@ class AIConfig:
         return self._settings.openai_report_narrative_effort
 
 
-
 ai_config = AIConfig(settings)

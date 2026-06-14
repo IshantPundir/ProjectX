@@ -718,5 +718,4 @@ class Settings(BaseSettings):
     auto_analyze_proctoring: bool = True
 
 
-
 settings = Settings()

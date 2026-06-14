@@ -90,7 +90,6 @@ def must_have_cap(
     return None
 
 
-
 def clamp_to_ceiling(value: int | None, ceiling: int | None) -> int | None:
     """Cap a base score by its fit ceiling. A knockout (REJECT_CEILING) with no
     assessed signals (value None) still resolves to the reject band."""

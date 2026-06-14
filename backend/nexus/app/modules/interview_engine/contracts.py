@@ -59,7 +59,7 @@ class BrainMove(StrEnum):
     confirm = "confirm"          # garbled / possibly-misheard answer → reflect back before grading
     answer_meta = "answer_meta"  # candidate asked the agent something → answer, then return
     repeat = "repeat"            # replay the last question verbatim
-    close = "close"              # terminal (full coverage / verified knockout / candidate ended)
+    close = "close"              # terminal (full coverage / candidate ended)
 
 
 class SignalObservation(BaseModel):
