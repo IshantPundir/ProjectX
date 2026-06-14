@@ -717,22 +717,6 @@ class Settings(BaseSettings):
     # analysis can be re-run later from the report page.
     auto_analyze_proctoring: bool = True
 
-    # --- Gen-3 deterministic resolver time-budget knobs ---
-    # [VALIDATE] F3-tuned defaults — adjust empirically on talk-tests.
-    #
-    # engine_close_reserve_s: seconds of absolute minimum buffer kept back at
-    # session end for the closing sequence (warm close + next-steps). Any
-    # non-mandatory question or overflow slot that wouldn't fit within the
-    # remaining time MINUS this reserve is classified as `not_reached` and
-    # skipped. Mandatory core questions are NEVER subject to this check —
-    # they are returned unconditionally regardless of remaining time.
-    engine_close_reserve_s: float = 45.0
-    #
-    # engine_winding_down_s: once `time_remaining_s` drops to or below this
-    # value the resolver enters `winding_down` phase — preference hints are
-    # ignored, mandatory-first ordering is enforced, and non-mandatory core
-    # questions are budget-checked before being returned.
-    engine_winding_down_s: float = 90.0
 
 
 settings = Settings()
