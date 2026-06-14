@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,11 +18,22 @@ from tests.conftest import (
     make_assignment_with_stage,
 )
 
-pytestmark = pytest.mark.asyncio
+# pytest-asyncio runs in ``auto`` mode (see pyproject [tool.pytest.ini_options]),
+# so async tests are collected without an explicit mark. We deliberately do NOT
+# set a module-level ``pytestmark = pytest.mark.asyncio`` — that would also tag
+# the synchronous ``_recording_offset_ms`` unit tests below and emit a warning.
 
 
 async def _seed_session(
-    db, *, recording_status, egress_id=None, key=None, transcript=None, agent_completed_at=None
+    db,
+    *,
+    recording_status,
+    egress_id=None,
+    key=None,
+    transcript=None,
+    agent_completed_at=None,
+    recording_started_at=None,
+    session_evidence_json=None,
 ):
     tenant = await create_test_client(db)
     user = await create_test_user(db, tenant.id)
@@ -38,6 +50,8 @@ async def _seed_session(
         recording_s3_key=key,
         transcript=transcript,
         agent_completed_at=agent_completed_at,
+        recording_started_at=recording_started_at,
+        session_evidence_json=session_evidence_json,
     )
     db.add(sess)
     await db.flush()
@@ -54,6 +68,7 @@ def fake_storage(monkeypatch):
 
 
 async def test_ready_recording_returns_signed_url_and_transcript(db, fake_storage):
+    rec_start = datetime(2026, 6, 14, 12, 0, 0, tzinfo=UTC)
     tenant_id, session_id = await _seed_session(
         db,
         recording_status="ready",
@@ -62,6 +77,11 @@ async def test_ready_recording_returns_signed_url_and_transcript(db, fake_storag
             {"role": "agent", "text": "Hi", "timestamp_ms": 0, "question_id": None},
             {"role": "candidate", "text": "Hello", "timestamp_ms": 1500},
         ],
+        recording_started_at=rec_start,
+        # Engine session started 1.140s after the recording clock.
+        session_evidence_json={
+            "meta": {"started_at": (rec_start + timedelta(milliseconds=1140)).isoformat()}
+        },
     )
 
     out = await recording_mod.get_session_recording_playback(
@@ -71,8 +91,48 @@ async def test_ready_recording_returns_signed_url_and_transcript(db, fake_storag
     assert out.status == "ready"
     assert out.signed_url == "https://signed.example/v.mp4?sig=x"
     assert out.expires_at is not None
+    assert out.offset_ms == 1140
     assert [s.text for s in out.transcript] == ["Hi", "Hello"]
     fake_storage.presign_get_url.assert_awaited_once()
+
+
+# --- _recording_offset_ms pure helper (synchronous) ------------------------
+
+def test_offset_ms_normal_positive():
+    rec_start = datetime(2026, 6, 14, 12, 0, 0, tzinfo=UTC)
+    evidence = {"meta": {"started_at": (rec_start + timedelta(milliseconds=1140)).isoformat()}}
+    assert recording_mod._recording_offset_ms(evidence, rec_start) == 1140
+
+
+def test_offset_ms_parses_z_suffixed_iso():
+    rec_start = datetime(2026, 6, 14, 12, 0, 0, tzinfo=UTC)
+    # Z-suffixed (Zulu) ISO form, 2s after the recording clock.
+    evidence = {"meta": {"started_at": "2026-06-14T12:00:02Z"}}
+    assert recording_mod._recording_offset_ms(evidence, rec_start) == 2000
+
+
+def test_offset_ms_missing_evidence_returns_zero():
+    rec_start = datetime(2026, 6, 14, 12, 0, 0, tzinfo=UTC)
+    assert recording_mod._recording_offset_ms(None, rec_start) == 0
+
+
+def test_offset_ms_missing_meta_started_at_returns_zero():
+    rec_start = datetime(2026, 6, 14, 12, 0, 0, tzinfo=UTC)
+    assert recording_mod._recording_offset_ms({"meta": {}}, rec_start) == 0
+    assert recording_mod._recording_offset_ms({}, rec_start) == 0
+
+
+def test_offset_ms_missing_recording_started_at_returns_zero():
+    evidence = {"meta": {"started_at": "2026-06-14T12:00:02Z"}}
+    assert recording_mod._recording_offset_ms(evidence, None) == 0
+
+
+def test_offset_ms_unparseable_started_at_returns_zero():
+    rec_start = datetime(2026, 6, 14, 12, 0, 0, tzinfo=UTC)
+    bad = {"meta": {"started_at": "not-a-date"}}
+    assert recording_mod._recording_offset_ms(bad, rec_start) == 0
+    # Non-dict meta must not raise either.
+    assert recording_mod._recording_offset_ms({"meta": "oops"}, rec_start) == 0
 
 
 async def test_recording_in_progress_reconciles_to_ready(db, fake_storage, monkeypatch):
