@@ -10,7 +10,7 @@ def _dim(slug="d1"):
 def test_bank_index_holds_dimensions():
     idx = BankQuestionIndex(
         question_id="q1", primary_signal="s", signals=["s"], kind="technical_scenario",
-        difficulty="medium", is_mandatory=False, text="t", follow_ups=[_dim()],
+        difficulty="medium", text="t", follow_ups=[_dim()],
     )
     assert idx.follow_ups[0].dimension == "d1"
 

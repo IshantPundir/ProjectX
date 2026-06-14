@@ -94,8 +94,6 @@ class QuestionConfig(BaseModel):
     position: int = Field(ge=0)
     text: str = Field(min_length=10, max_length=500)
     signal_values: list[str] = Field(min_length=1, max_length=3)
-    estimated_minutes: float = Field(gt=0, le=15)
-    is_mandatory: bool
     # max_length intentionally absent — the write-path bound lives on
     # question_bank.GeneratedQuestion.follow_ups; this wire-read projection is permissive.
     follow_ups: list[FollowUpDimension] = Field(

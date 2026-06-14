@@ -37,8 +37,6 @@ def _config() -> SessionConfig:
         position=0,
         text="Assess a messy tenant migration?",
         signal_values=["s"],
-        estimated_minutes=3.0,
-        is_mandatory=True,
         follow_ups=[
             FollowUpDimension(
                 dimension="validate_impact",

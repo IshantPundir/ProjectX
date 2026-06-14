@@ -166,7 +166,6 @@ async def build_session_config(
                 StageQuestion.tenant_id == tenant_id,
             )
             .order_by(
-                StageQuestion.is_mandatory.desc(),
                 StageQuestion.position.asc(),
             )
         )
@@ -232,8 +231,6 @@ async def build_session_config(
                     position=q.position,
                     text=q.text,
                     signal_values=list(q.signal_values),
-                    estimated_minutes=float(q.estimated_minutes),
-                    is_mandatory=q.is_mandatory,
                     follow_ups=list(q.follow_ups),
                     positive_evidence=list(q.positive_evidence),
                     red_flags=list(q.red_flags),
@@ -276,8 +273,6 @@ async def build_session_config(
         bank_id=str(bank.id),
         bank_pipeline_version=getattr(bank, "pipeline_version_at_generation", None),
         question_count=len(config.stage.questions),
-        mandatory_count=sum(1 for q in config.stage.questions if q.is_mandatory),
-        optional_count=sum(1 for q in config.stage.questions if not q.is_mandatory),
         duration_minutes=config.stage.duration_minutes,
         signals_total=len(config.signals),
         signal_metadata_total=len(config.signal_metadata),

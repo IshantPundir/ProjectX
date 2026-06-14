@@ -134,7 +134,6 @@ def build_session_context(config: SessionConfig) -> BrainSessionContext:
                 signals=list(q.signal_values),
                 kind=q.question_kind,
                 difficulty=q.difficulty,
-                is_mandatory=q.is_mandatory,
                 text=q.text,
                 follow_ups=_to_contract_dims(q.follow_ups),
             )

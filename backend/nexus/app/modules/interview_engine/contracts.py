@@ -171,7 +171,6 @@ class BankQuestionIndex(BaseModel):
     signals: list[str]          # the broader coverable set
     kind: str                   # experience_check | behavioral | technical_scenario | compliance_binary
     difficulty: str             # easy | medium | hard
-    is_mandatory: bool
     text: str
     follow_ups: list[FollowUpDimension]   # the pre-written probe dimensions
 

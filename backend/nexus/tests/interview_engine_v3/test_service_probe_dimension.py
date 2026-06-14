@@ -13,7 +13,6 @@ from app.modules.interview_runtime.schemas import QuestionConfig, QuestionRubric
 def _q():
     return QuestionConfig(
         id="q1", position=0, text="Assess a messy tenant?", signal_values=["s"],
-        estimated_minutes=3.0, is_mandatory=True,
         follow_ups=[
             {"dimension": "validate_impact", "intent": "verify impact", "seed_probe": "seed A", "listen_for": []},
             {"dimension": "stage_safely", "intent": "stage safely", "seed_probe": "seed B", "listen_for": []},

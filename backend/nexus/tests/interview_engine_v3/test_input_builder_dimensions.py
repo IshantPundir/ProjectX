@@ -7,7 +7,7 @@ from app.modules.interview_runtime.schemas import QuestionConfig, QuestionRubric
 def _q():
     return QuestionConfig(
         id="q1", position=0, text="How would you assess a messy tenant?",
-        signal_values=["intune_admin"], estimated_minutes=3.0, is_mandatory=True,
+        signal_values=["intune_admin"],
         follow_ups=[{
             "dimension": "validate_impact", "intent": "verify impact",
             "seed_probe": "How would you validate impact?",

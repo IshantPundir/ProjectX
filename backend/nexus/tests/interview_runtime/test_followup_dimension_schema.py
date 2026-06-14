@@ -42,7 +42,7 @@ def test_followup_dimension_rejects_blank_intent_and_seed():
 def test_question_config_follow_ups_are_dimensions():
     q = QuestionConfig(
         id="q1", position=0, text="A real question here?",
-        signal_values=["sig"], estimated_minutes=2.0, is_mandatory=False,
+        signal_values=["sig"],
         follow_ups=[
             {"dimension": "d1", "intent": "i1", "seed_probe": "p1", "listen_for": ["x"]},
         ],

@@ -102,7 +102,6 @@ def _make_question(
     text: str,
     signal: str,
     *,
-    is_mandatory: bool = False,
     position: int = 0,
 ) -> QuestionConfig:
     return QuestionConfig(
@@ -110,8 +109,6 @@ def _make_question(
         position=position,
         text=text,
         signal_values=[signal],
-        estimated_minutes=5.0,
-        is_mandatory=is_mandatory,
         follow_ups=[_FOLLOW_UP_DIM_0, _FOLLOW_UP_DIM_1],
         positive_evidence=["positive A", "positive B", "positive C"],
         red_flags=["red flag 1", "red flag 2"],
@@ -148,8 +145,8 @@ def _make_session_config() -> SessionConfig:
             duration_minutes=30,
             difficulty="medium",
             questions=[
-                _make_question("q-001", _Q1_TEXT, "distributed_systems", is_mandatory=True, position=1),
-                _make_question("q-002", _Q2_TEXT, "incident_response", is_mandatory=False, position=2),
+                _make_question("q-001", _Q1_TEXT, "distributed_systems", position=1),
+                _make_question("q-002", _Q2_TEXT, "incident_response", position=2),
             ],
         ),
         signals=["distributed_systems", "incident_response"],

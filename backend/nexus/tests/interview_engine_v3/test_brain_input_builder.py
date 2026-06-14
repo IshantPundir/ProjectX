@@ -67,7 +67,6 @@ def _make_question(
     signal_values: list[str],
     primary_signal: str,
     *,
-    is_mandatory: bool = False,
     excellent: str = SENTINEL_EXCELLENT,
     meets_bar: str = SENTINEL_MEETS_BAR,
     below_bar: str = "below_bar_default",
@@ -77,8 +76,6 @@ def _make_question(
         position=0,
         text=text,
         signal_values=signal_values,
-        estimated_minutes=5.0,
-        is_mandatory=is_mandatory,
         follow_ups=[
             {
                 "dimension": "follow_up_1",
@@ -151,7 +148,6 @@ def _make_session_config() -> SessionConfig:
                     "Tell me about your distributed systems experience.",
                     ["distributed_systems", "system_design"],
                     primary_signal="distributed_systems",
-                    is_mandatory=True,
                     excellent=ACTIVE_Q_EXCELLENT,
                     meets_bar=ACTIVE_Q_MEETS_BAR,
                 ),
@@ -243,14 +239,6 @@ class TestBuildSessionContext:
 
         assert set(qmap["q-001"].signals) == {"distributed_systems", "system_design"}
         assert qmap["q-002"].signals == ["incident_response"]
-
-    def test_bank_index_is_mandatory(self):
-        config = _make_session_config()
-        ctx = build_session_context(config)
-        qmap = {q.question_id: q for q in ctx.bank_index}
-
-        assert qmap["q-001"].is_mandatory is True
-        assert qmap["q-002"].is_mandatory is False
 
     def test_signal_metadata_fallback_on_empty(self):
         """When signal_metadata is empty, build_session_context falls back to one minimal
