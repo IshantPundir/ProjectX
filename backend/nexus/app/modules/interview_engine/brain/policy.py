@@ -1,26 +1,20 @@
 """
 Brain deterministic policy gates — D5 task.
 
-All three gates run on the live critical path.  They are PURE Python functions
+These gates run on the live critical path.  They are PURE Python functions
 (no livekit, no I/O, no LLM) and must NEVER raise under any input.  Each gate
 is built with defensive guards so unexpected inputs produce a safe fallback
 rather than propagating an exception to the engine loop.
 
 Gates
 ------
-1. gate_knockout      — verified-knockout state machine.
-   Blocks a premature `close` when a mandatory-absent signal has not yet been
-   walked through the full probe → check_alternatives → reflect_confirm chain.
-   Exposes the current step so the engine can steer toward verification even
-   when it is not blocking a close.
-
-2. scrub_composed_say — no-leak scrub.
+1. scrub_composed_say — no-leak scrub.
    Checks whether `composed_say` echoes any known rubric secret string
    (literal substring match, case-insensitive, length-gated to avoid short
    coincidental words).  A matched secret → safe fallback.  This is NOT intent
    classification; it is literal known-string detection.
 
-3. coerce_probe_dimension — probe coherence.
+2. coerce_probe_dimension — probe coherence.
    Ensures the brain's chosen probe_dimension is a valid, UNFIRED dimension
    slug from the active question's follow_ups list.  Enforces fire-once (each
    dimension at most once) plus a hard per-thread probe cap; returns None when
@@ -29,11 +23,7 @@ Gates
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import StrEnum
-from typing import Sequence
-
-from app.modules.interview_engine.contracts import ActiveQuestionRubric, BrainMove, FollowUpDimension
+from app.modules.interview_engine.contracts import ActiveQuestionRubric, FollowUpDimension
 
 # ---------------------------------------------------------------------------
 # Shared constant
@@ -61,134 +51,7 @@ _META_PHRASES: tuple[str, ...] = (
 
 
 # ===========================================================================
-# Gate 1 — Verified-knockout state machine
-# ===========================================================================
-
-class KnockoutStep(StrEnum):
-    """Ordered steps the engine must walk through before confirming a knockout."""
-    probe             = "probe"
-    check_alternatives = "check_alternatives"
-    reflect_confirm   = "reflect_confirm"
-    confirmed         = "confirmed"
-
-
-_KNOCKOUT_PROGRESSION: tuple[KnockoutStep, ...] = (
-    KnockoutStep.probe,
-    KnockoutStep.check_alternatives,
-    KnockoutStep.reflect_confirm,
-    KnockoutStep.confirmed,
-)
-
-
-class KnockoutTracker:
-    """Per-session mutable tracker for verified-knockout progress.
-
-    Plain Python, no pydantic.  Tracks each pending mandatory signal as an
-    index into :data:`_KNOCKOUT_PROGRESSION`.  Designed to be safe against
-    arbitrary signal names; unknown signals always default to ``probe``.
-    """
-
-    def __init__(self) -> None:
-        # Maps signal string → int index in _KNOCKOUT_PROGRESSION.
-        self._steps: dict[str, int] = {}
-
-    def current_step(self, signal: str) -> KnockoutStep:
-        """Return the current step for *signal* (defaults to ``probe`` for unseen)."""
-        idx = self._steps.get(signal, 0)
-        return _KNOCKOUT_PROGRESSION[idx]
-
-    def advance(self, signal: str) -> None:
-        """Advance *signal* to the next step; idempotent at ``confirmed``."""
-        idx = self._steps.get(signal, 0)
-        # Cap at the last index (confirmed) to stay idempotent.
-        self._steps[signal] = min(idx + 1, len(_KNOCKOUT_PROGRESSION) - 1)
-
-    def confirm(self, signal: str) -> None:
-        """Drive *signal* straight to ``confirmed`` in one call (idempotent).
-
-        Used by the brain-driven verified-knockout close: the brain has already
-        established absence in-conversation (probe → reflect-back confirm), so the
-        tracker jumps directly to ``confirmed`` rather than walking the reactive
-        ``probe → check_alternatives → reflect_confirm`` ladder one close-attempt at
-        a time. Never raises.
-        """
-        self._steps[signal] = len(_KNOCKOUT_PROGRESSION) - 1
-
-    def is_confirmed(self, signal: str) -> bool:
-        """Return True iff *signal* has reached ``confirmed``."""
-        return self.current_step(signal) == KnockoutStep.confirmed
-
-
-@dataclass(frozen=True)
-class KnockoutGate:
-    """Result returned by :func:`gate_knockout`."""
-    allow_move: bool
-    """True → the brain's proposed move proceeds; False → the engine must run the knockout flow instead."""
-    forced_step: KnockoutStep | None
-    """The knockout step the engine should execute next, or None when there is nothing pending."""
-    signal: str | None
-    """Which mandatory signal is being driven, or None when there is nothing pending."""
-
-
-def gate_knockout(
-    *,
-    proposed_move: BrainMove,
-    knockout_pending: Sequence[str],
-    tracker: KnockoutTracker,
-) -> KnockoutGate:
-    """Deterministic verified-knockout gate.
-
-    Behaviour
-    ---------
-    - Empty *knockout_pending* → pass-through (allow_move=True, forced_step=None, signal=None).
-    - If the first *unconfirmed* pending signal exists:
-      - Proposed move is ``close`` → BLOCK (allow_move=False) and surface the current step.
-      - Any other move → ALLOW but still surface the pending step so the engine can steer.
-    - If all pending signals are already confirmed → pass-through.
-
-    This function NEVER raises.
-    """
-    try:
-        if not knockout_pending:
-            return KnockoutGate(allow_move=True, forced_step=None, signal=None)
-
-        # Find the first signal that is not yet confirmed.
-        first_unconfirmed: str | None = None
-        for signal in knockout_pending:
-            if not tracker.is_confirmed(signal):
-                first_unconfirmed = signal
-                break
-
-        if first_unconfirmed is None:
-            # All pending signals have been verified — nothing to block.
-            return KnockoutGate(allow_move=True, forced_step=None, signal=None)
-
-        current_step = tracker.current_step(first_unconfirmed)
-
-        if proposed_move == BrainMove.close:
-            # Block: do NOT close until the knockout is verified.
-            return KnockoutGate(
-                allow_move=False,
-                forced_step=current_step,
-                signal=first_unconfirmed,
-            )
-
-        # Non-close move: allow it but expose the pending step.
-        # The engine decides whether to act on forced_step; the gate never raises.
-        return KnockoutGate(
-            allow_move=True,
-            forced_step=current_step,
-            signal=first_unconfirmed,
-        )
-
-    except Exception:  # pragma: no cover — defensive catch-all
-        # Should never be reached, but if something goes wrong we must not
-        # crash the engine turn.  Pass-through is the safest fallback.
-        return KnockoutGate(allow_move=True, forced_step=None, signal=None)
-
-
-# ===========================================================================
-# Gate 2 — No-leak scrub
+# Gate 1 — No-leak scrub
 # ===========================================================================
 
 def scrub_composed_say(
@@ -260,7 +123,7 @@ def scrub_composed_say(
 
 
 # ===========================================================================
-# Gate 3 — Probe coherence
+# Gate 2 — Probe coherence
 # ===========================================================================
 
 def coerce_probe_dimension(

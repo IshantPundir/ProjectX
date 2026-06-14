@@ -10,7 +10,6 @@ Responsibilities:
      fake; the default (_default_brain_llm) is the real instructor call.
   3. Update the CoverageProjection with the LLM's observations.
   4. Derive a Directive from the BrainTurnOutput:
-       - Apply gate_knockout (block premature close, steer knockout flow).
        - Map BrainMove → DirectiveAct (1:1 by name).
        - Resolve `say`:
            ask       → resolver picks next question; fallback to close if None.
@@ -38,9 +37,7 @@ from app.modules.interview_engine.brain.input_builder import (
     build_session_context,
 )
 from app.modules.interview_engine.brain.policy import (
-    KnockoutTracker,
     coerce_probe_dimension,
-    gate_knockout,
     scrub_composed_say,
 )
 from app.modules.interview_engine.brain.resolver import (
@@ -67,16 +64,6 @@ _log = structlog.get_logger()
 # ---------------------------------------------------------------------------
 # Tone defaults per act (simple policy — tune if needed)
 # ---------------------------------------------------------------------------
-
-# Leak-safe reflect-back line used ONLY as a backstop when the brain jumps
-# straight to a knockout close without first reflecting it back. The natural
-# path uses the brain's own composed `confirm`. No signal name (the internal
-# signal string reads as nonsense aloud and could imply the rubric).
-_KNOCKOUT_REFLECT_LINE: str = (
-    "Before we wrap up — just to confirm, that's not something you've worked with "
-    "directly yet. Is that right?"
-)
-
 
 _ACT_TONE: dict[DirectiveAct, DirectiveTone] = {
     DirectiveAct.ask: DirectiveTone.warm,
@@ -110,9 +97,7 @@ class ControlPlane:
     resolver_questions:
         Compact bank view (ResolverQuestion list) — used to resolve next question.
     all_specs:
-        Full SignalSpec list — used by the knockout gate + projection helpers.
-    knockout_tracker:
-        Per-session KnockoutTracker; defaults to a fresh one if None.
+        Full SignalSpec list — used by the projection helpers.
     llm_call:
         INJECTABLE SEAM for tests.  None → use _default_brain_llm (real API call).
     """
@@ -125,7 +110,6 @@ class ControlPlane:
         projection: CoverageProjection,
         resolver_questions: list[ResolverQuestion],
         all_specs: list[SignalSpec],
-        knockout_tracker: KnockoutTracker | None = None,
         llm_call: Callable[[list[dict]], Awaitable[BrainTurnOutput]] | None = None,
     ) -> None:
         self._session_context = session_context
@@ -133,11 +117,6 @@ class ControlPlane:
         self._projection = projection
         self._resolver_questions = resolver_questions
         self._all_specs = all_specs
-        self._knockout_tracker = knockout_tracker or KnockoutTracker()
-        # Knockout signals for which a reflect-back confirm has already been given
-        # to the candidate this session — a knockout close is only honored after
-        # the absence has been reflected back (guards STT mishearing / scope misread).
-        self._knockout_reflect_offered: set[str] = set()
         self._llm_call: Callable[[list[dict]], Awaitable[BrainTurnOutput]] = (
             llm_call if llm_call is not None else self._default_brain_llm
         )
@@ -159,18 +138,6 @@ class ControlPlane:
         asked_ids: set[str],
     ) -> BrainDecision:
         """One full brain turn: LLM call → projection update → Directive derivation."""
-
-        # Surface the deterministic "already reflected" hint so the brain CLOSES after
-        # one reflect-back instead of re-confirming a knockout it has already reflected
-        # (only signals both reflected AND still pending — a cleared one isn't shown).
-        reflected_pending = [
-            sig for sig in turn_input.knockout_pending
-            if sig in self._knockout_reflect_offered
-        ]
-        if reflected_pending:
-            turn_input = turn_input.model_copy(
-                update={"knockout_reflected": reflected_pending}
-            )
 
         # Step 1: build messages (stable prefix + dynamic suffix)
         messages = build_messages(self._system_prompt, self._session_context, turn_input)
@@ -218,8 +185,6 @@ class ControlPlane:
             probe_dimension=output.probe_dimension,
             next_question_id=next_question_id,
             probe_composed=bool(directive.act == DirectiveAct.probe and output.composed_say),
-            knockout_confirmed=output.knockout_confirmed,
-            knockout_pending=turn_input.knockout_pending,
             n_observations=len(output.observations),
             reasoning=(output.reasoning or "")[:160],
         )
@@ -254,9 +219,7 @@ class ControlPlane:
         """
 
         # ── Candidate-initiated end — always honored ─────────────────────────
-        # A candidate may end the screen at ANY time. The knockout-verification
-        # gate below only blocks a BRAIN-initiated close (full coverage / verified
-        # knockout); it must NEVER trap a candidate who explicitly asked to stop.
+        # A candidate may end the screen at ANY time.
         if output.move == BrainMove.close and output.end_requested:
             return Directive(
                 act=DirectiveAct.close,
@@ -265,73 +228,6 @@ class ControlPlane:
                 spoken_setup=None,
                 is_terminal=True,
             ), None
-
-        knockout_specs = {s.signal for s in self._all_specs if s.knockout}
-
-        # ── Register a reflect-back ───────────────────────────────────────────
-        # A `confirm` move while a knockout is pending IS the brain's reflect-back
-        # for that knockout — record it so the subsequent knockout-close is honored
-        # without a second (forced) reflect-back.
-        if output.move == BrainMove.confirm and turn_input.knockout_pending:
-            self._knockout_reflect_offered.update(
-                sig for sig in turn_input.knockout_pending if sig in knockout_specs
-            )
-
-        # ── Brain-driven verified knockout — confirmed-absent mandatory signal ─
-        # The brain set knockout_confirmed with move=close. We honor it ONLY for
-        # signals the engine itself flagged absent (membership in knockout_pending,
-        # which the projection populates exclusively from knockout specs) — a
-        # deterministic guard so the brain cannot fabricate a knockout. ROBUSTNESS
-        # GUARANTEE: a knockout never ends the screen until its absence has been
-        # REFLECTED BACK to the candidate at least once (guards an STT mishearing or
-        # a misread scope). If the brain jumps straight to close, we force ONE
-        # reflect-back confirm first and record nothing yet; the close lands on the
-        # next turn once the candidate responds. Records-never-rejects: the
-        # report/human still decides; this only ends the screen early.
-        if output.move == BrainMove.close and output.knockout_confirmed:
-            confirmed_now = [
-                sig for sig in turn_input.knockout_pending if sig in knockout_specs
-            ]
-            if confirmed_now:
-                not_reflected = [
-                    sig for sig in confirmed_now
-                    if sig not in self._knockout_reflect_offered
-                ]
-                if not_reflected:
-                    # Force ONE reflect-back; do NOT mark the tracker confirmed yet
-                    # (the candidate may still correct us → nothing recorded early).
-                    self._knockout_reflect_offered.update(not_reflected)
-                    return Directive(
-                        act=DirectiveAct.confirm,
-                        say=_KNOCKOUT_REFLECT_LINE,
-                        tone=DirectiveTone.warm,
-                        spoken_setup=None,
-                        is_terminal=False,
-                    ), None
-                # Absence already reflected back → honor the close + record it.
-                for sig in confirmed_now:
-                    self._knockout_tracker.confirm(sig)
-                return Directive(
-                    act=DirectiveAct.close,
-                    say=None,
-                    tone=DirectiveTone.warm,
-                    spoken_setup=None,
-                    is_terminal=True,
-                ), None
-            # No engine-flagged knockout backs this close → fall through to the
-            # normal gate (defensive: never knockout-close on a fabricated signal).
-
-        # ── Gate: verified-knockout ──────────────────────────────────────────
-        gate = gate_knockout(
-            proposed_move=output.move,
-            knockout_pending=turn_input.knockout_pending,
-            tracker=self._knockout_tracker,
-        )
-
-        if not gate.allow_move:
-            # Premature close blocked — steer toward the knockout verification flow.
-            # Produce a warm probe/clarify directive to drive gate.forced_step.
-            return self._steer_knockout(gate, turn_input), None
 
         # ── Move → Act + Say ─────────────────────────────────────────────────
         move = output.move
@@ -502,70 +398,6 @@ class ControlPlane:
             is_terminal=False,
         ), None
 
-    def _steer_knockout(
-        self,
-        gate,  # KnockoutGate
-        turn_input: BrainTurnInput,
-    ) -> Directive:
-        """Produce a non-terminal directive to steer toward the knockout flow.
-
-        When gate_knockout blocks a premature close, we produce a warm probe/
-        clarify-style directive that drives the current forced_step for the
-        pending signal. The mouth renders the composed line; the caller only
-        needs is_terminal=False and act != close.
-        """
-        from app.modules.interview_engine.brain.policy import KnockoutStep
-
-        step = gate.forced_step
-        signal = gate.signal
-
-        # Build a safe steering line (not a rubric leak — purely meta/process).
-        # IMPORTANT: never interpolate the raw signal NAME (it's an internal
-        # description like "4+ years total professional experience", which reads
-        # as nonsense aloud). Keep the line generic + warm.
-        if step == KnockoutStep.probe:
-            say = (
-                "Before we wrap up — have you worked directly in that area at "
-                "all, even a little? Even a rough example is fine."
-            )
-        elif step == KnockoutStep.check_alternatives:
-            say = (
-                "Got it. And have you used any other tools or approaches to "
-                "achieve something similar?"
-            )
-        else:  # reflect_confirm (or confirmed/unknown — terminal verification)
-            say = (
-                "Okay — just to confirm, that's not something you've worked on "
-                "directly yet. Is that right?"
-            )
-
-        # CRITICAL: advance the tracker so the verified-knockout flow PROGRESSES
-        # (probe → check_alternatives → reflect_confirm → confirmed) and the gate
-        # eventually ALLOWS the close. Without this the candidate is trapped in an
-        # infinite knockout-probe loop (F3 talk-test regression).
-        if signal:
-            self._knockout_tracker.advance(signal)
-
-        return Directive(
-            act=DirectiveAct.probe,
-            say=say,
-            tone=DirectiveTone.warm,
-            spoken_setup=None,
-            is_terminal=False,
-        )
-
-    def confirmed_knockout_signals(self) -> list[str]:
-        """Knockout signals whose verified-absence flow reached `confirmed`.
-
-        Read by the driver at session close to record the KnockoutOutcome(s) into
-        SessionEvidence (the engine RECORDS; the report/human decides — never an
-        auto-reject)."""
-        return [
-            spec.signal
-            for spec in self._session_context.signals
-            if spec.knockout and self._knockout_tracker.is_confirmed(spec.signal)
-        ]
-
     # -----------------------------------------------------------------------
     # Default real LLM call (injectable seam — only called in production)
     # -----------------------------------------------------------------------
@@ -606,7 +438,7 @@ def build_control_plane(
 
     Reads the brain system prompt from prompts/v4/engine/brain.system.txt
     (version from ai_config.engine_brain_prompt_version). Builds session context,
-    resolver questions, all_specs, and a fresh KnockoutTracker.
+    resolver questions, and all_specs.
 
     Used by the engine loop (F1) at session start. Tests should construct
     ControlPlane directly with small fixtures.
@@ -642,6 +474,5 @@ def build_control_plane(
         projection=projection or CoverageProjection(),
         resolver_questions=resolver_questions,
         all_specs=all_specs,
-        knockout_tracker=KnockoutTracker(),
         llm_call=None,  # use _default_brain_llm in production
     )

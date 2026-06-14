@@ -6,7 +6,7 @@ Coverage:
  2. ask → resolver-picked next question text
  3. coverage projection updated after decide
  4. leak-scrub on composed_say (clarify with rubric text → fallback)
- 5. knockout blocks premature close → non-terminal directive
+ 5. candidate end-request → terminal close (the kept end_requested bypass)
  6. probe with exhausted index → falls back to ask
  7. close → say None + is_terminal
  8. LLM is mocked — injected llm_call was awaited; no real network call
@@ -22,9 +22,6 @@ from app.modules.interview_engine.brain.input_builder import (
     CoverageProjection,
     active_question_rubric,
     build_session_context,
-)
-from app.modules.interview_engine.brain.policy import (
-    KnockoutTracker,
 )
 from app.modules.interview_engine.brain.resolver import (
     ResolverQuestion,
@@ -218,7 +215,6 @@ def _make_control_plane(
     projection: CoverageProjection | None = None,
     resolver_questions: list[ResolverQuestion] | None = None,
     all_specs: list[SignalSpec] | None = None,
-    knockout_tracker: KnockoutTracker | None = None,
 ) -> ControlPlane:
     config = _make_session_config()
     session_context = build_session_context(config)
@@ -228,7 +224,6 @@ def _make_control_plane(
         projection=projection or CoverageProjection(),
         resolver_questions=resolver_questions or _make_resolver_questions(),
         all_specs=all_specs or _make_all_specs(),
-        knockout_tracker=knockout_tracker,
         llm_call=llm_call,
     )
 
@@ -246,16 +241,6 @@ def _fake_llm(output: BrainTurnOutput):
         return output
 
     _call.calls = calls  # type: ignore[attr-defined]
-    return _call
-
-
-def _fake_llm_seq(outputs: list[BrainTurnOutput]):
-    """Return an async callable that yields `outputs` in order, one per decide() call."""
-    seq = iter(outputs)
-
-    async def _call(messages: list[dict]) -> BrainTurnOutput:
-        return next(seq)
-
     return _call
 
 
@@ -440,48 +425,15 @@ async def test_clarify_with_leaked_rubric_gets_scrubbed():
 
 
 # ============================================================================
-# Test 5: knockout blocks premature close → non-terminal directive
+# Test 5: candidate end-request → terminal close (the kept end_requested bypass)
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_knockout_blocks_premature_close():
-    """move=close with knockout_pending=['distributed_systems'] → directive is NOT terminal close."""
-    canned = BrainTurnOutput(
-        reasoning="Looks done to me.",
-        observations=[],
-        move=BrainMove.close,
-        probe_dimension=None,
-        preferred_next_signal=None,
-        composed_say=None,
-    )
-    llm = _fake_llm(canned)
-    # Use a knockout spec so the tracker finds a pending signal
-    all_specs = [
-        SignalSpec(
-            signal="distributed_systems",
-            signal_type=SignalType.competency,
-            weight=3,
-            priority=SignalPriority.required,
-            knockout=True,  # this is a knockout signal
-        ),
-    ]
-    cp = _make_control_plane(llm_call=llm, all_specs=all_specs)
-    # Inject knockout_pending directly in the turn input
-    turn = _make_turn_input(knockout_pending=["distributed_systems"])
+async def test_candidate_end_request_yields_terminal_close():
+    """move=close + end_requested=True → terminal close.
 
-    decision = await cp.decide(turn, asked_ids={"q-001"})
-
-    # The premature close must be blocked
-    assert decision.directive.is_terminal is False
-    assert decision.directive.act != DirectiveAct.close
-
-
-@pytest.mark.asyncio
-async def test_candidate_end_request_bypasses_knockout_gate():
-    """move=close + end_requested=True → terminal close EVEN WITH a knockout pending.
-
-    A candidate may always end the screen; the knockout-verification gate only
-    blocks a brain-INITIATED close, never a candidate's explicit end request.
+    A candidate may always end the screen — the end_requested path yields an
+    immediate terminal close.
     """
     canned = BrainTurnOutput(
         reasoning="Candidate asked to end the interview now.",
@@ -493,206 +445,14 @@ async def test_candidate_end_request_bypasses_knockout_gate():
         end_requested=True,
     )
     llm = _fake_llm(canned)
-    all_specs = [
-        SignalSpec(
-            signal="distributed_systems",
-            signal_type=SignalType.competency,
-            weight=3,
-            priority=SignalPriority.required,
-            knockout=True,
-        ),
-    ]
-    cp = _make_control_plane(llm_call=llm, all_specs=all_specs)
-    turn = _make_turn_input(knockout_pending=["distributed_systems"])
+    cp = _make_control_plane(llm_call=llm)
+    turn = _make_turn_input()
 
     decision = await cp.decide(turn, asked_ids={"q-001"})
 
-    # Candidate-initiated end is honored despite the pending knockout.
+    # Candidate-initiated end is honored.
     assert decision.directive.is_terminal is True
     assert decision.directive.act == DirectiveAct.close
-
-
-def _make_knockout_control_plane(llm_call) -> ControlPlane:
-    """Build a ControlPlane whose session context + all_specs carry a knockout signal
-    (distributed_systems), so confirmed_knockout_signals() can surface it at finalize."""
-    config = _make_session_config()
-    config.signal_metadata[0].knockout = True  # distributed_systems → knockout
-    session_context = build_session_context(config)
-    all_specs = [
-        SignalSpec(
-            signal="distributed_systems",
-            signal_type=SignalType.competency,
-            weight=3,
-            priority=SignalPriority.required,
-            knockout=True,
-        ),
-    ]
-    return ControlPlane(
-        session_context=session_context,
-        system_prompt="You are a helpful interview brain.",
-        projection=CoverageProjection(),
-        resolver_questions=_make_resolver_questions(),
-        all_specs=all_specs,
-        knockout_tracker=None,
-        llm_call=llm_call,
-    )
-
-
-@pytest.mark.asyncio
-async def test_knockout_close_forces_reflect_back_before_recording():
-    """move=close + knockout_confirmed=True on the FIRST disclaim (no prior reflect-back)
-    → the engine does NOT end yet; it forces ONE reflect-back confirm and records nothing.
-
-    Robustness guarantee: a knockout never ends the screen without first reflecting it
-    back to the candidate (guards STT mishearing / a misread scope).
-    """
-    canned = BrainTurnOutput(
-        reasoning="Candidate disclaimed the mandatory skill — but no reflect-back yet.",
-        observations=[],
-        move=BrainMove.close,
-        probe_dimension=None,
-        preferred_next_signal=None,
-        composed_say=None,
-        knockout_confirmed=True,
-    )
-    cp = _make_knockout_control_plane(_fake_llm(canned))
-    turn = _make_turn_input(knockout_pending=["distributed_systems"])
-
-    decision = await cp.decide(turn, asked_ids={"q-001"})
-
-    # Reflect-back forced; the screen is NOT ended and nothing is recorded yet.
-    assert decision.directive.is_terminal is False
-    assert decision.directive.act == DirectiveAct.confirm
-    assert cp.confirmed_knockout_signals() == []
-
-
-@pytest.mark.asyncio
-async def test_brain_confirmed_knockout_closes_after_reflect_back():
-    """A reflect-back confirm (turn 1) THEN move=close + knockout_confirmed (turn 2) →
-    terminal close AND the signal is recorded. Mirrors the natural disclaim→confirm→close flow.
-    """
-    reflect_out = BrainTurnOutput(
-        reasoning="Reflecting the mandatory-skill absence back to the candidate.",
-        observations=[],
-        move=BrainMove.confirm,
-        probe_dimension=None,
-        preferred_next_signal=None,
-        composed_say="So you haven't worked with that directly yet — is that right?",
-        knockout_confirmed=False,
-    )
-    close_out = BrainTurnOutput(
-        reasoning="Candidate confirmed the absence — close and record the knockout.",
-        observations=[],
-        move=BrainMove.close,
-        probe_dimension=None,
-        preferred_next_signal=None,
-        composed_say=None,
-        knockout_confirmed=True,
-    )
-    cp = _make_knockout_control_plane(_fake_llm_seq([reflect_out, close_out]))
-    turn = _make_turn_input(knockout_pending=["distributed_systems"])
-
-    # Turn 1: the reflect-back (registers the reflect; non-terminal).
-    d1 = await cp.decide(turn, asked_ids={"q-001"})
-    assert d1.directive.is_terminal is False
-    assert cp.confirmed_knockout_signals() == []
-
-    # Turn 2: the close is now honored and the knockout recorded.
-    d2 = await cp.decide(turn, asked_ids={"q-001"})
-    assert d2.directive.is_terminal is True
-    assert d2.directive.act == DirectiveAct.close
-    assert cp.confirmed_knockout_signals() == ["distributed_systems"]
-
-
-@pytest.mark.asyncio
-async def test_knockout_reflected_hint_injected_on_turn_after_reflect():
-    """After a reflect-back (confirm move while a knockout is pending), the NEXT brain
-    call's messages carry the 'KNOCKOUT ALREADY REFLECTED' hint → the brain closes
-    instead of re-confirming. (Guards the double-confirm UX.)"""
-    reflect_out = BrainTurnOutput(
-        reasoning="Reflecting the Workato absence back.",
-        observations=[],
-        move=BrainMove.confirm,
-        probe_dimension=None,
-        preferred_next_signal=None,
-        composed_say="So you haven't worked with that directly yet — is that right?",
-        knockout_confirmed=False,
-    )
-    second_out = BrainTurnOutput(
-        reasoning="Second turn.",
-        observations=[],
-        move=BrainMove.confirm,
-        probe_dimension=None,
-        preferred_next_signal=None,
-        composed_say="anything",
-        knockout_confirmed=False,
-    )
-    llm = _fake_llm_seq([reflect_out, second_out])
-    captured: list[list[dict]] = []
-
-    async def _capturing(messages):
-        captured.append(messages)
-        return await llm(messages)
-
-    cp = _make_knockout_control_plane(_capturing)
-    turn = _make_turn_input(knockout_pending=["distributed_systems"])
-
-    await cp.decide(turn, asked_ids={"q-001"})  # reflect
-    await cp.decide(turn, asked_ids={"q-001"})  # next turn
-
-    # Turn 1 had no reflected hint; turn 2 carries it.
-    assert "KNOCKOUT ALREADY REFLECTED" not in str(captured[0])
-    assert "KNOCKOUT ALREADY REFLECTED" in str(captured[1])
-
-
-@pytest.mark.asyncio
-async def test_brain_knockout_confirmed_without_pending_signal_does_not_fabricate():
-    """move=close + knockout_confirmed=True but NO matching pending knockout →
-    the engine does NOT fabricate a knockout (deterministic guard).
-
-    The brain can only knockout-close a signal the engine itself flagged absent
-    (membership in knockout_pending). With nothing pending, no KnockoutOutcome is
-    recorded; the close still proceeds as an ordinary close (gate allows it).
-    """
-    canned = BrainTurnOutput(
-        reasoning="Brain claims a knockout but the engine flagged none.",
-        observations=[],
-        move=BrainMove.close,
-        probe_dimension=None,
-        preferred_next_signal=None,
-        composed_say=None,
-        knockout_confirmed=True,
-    )
-    llm = _fake_llm(canned)
-    config = _make_session_config()
-    config.signal_metadata[0].knockout = True
-    session_context = build_session_context(config)
-    all_specs = [
-        SignalSpec(
-            signal="distributed_systems",
-            signal_type=SignalType.competency,
-            weight=3,
-            priority=SignalPriority.required,
-            knockout=True,
-        ),
-    ]
-    cp = ControlPlane(
-        session_context=session_context,
-        system_prompt="You are a helpful interview brain.",
-        projection=CoverageProjection(),
-        resolver_questions=_make_resolver_questions(),
-        all_specs=all_specs,
-        knockout_tracker=None,
-        llm_call=llm,
-    )
-    # No knockout flagged absent this turn.
-    turn = _make_turn_input(knockout_pending=[])
-
-    decision = await cp.decide(turn, asked_ids={"q-001"})
-
-    # Close proceeds, but NO knockout is fabricated/recorded.
-    assert decision.directive.is_terminal is True
-    assert cp.confirmed_knockout_signals() == []
 
 
 @pytest.mark.asyncio
@@ -833,57 +593,3 @@ async def test_llm_mocked_and_called_with_messages():
         assert "content" in msg
 
 
-async def test_knockout_flow_advances_and_terminates(_make_control_plane_with_knockout=None):
-    """Regression (F3): repeated close-on-knockout must ADVANCE the tracker
-    (probe → check_alternatives → reflect_confirm → confirmed) and finally let
-    the close through — NOT loop the same knockout-probe forever. Also exposes
-    confirmed_knockout_signals() for the driver to record the KnockoutOutcome."""
-    from app.modules.interview_engine.brain.service import ControlPlane
-    from app.modules.interview_engine.brain.input_builder import CoverageProjection
-    from app.modules.interview_engine.contracts import (
-        BrainSessionContext, SignalSpec, BrainTurnOutput, BrainMove, BrainTurnInput,
-        ActiveQuestionRubric,
-    )
-    from app.modules.interview_runtime.evidence import SignalType, SignalPriority
-
-    ko_signal = "Workato hands-on"
-    ctx = BrainSessionContext(
-        job_title="x", seniority_level="mid", role_summary="r", hiring_bar="b",
-        signals=[SignalSpec(signal=ko_signal, signal_type=SignalType.experience,
-                            weight=3, priority=SignalPriority.required, knockout=True)],
-        bank_index=[],
-    )
-
-    async def _close_llm(messages):
-        return BrainTurnOutput(reasoning="no exp", observations=[], move=BrainMove.close)
-
-    cp = ControlPlane(
-        session_context=ctx, system_prompt="sys", projection=CoverageProjection(),
-        resolver_questions=[], all_specs=ctx.signals,
-        llm_call=_close_llm,
-    )
-
-    rubric = ActiveQuestionRubric(question_id="q", text="t", excellent="e", meets_bar="m",
-                                  below_bar="b", positive_evidence=["a","b","c"], red_flags=["x","y"],
-                                  evaluation_hint="h", follow_ups=[])
-
-    def _ti():
-        return BrainTurnInput(turn_ref="t", active_question=rubric, on_the_floor="?",
-                              candidate_utterance="no", thread_turn_count=1,
-                              evidence_so_far=[], transcript_window=[],
-                              uncovered_signals=[], knockout_pending=[ko_signal])
-
-    # First three closes are BLOCKED + steered (non-terminal), advancing the tracker.
-    acts = []
-    for _ in range(3):
-        d = await cp.decide(_ti(), asked_ids=set())
-        acts.append((d.directive.act.value, d.is_terminal))
-    assert all(not term for _, term in acts), f"steps should be non-terminal: {acts}"
-    assert all(a == "probe" for a, _ in acts), f"steps should steer via probe: {acts}"
-
-    # The signal is now confirmed → exposed for the driver to record.
-    assert cp.confirmed_knockout_signals() == [ko_signal]
-
-    # The NEXT close is finally allowed through (terminal) — no infinite loop.
-    d4 = await cp.decide(_ti(), asked_ids=set())
-    assert d4.directive.act.value == "close" and d4.is_terminal
