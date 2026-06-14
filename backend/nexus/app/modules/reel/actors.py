@@ -53,6 +53,30 @@ def _parse_iso(value: str | None) -> datetime | None:
         return None
 
 
+def _candidate_speech_intervals(transcript: list[dict], offset_ms: int) -> list[tuple[int, int]]:
+    """Candidate speech envelope on the VIDEO clock — input to sync calibration.
+
+    Each candidate turn carries ``span.start_ms`` (the first word's absolute STT
+    time, session-relative) + ``words[{start_ms,end_ms}]`` (turn-relative). A
+    word's video position (pre-correction) = ``span.start_ms + word.start_ms +
+    offset_ms``. Returns one interval per word across ALL candidate turns.
+    """
+    intervals: list[tuple[int, int]] = []
+    for turn in transcript:
+        if turn.get("speaker") != "candidate":
+            continue
+        turn_start = int((turn.get("span") or {}).get("start_ms") or 0)
+        for w in turn.get("words") or []:
+            try:
+                start = turn_start + int(w["start_ms"]) + offset_ms
+                end = turn_start + int(w["end_ms"]) + offset_ms
+            except (KeyError, TypeError, ValueError):
+                continue
+            if end > start:
+                intervals.append((start, end))
+    return intervals
+
+
 async def _load_inputs(db, session_id: UUID, tenant_id: UUID) -> dict:
     """Single-query load of every input the EDL + render need."""
     row = (await db.execute(text(
@@ -124,9 +148,30 @@ async def _build_and_upload(session_id: UUID, tenant_id: UUID,
     with tempfile.TemporaryDirectory() as tmp:
         rec_path = os.path.join(tmp, "recording.mp4")
         await storage.download_to_path(inp["recording_s3_key"], rec_path)
+
+        # Per-session sync calibration (best-effort): the static offset leaves a
+        # residual lag (STT-stream start vs meta.started_at + pipeline latency).
+        # Cross-correlate the candidate's STT word envelope (already on the video
+        # clock via offset_ms) against the recording's actual speech to recover δ;
+        # render at static + δ. Any ffmpeg/measure failure → keep the static offset
+        # (NEVER fail the reel over calibration).
+        final_offset = offset_ms
+        try:
+            cand_intervals = _candidate_speech_intervals(transcript, offset_ms)
+            rec_speech = await timing.recording_speech_intervals(rec_path)
+            delta = timing.measure_offset_correction(cand_intervals, rec_speech)
+            final_offset = offset_ms + delta
+            log.info("reel.actor.sync_calibrated", static_offset_ms=offset_ms,
+                     delta_ms=delta, final_offset_ms=final_offset,
+                     cand_intervals=len(cand_intervals), rec_intervals=len(rec_speech))
+        except Exception as exc:
+            log.warning("reel.actor.sync_calibration_failed",
+                        error_type=type(exc).__name__, error_message=str(exc)[:300],
+                        static_offset_ms=offset_ms)
+
         out_path = os.path.join(tmp, "reel.mp4")
         _, chapters = await render.render_reel(
-            beats=vedl.beats, recording_path=rec_path, offset_ms=offset_ms,
+            beats=vedl.beats, recording_path=rec_path, offset_ms=final_offset,
             tmp_dir=tmp, out_path=out_path,
         )
         duration_ms = await render.probe_duration_ms(out_path)
