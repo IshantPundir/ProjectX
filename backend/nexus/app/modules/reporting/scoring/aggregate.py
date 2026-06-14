@@ -90,10 +90,6 @@ def must_have_cap(
     return None
 
 
-def signal_ceiling(must_haves: list[ScoredSignal], *, coverage: float) -> int | None:
-    """Back-compat alias used by the orchestrator."""
-    return must_have_cap(must_haves, coverage=coverage)
-
 
 def clamp_to_ceiling(value: int | None, ceiling: int | None) -> int | None:
     """Cap a base score by its fit ceiling. A knockout (REJECT_CEILING) with no

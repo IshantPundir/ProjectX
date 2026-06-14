@@ -38,8 +38,7 @@ def test_verdict_advance_when_clear():
 
 
 def test_resolve_verdict_absent_must_have_rejects():
-    # A failed must-have caps overall into the reject band and resolve_verdict
-    # returns "reject" via the must-have backstop (NOT a knockout_close branch).
+    # A failed must-have rejects via the must-have backstop even when overall is high.
     v = resolve_verdict(overall=90, coverage=1.0, must_haves=[_mh("absent")])
     assert v.verdict == "reject"
 

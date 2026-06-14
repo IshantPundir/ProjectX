@@ -25,10 +25,10 @@ from app.modules.reporting.scoring.aggregate import (
     clamp_to_ceiling,
     confidence_from_coverage,
     make_scored_signal,
+    must_have_cap,
     resolve_verdict,
     score_dimension,
     score_overall,
-    signal_ceiling,
 )
 from app.modules.reporting.scoring.constants import (
     BEHAVIORAL_TYPES,
@@ -189,7 +189,7 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id,
     base, coverage = score_overall(scored)
 
     must_haves = [s for s in scored if s.knockout]
-    ceiling = signal_ceiling(must_haves, coverage=coverage)
+    ceiling = must_have_cap(must_haves, coverage=coverage)
     session_score = clamp_to_ceiling(base, ceiling)
 
     adjustment = await score_holistic(
