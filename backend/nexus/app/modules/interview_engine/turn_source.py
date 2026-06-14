@@ -21,9 +21,10 @@ load-bearing behaviors.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.modules.interview_runtime.evidence import TimeSpan
+from app.modules.interview_runtime.models import WordTiming
 
 
 @dataclass(frozen=True)
@@ -31,11 +32,14 @@ class AssembledTurn:
     """One logical candidate turn after fragment assembly — the unit the drive
     loop consumes. `text` is the merged answer; `span` covers all merged
     fragments; `suppress_bridge` is set on a merge-back re-flush (an ack already
-    played); `is_reflush` is audit-only."""
+    played); `is_reflush` is audit-only. `words` are the per-word STT timings of
+    the merged answer, turn-relative (first word start = 0), concatenated across
+    all merged fragments — empty when STT supplied no word timings."""
     text: str
     span: TimeSpan
     suppress_bridge: bool = False
     is_reflush: bool = False
+    words: list[WordTiming] = field(default_factory=list)
 
 
 class CommittedTurnSource:

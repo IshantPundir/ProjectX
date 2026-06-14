@@ -24,6 +24,7 @@ import structlog
 
 from app.modules.interview_engine.turn_source import AssembledTurn, CommittedTurnSource
 from app.modules.interview_runtime.evidence import TimeSpan
+from app.modules.interview_runtime.transcript_timing import RawWord, relative_words
 
 _log = structlog.get_logger("interview_engine.assembler")
 
@@ -96,6 +97,9 @@ class TurnAssembler:
 
         self._state = _IDLE
         self._buffer: list[str] = []
+        # Per-fragment RawWord lists, mirroring _buffer 1:1 (one list per buffered
+        # fragment). Merged turn-relative on flush via relative_words.
+        self._word_buffer: list[list[RawWord]] = []
         self._first_at = 0.0
         self._last_at = 0.0
         self._user_speaking = False
@@ -103,6 +107,8 @@ class TurnAssembler:
         self._is_reflush = False
         self._grace_handle: TimerHandle | None = None
         self._retained: list[str] = []
+        # Mirrors _retained for merge-back re-buffering of word timings.
+        self._retained_words: list[list[RawWord]] = []
         self._retained_first_at = 0.0
 
     # --- internal helpers ---
@@ -124,19 +130,26 @@ class TurnAssembler:
     def _flush(self, *, reason: str) -> None:
         self._cancel_grace()
         text = " ".join(self._buffer).strip()
+        # Word times across the fragments of ONE turn are on a continuous STT
+        # stream clock — concatenate in fragment order and rebase once.
+        merged_words = relative_words([w for frag in self._word_buffer for w in frag])
         turn = AssembledTurn(
             text=text,
             span=TimeSpan(start_ms=int(self._first_at * 1000), end_ms=int(self._last_at * 1000)),
             suppress_bridge=self._is_reflush,
             is_reflush=self._is_reflush,
+            words=merged_words,
         )
         _log.info("engine.assembly.flushed", fragment_count=len(self._buffer),
-                  merged_len=len(text), reason=reason, is_reflush=self._is_reflush)
+                  merged_len=len(text), word_count=len(merged_words),
+                  reason=reason, is_reflush=self._is_reflush)
         self._sink.submit(turn)
         # retain for a possible merge-back; move to IN_FLIGHT
         self._retained = list(self._buffer)
+        self._retained_words = [list(frag) for frag in self._word_buffer]
         self._retained_first_at = self._first_at
         self._buffer = []
+        self._word_buffer = []
         self._superseded = False
         self._state = _IN_FLIGHT
 
@@ -145,19 +158,22 @@ class TurnAssembler:
         text (so a re-flush is the merged answer) and flag superseded for the loop."""
         self._superseded = True
         self._buffer = list(self._retained)
+        self._word_buffer = [list(frag) for frag in self._retained_words]
         self._first_at = self._retained_first_at
         self._is_reflush = True
         self._state = _BUFFERING
         self._arm_grace()
 
     # --- public API (called by agent.py wiring / the drive loop) ---
-    def submit_fragment(self, text: str) -> None:
+    def submit_fragment(self, text: str, words: list[RawWord] | None = None) -> None:
+        frag_words = list(words) if words else []
         if not self._enabled:
             now = self._clock()
             self._sink.submit(AssembledTurn(
                 text=text,
                 span=TimeSpan(start_ms=int(now * 1000), end_ms=int(now * 1000)),
-                suppress_bridge=False, is_reflush=False))
+                suppress_bridge=False, is_reflush=False,
+                words=relative_words(frag_words)))
             return
         now = self._clock()
         if self._state == _IN_FLIGHT:
@@ -165,6 +181,7 @@ class TurnAssembler:
             if not self._superseded:
                 self._begin_merge_back()
             self._buffer.append(text)
+            self._word_buffer.append(frag_words)
             self._last_at = now
             if (now - self._first_at) >= self._max_s:
                 self._flush(reason="max_duration")
@@ -173,10 +190,12 @@ class TurnAssembler:
             return
         if self._state == _IDLE:
             self._buffer = [text]
+            self._word_buffer = [frag_words]
             self._first_at = now
             self._is_reflush = False
         else:  # _BUFFERING
             self._buffer.append(text)
+            self._word_buffer.append(frag_words)
             self._last_at = now
             if (now - self._first_at) >= self._max_s:
                 self._state = _BUFFERING

@@ -235,9 +235,13 @@ class _EngineAgent(Agent):
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:  # type: ignore[override]
         """Feed the committed fragment to the assembler; suppress the built-in reply."""
         text = (getattr(new_message, "text_content", "") or "").strip()
+        # Read + clear the per-turn STT word stash (set by stt_node, Task 2) so
+        # the next turn starts fresh; pass it to the assembler for word-timing.
+        words = self._pending_words
+        self._pending_words = []
         if text:
-            self._assembler.submit_fragment(text)
-        log.info("engine.turn.fragment", transcript_len=len(text))
+            self._assembler.submit_fragment(text, words=words)
+        log.info("engine.turn.fragment", transcript_len=len(text), word_count=len(words))
         raise StopResponse()
 
 

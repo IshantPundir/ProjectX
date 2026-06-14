@@ -75,6 +75,7 @@ from app.modules.interview_runtime.evidence import (
     ThreadClosure,
     TimeSpan,
     TranscriptTurn,
+    Word,
 )
 from app.modules.interview_runtime.schemas import QuestionConfig, SessionConfig
 
@@ -519,7 +520,12 @@ class SessionDriver:
                 text=utterance,
                 span=span,
                 pre_turn_gap_ms=pre_turn_gap_ms,
-                words=words or [],
+                # AssembledTurn.words are turn-relative WordTiming (incl. STT
+                # confidence); the evidence transcript keeps only text + bounds.
+                words=[
+                    Word(text=w.text, start_ms=w.start_ms, end_ms=w.end_ms)
+                    for w in turn.words
+                ],
                 question_id=self._active_q.id,
             )
         )
