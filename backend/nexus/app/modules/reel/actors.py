@@ -151,19 +151,28 @@ async def _build_and_upload(session_id: UUID, tenant_id: UUID,
 
         # Per-session sync calibration (best-effort): the static offset leaves a
         # residual lag (STT-stream start vs meta.started_at + pipeline latency).
-        # Cross-correlate the candidate's STT word envelope (already on the video
+        # Cross-correlate the candidate's STT speech envelope (already on the video
         # clock via offset_ms) against the recording's actual speech to recover δ;
         # render at static + δ. Any ffmpeg/measure failure → keep the static offset
         # (NEVER fail the reel over calibration).
+        #
+        # The candidate per-WORD intervals are first MERGED into coarse speech
+        # BLOCKS (gap < 400ms = silencedetect's min_silence_s) so they're the same
+        # shape as the recording's silencedetect blocks — block-vs-block has a sharp
+        # correlation peak (tiny-words-vs-blocks is mushy and drifts). The search is
+        # bounded to ±1500ms: a legitimate residual is sub-second to ~1s, so a wider
+        # "correction" is never real (a real session drifted to a bogus −1480).
         final_offset = offset_ms
         try:
-            cand_intervals = _candidate_speech_intervals(transcript, offset_ms)
+            cand_words = _candidate_speech_intervals(transcript, offset_ms)
+            cand_blocks = timing.merge_intervals(cand_words, gap_ms=400)
             rec_speech = await timing.recording_speech_intervals(rec_path)
-            delta = timing.measure_offset_correction(cand_intervals, rec_speech)
+            delta = timing.measure_offset_correction(
+                cand_blocks, rec_speech, max_lag_ms=1500)
             final_offset = offset_ms + delta
             log.info("reel.actor.sync_calibrated", static_offset_ms=offset_ms,
                      delta_ms=delta, final_offset_ms=final_offset,
-                     cand_intervals=len(cand_intervals), rec_intervals=len(rec_speech))
+                     cand_intervals=len(cand_blocks), rec_intervals=len(rec_speech))
         except Exception as exc:
             log.warning("reel.actor.sync_calibration_failed",
                         error_type=type(exc).__name__, error_message=str(exc)[:300],

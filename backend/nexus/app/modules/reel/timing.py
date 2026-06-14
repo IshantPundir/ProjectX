@@ -119,6 +119,36 @@ async def recording_speech_intervals(rec_path: str, *, noise_db: int = -30,
     return _parse_silencedetect(stderr.decode("utf-8", "replace"), total_ms)
 
 
+# --- interval merging (word intervals → speech blocks) ----------------------
+
+def merge_intervals(intervals: list[tuple[int, int]], *,
+                    gap_ms: int) -> list[tuple[int, int]]:
+    """Merge consecutive intervals whose inter-gap is ``< gap_ms`` into one block.
+
+    Pure. Sorts by start, then walks left→right collapsing any interval that
+    begins within ``gap_ms`` of the running block's end into that block (taking
+    ``max`` of the ends so a nested/short interval never shrinks the block). Used
+    to turn the candidate's per-WORD STT intervals into coarse speech BLOCKS whose
+    edges align sharply with the recording's ``silencedetect`` blocks — a
+    block-vs-block correlation has a far sharper peak than tiny-words-vs-blocks.
+
+    ``gap_ms`` should match the recording envelope's ``min_silence_s`` (× 1000):
+    the recording treats a pause shorter than that as continuous speech, so the
+    candidate envelope must coalesce the same way to align. Empty → [].
+    """
+    if not intervals:
+        return []
+    ordered = sorted(intervals)
+    merged: list[tuple[int, int]] = [ordered[0]]
+    for start, end in ordered[1:]:
+        cur_start, cur_end = merged[-1]
+        if start - cur_end < gap_ms:
+            merged[-1] = (cur_start, max(cur_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 # --- pure cross-correlation -------------------------------------------------
 
 def _rasterize(intervals: list[tuple[int, int]], bin_ms: int,
@@ -135,16 +165,22 @@ def _rasterize(intervals: list[tuple[int, int]], bin_ms: int,
 
 def measure_offset_correction(cand_intervals: list[tuple[int, int]],
                               rec_speech: list[tuple[int, int]],
-                              *, max_lag_ms: int = 8000, bin_ms: int = 40) -> int:
+                              *, max_lag_ms: int = 1500, bin_ms: int = 40) -> int:
     """Residual offset δ (ms) that best aligns the candidate envelope to the recording.
 
-    Both lists are SPEECH intervals already on the video clock (the candidate ones
-    carry the static offset). We rasterize both onto a shared ``bin_ms`` grid and
-    find the integer shift δ ∈ [−max_lag_ms, +max_lag_ms] (in bin steps) that
+    Both lists are SPEECH BLOCKS already on the video clock (the candidate ones
+    carry the static offset; both should be coarse blocks — see ``merge_intervals``
+    — so their edges align sharply). We rasterize both onto a shared ``bin_ms`` grid
+    and find the integer shift δ ∈ [−max_lag_ms, +max_lag_ms] (in bin steps) that
     MAXIMIZES the count of bins where the δ-shifted candidate envelope overlaps the
     recording envelope. SIGN: δ > 0 means the candidate (and thus every clip) must
     be pushed LATER to match the recording — the final render offset is
     ``static_offset + δ``.
+
+    ``max_lag_ms`` defaults to 1500: the static offset is principled to ~±1s, so a
+    legitimate residual is sub-second to ~1s. A wider window lets a mushy peak
+    wander to a far spurious shift (a real session produced a bogus −1480 with the
+    old ±8000 window) — the bound makes that impossible.
 
     Confidence guard: if the best overlap is too weak (< a few bins AND a small
     fraction of the candidate's own speech bins), return 0 — a noisy correlation is

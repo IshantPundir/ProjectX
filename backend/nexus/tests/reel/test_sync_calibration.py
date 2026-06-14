@@ -10,6 +10,7 @@ from app.modules.reel.actors import _candidate_speech_intervals
 from app.modules.reel.timing import (
     _parse_silencedetect,
     measure_offset_correction,
+    merge_intervals,
 )
 
 
@@ -72,6 +73,78 @@ def test_delta_clamped_to_max_lag():
     rec = _shift(_CAND, 6000)
     delta = measure_offset_correction(_CAND, rec, max_lag_ms=2000, bin_ms=40)
     assert -2000 <= delta <= 2000
+
+
+# --- merge_intervals: word intervals → speech BLOCKS --------------------------
+
+def test_merge_intervals_adjacent_words_merge_into_block():
+    # Two words whose gap (250 - 200 = 50) is < gap_ms → one block spanning both.
+    assert merge_intervals([(0, 200), (250, 600)], gap_ms=400) == [(0, 600)]
+
+
+def test_merge_intervals_large_gap_splits():
+    # A pause >= gap_ms keeps the two intervals as separate blocks.
+    assert merge_intervals([(0, 200), (1000, 1400)], gap_ms=400) == [
+        (0, 200), (1000, 1400)]
+
+
+def test_merge_intervals_empty():
+    assert merge_intervals([], gap_ms=400) == []
+
+
+def test_merge_intervals_unsorted_input():
+    # Sorted by start before merging; overlapping/adjacent collapse correctly.
+    assert merge_intervals([(250, 600), (0, 200)], gap_ms=400) == [(0, 600)]
+
+
+def test_merge_intervals_chain_of_words():
+    # A run of word intervals all within gap_ms collapses to one block; a far
+    # gap then opens a second block.
+    words = [(0, 100), (150, 300), (400, 500), (2000, 2200), (2300, 2500)]
+    assert merge_intervals(words, gap_ms=400) == [(0, 500), (2000, 2500)]
+
+
+def test_merge_intervals_keeps_max_end_on_nested():
+    # A shorter interval nested inside a longer one must not shrink the block end.
+    assert merge_intervals([(0, 900), (100, 300)], gap_ms=400) == [(0, 900)]
+
+
+# --- block-vs-block calibration (the actual production shape) ------------------
+
+# Candidate speech as merged BLOCKS (what the actor now passes after merging the
+# per-word intervals). Block edges align sharply with the recording's
+# silencedetect blocks → a sharp correlation peak.
+_CAND_BLOCKS = [
+    (1000, 2400),
+    (3000, 5200),
+    (6000, 7100),
+    (8200, 11800),
+]
+
+
+def test_block_correlation_recovers_small_positive_delta():
+    rec = _shift(_CAND_BLOCKS, 320)
+    delta = measure_offset_correction(_CAND_BLOCKS, rec, max_lag_ms=1500, bin_ms=20)
+    assert abs(delta - 320) <= 40
+
+
+def test_block_correlation_cannot_return_far_spurious_shift():
+    # The live bug: a true offset of -1480 with the OLD wide window drifted there.
+    # With max_lag_ms=1500 the returned δ is bounded to ±1500 — it can NEVER be the
+    # spurious -1480-style far correction the caller saw. (And block-vs-block, the
+    # true small residual is what wins.)
+    rec = _shift(_CAND_BLOCKS, 320)
+    delta = measure_offset_correction(_CAND_BLOCKS, rec, max_lag_ms=1500, bin_ms=20)
+    assert -1500 <= delta <= 1500
+    assert delta != -1480
+
+
+def test_default_max_lag_is_bounded_to_1500():
+    # The principled default window must itself be ±1500 — a caller that omits
+    # max_lag_ms can never get a far spurious correction back.
+    rec = _shift(_CAND_BLOCKS, 3000)  # true shift beyond the principled residual
+    delta = measure_offset_correction(_CAND_BLOCKS, rec)  # default max_lag_ms
+    assert -1500 <= delta <= 1500
 
 
 # --- stderr parsing (pure helper factored out of the ffmpeg shell-out) -------
