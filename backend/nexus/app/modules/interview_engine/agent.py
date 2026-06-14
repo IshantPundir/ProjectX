@@ -26,6 +26,7 @@ import asyncio
 import json
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import structlog
@@ -76,6 +77,18 @@ from app.modules.session import classify_engine_exception, transition_to_error
 log = structlog.get_logger("interview_engine")
 
 _KEYTERM_CAP = 50
+
+
+def make_session_clock(t0_monotonic: float) -> Callable[[], float]:
+    """Return a clock that reads seconds elapsed since session start.
+
+    The ``TurnAssembler`` stamps candidate turn spans as ``int(clock() * 1000)``.
+    Handed the raw ``time.monotonic`` it produced absolute monotonic values
+    (~1.231e9 ms ≈ 14 days), so spans were nonsensical relative to the
+    session-relative AGENT lines. Anchoring to ``t0_monotonic`` (captured at
+    session start) makes every span session-relative ms — comparable to the
+    AGENT timeline and usable by the report/reel timing maps (RC-4)."""
+    return lambda: time.monotonic() - t0_monotonic
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +506,9 @@ async def run(
     # loop re-runs on the merged answer rather than a partial one.
     assembler = TurnAssembler(
         sink=turn_source,
-        clock=time.monotonic,
+        # Anchor to session start so candidate turn spans are session-relative
+        # ms (comparable to AGENT lines), not raw absolute monotonic (RC-4).
+        clock=make_session_clock(started_at),
         timer=AsyncioTimerScheduler(),
         grace_s=ai_config.engine_assembly_grace_s,
         max_duration_s=ai_config.engine_assembly_max_duration_s,
