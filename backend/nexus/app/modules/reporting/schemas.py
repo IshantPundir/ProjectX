@@ -151,6 +151,7 @@ class QuestionOut(BaseModel):
     asked_at_ms: int | None = None       # ms since session start (None for legacy sessions)
     thumbnail_url: str | None = None     # presigned R2 GET, attached at read time only
     level: str = "not_reached"            # per-question grade: strong|solid|thin|absent|not_reached
+    closure: str | None = None            # engine per-question verdict: satisfied|tapped_out|absent|truncated (None if never asked)
     difficulty: str | None = None         # easy|medium|hard (bank)
     listen_for_hits: list[str] = Field(default_factory=list)
     red_flags_tripped: list[str] = Field(default_factory=list)
