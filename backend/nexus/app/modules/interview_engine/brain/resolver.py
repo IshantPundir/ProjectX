@@ -19,16 +19,12 @@ Design: PURE logic — no livekit, no I/O, no LLM, no async.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from app.modules.interview_runtime.evidence import (
     QuestionOutcome,
     QuestionRecord,
     ThreadClosure,
 )
-
-if TYPE_CHECKING:
-    pass
 
 
 # ============================================================================
@@ -95,8 +91,8 @@ def build_question_records(
     """Build one `QuestionRecord` per bank question for the engine→report contract.
 
     Called once at session end. The loop supplies the per-thread `closures` it
-    inferred from the brain's final coverage_after + stance + whether the
-    time-resolver force-closed the thread.
+    inferred from the brain's final coverage_after + stance (and `truncated` when
+    the session ended with the thread still open).
 
     Rules:
       - outcome = `asked`       when question_id in asked_ids

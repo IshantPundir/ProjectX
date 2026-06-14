@@ -182,8 +182,8 @@ class QuestionRecord(BaseModel):
     closure: ThreadClosure | None = Field(
         default=None,
         description="Set ONLY when outcome == asked. Engine-inferred from the brain's final "
-                    "coverage_after + stance + whether the time-resolver force-closed the thread. "
-                    "This is what lets the session-close pass tell `probed_absent` from `not_reached`.",
+                    "coverage_after + stance (and `truncated` when the session ended with the thread "
+                    "still open). This is what lets the session-close pass tell `probed_absent` from `not_reached`.",
     )
     asked_at_turn: str | None = None
     probes_used: list[int] = Field(

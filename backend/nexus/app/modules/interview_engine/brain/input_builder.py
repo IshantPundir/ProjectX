@@ -94,8 +94,7 @@ def build_session_context(config: SessionConfig) -> BrainSessionContext:
 
     Bank index mapping
     ~~~~~~~~~~~~~~~~~~
-    One BankQuestionIndex per config.stage.questions entry.  The existing flat bank is
-    treated as all-core (tier="core") — the two-tier bank is a later plan.
+    One BankQuestionIndex per config.stage.questions entry.
     NO rubric text is included here (rubrics would break cache consistency).
     """
     # --- signals ---

@@ -117,10 +117,9 @@ class BrainTurnOutput(BaseModel):
     preferred_next_signal: str | None = Field(
         default=None,
         description="OPTIONAL soft hint (a signal/topic) for what would flow well NEXT, for naturalness. "
-                    "The deterministic resolver HONORS it only when budget has slack AND it doesn't break "
-                    "the mandatory-coverage guarantee; otherwise it falls back to mandatory-first. The brain "
-                    "NEVER hard-selects the next main question (resolver owns repeat + coverage + budget "
-                    "safety). None → let the resolver choose by position/weight.",
+                    "The deterministic resolver HONORS it when an unasked question matches that signal; "
+                    "otherwise it returns the lowest-position unasked question. The brain NEVER hard-selects "
+                    "the next main question (the resolver owns ordering). None → let the resolver choose by position.",
     )
     composed_say: str | None = Field(
         default=None, max_length=400,
