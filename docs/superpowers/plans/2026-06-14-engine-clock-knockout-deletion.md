@@ -14,10 +14,13 @@
 
 ## Conventions used in every task
 
-- **Test command (engine):** the container must be up first.
+- **Test command (engine):** the container must be up first. NOTE: the engine test
+  directory is `tests/interview_engine_v3/` (the module is `interview_engine`, but the
+  test dir kept the historical `_v3` suffix). Use `docker compose exec -T` from
+  non-interactive callers.
   ```bash
   docker compose up -d nexus
-  docker compose exec nexus python -m pytest tests/interview_engine -m "not prompt_quality" -q
+  docker compose exec -T nexus python -m pytest tests/interview_engine_v3 -m "not prompt_quality" -q
   ```
 - **Test command (a single file):**
   ```bash
@@ -45,7 +48,7 @@ Expected: branch `feat/engine-clock-knockout-deletion`, only the spec/plan docs 
 Run:
 ```bash
 docker compose up -d nexus
-docker compose exec nexus python -m pytest tests/interview_engine -m "not prompt_quality" -q
+docker compose exec nexus python -m pytest tests/interview_engine_v3 -m "not prompt_quality" -q
 ```
 Expected: PASS (this is the baseline; every task must return to PASS).
 
@@ -63,7 +66,7 @@ The clock flows through `contracts → input_builder → driver → brain/servic
 - Modify: `app/modules/interview_engine/brain/input_builder.py`
 - Modify: `app/modules/interview_engine/brain/service.py`
 - Modify: `app/modules/interview_engine/driver.py`
-- Test: `tests/interview_engine/test_resolver.py` (rewrite budget cases)
+- Test: `tests/interview_engine_v3/test_resolver.py` (rewrite budget cases)
 
 - [ ] **Step 1: Rewrite `resolver.py` — `ResolverQuestion`, `resolve_next`; delete budget pieces**
 
@@ -207,7 +210,7 @@ Update any other test that constructs `ResolverQuestion(...)` to the 3-field sha
 
 - [ ] **Step 7: Run the engine suite**
 
-Run: `docker compose exec nexus python -m pytest tests/interview_engine -m "not prompt_quality" -q`
+Run: `docker compose exec nexus python -m pytest tests/interview_engine_v3 -m "not prompt_quality" -q`
 Expected: PASS. (If `QuestionTier`/`QuestionRecord.tier` errors appear, proceed straight into Task A3 and run once after both — see A3 note — then commit.)
 
 - [ ] **Step 8: Commit**
@@ -247,7 +250,7 @@ Search the whole prompt for `budget` / `winding` and remove any remaining mentio
 
 - [ ] **Step 3: Run the engine suite**
 
-Run: `docker compose exec nexus python -m pytest tests/interview_engine -m "not prompt_quality" -q`
+Run: `docker compose exec nexus python -m pytest tests/interview_engine_v3 -m "not prompt_quality" -q`
 Expected: PASS.
 
 - [ ] **Step 4: Commit**
@@ -272,7 +275,7 @@ These are dead once the resolver is positional (`tier` was always `core`).
 - Modify: `app/modules/interview_engine/contracts.py` (`BankQuestionIndex`)
 - Modify: `app/modules/interview_engine/driver.py` (`finalize`)
 - Modify: `app/modules/reporting/` (any `QuestionRecord.tier` reader)
-- Test: `tests/interview_engine/test_notes.py`, `tests/reporting/` (drop tier assertions)
+- Test: `tests/interview_engine_v3/test_notes.py`, `tests/reporting/` (drop tier assertions)
 
 > NOTE: If your runner could not stay green at A1 Step 7 because of `QuestionTier`, do A1 and A3 as one commit.
 
@@ -300,7 +303,7 @@ In `contracts.py` `BankQuestionIndex` delete the `tier: str` field. In `input_bu
 
 Run:
 ```bash
-docker compose exec nexus python -m pytest tests/interview_engine tests/reporting -m "not prompt_quality" -q
+docker compose exec nexus python -m pytest tests/interview_engine_v3 tests/reporting -m "not prompt_quality" -q
 ```
 Expected: PASS.
 
@@ -328,7 +331,7 @@ DB columns stay (the reporting actor reads them off `StageQuestion`); only the e
 - Modify: `app/modules/interview_runtime/service.py` (`build_session_config`)
 - Modify: `app/modules/interview_engine/contracts.py` (`BankQuestionIndex.is_mandatory`)
 - Modify: `app/modules/interview_engine/brain/input_builder.py`
-- Test: `tests/interview_runtime/`, `tests/interview_engine/` (drop the dropped fields from fixtures)
+- Test: `tests/interview_runtime/`, `tests/interview_engine_v3/` (drop the dropped fields from fixtures)
 
 - [ ] **Step 1: `QuestionConfig` — delete `estimated_minutes` + `is_mandatory`**
 
@@ -344,13 +347,13 @@ In `contracts.py` delete `is_mandatory: bool` from `BankQuestionIndex`; in `inpu
 
 - [ ] **Step 4: Fix fixtures/tests**
 
-`grep -rn "estimated_minutes\|is_mandatory" tests/interview_runtime tests/interview_engine`. Remove those kwargs from any `QuestionConfig(...)` / `BankQuestionIndex(...)` construction in fixtures and tests. (Leave `StageQuestion` fixtures and `tests/reporting` alone — the DB columns stay.)
+`grep -rn "estimated_minutes\|is_mandatory" tests/interview_runtime tests/interview_engine_v3`. Remove those kwargs from any `QuestionConfig(...)` / `BankQuestionIndex(...)` construction in fixtures and tests. (Leave `StageQuestion` fixtures and `tests/reporting` alone — the DB columns stay.)
 
 - [ ] **Step 5: Run the suite**
 
 Run:
 ```bash
-docker compose exec nexus python -m pytest tests/interview_engine tests/interview_runtime -m "not prompt_quality" -q
+docker compose exec nexus python -m pytest tests/interview_engine_v3 tests/interview_runtime -m "not prompt_quality" -q
 ```
 Expected: PASS.
 
@@ -371,7 +374,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ## Task A5: Phase-1A guard test + checkpoint
 
 **Files:**
-- Create: `tests/interview_engine/test_no_clock_symbols.py`
+- Create: `tests/interview_engine_v3/test_no_clock_symbols.py`
 
 - [ ] **Step 1: Write the guard test**
 
@@ -411,7 +414,7 @@ def test_no_clock_or_tier_symbols_remain():
 
 - [ ] **Step 2: Run it**
 
-Run: `docker compose exec nexus python -m pytest tests/interview_engine/test_no_clock_symbols.py -q`
+Run: `docker compose exec nexus python -m pytest tests/interview_engine_v3/test_no_clock_symbols.py -q`
 Expected: PASS. If it fails, fix the named file (a missed reference) and re-run.
 
 - [ ] **Step 3: Manual talk-test (checkpoint)**
@@ -425,7 +428,7 @@ docker compose up -d --force-recreate nexus-engine
 - [ ] **Step 4: Commit**
 
 ```bash
-git add tests/interview_engine/test_no_clock_symbols.py
+git add tests/interview_engine_v3/test_no_clock_symbols.py
 git commit -m "test(interview_engine): guard against clock/tier symbol regressions
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
@@ -439,7 +442,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `app/modules/interview_engine/brain/policy.py`
-- Test: `tests/interview_engine/test_policy.py`
+- Test: `tests/interview_engine_v3/test_policy.py`
 
 - [ ] **Step 1: `policy.py` — delete Gate 1**
 
@@ -451,7 +454,7 @@ Delete the knockout test classes/functions (`TestKnockoutTracker`, `TestGateKnoc
 
 - [ ] **Step 3: Run policy tests** (the engine suite will still be red until B2 — that's expected; run the policy file alone here)
 
-Run: `docker compose exec nexus python -m pytest tests/interview_engine/test_policy.py -q`
+Run: `docker compose exec nexus python -m pytest tests/interview_engine_v3/test_policy.py -q`
 Expected: PASS.
 
 > Do NOT commit yet — `brain/service.py` still imports the deleted gate. Proceed to B2 and commit B1+B2 together.
@@ -463,7 +466,7 @@ Expected: PASS.
 **Files:**
 - Modify: `app/modules/interview_engine/brain/service.py`
 - Modify: `app/modules/interview_engine/driver.py` (finalize — moved here to keep the suite green: the driver calls the method this task deletes)
-- Test: `tests/interview_engine/test_brain_service.py`, `tests/interview_engine/test_driver.py` (+ any `test_service_probe_dimension.py`)
+- Test: `tests/interview_engine_v3/test_brain_service.py`, `tests/interview_engine_v3/test_driver.py` (+ any `test_service_probe_dimension.py`)
 
 - [ ] **Step 1: Delete imports + constant**
 
@@ -495,15 +498,15 @@ In `test_brain_service.py` delete every knockout test (reflect-back, knockout-co
 
 - [ ] **Step 8: Run the engine suite**
 
-Run: `docker compose exec nexus python -m pytest tests/interview_engine -m "not prompt_quality" -q`
+Run: `docker compose exec nexus python -m pytest tests/interview_engine_v3 -m "not prompt_quality" -q`
 Expected: PASS (policy + service + driver knockout removals are now mutually consistent).
 
 - [ ] **Step 9: Commit B1 + B2**
 
 ```bash
 git add app/modules/interview_engine/brain app/modules/interview_engine/driver.py \
-        tests/interview_engine/test_policy.py tests/interview_engine/test_brain_service.py \
-        tests/interview_engine/test_driver.py
+        tests/interview_engine_v3/test_policy.py tests/interview_engine_v3/test_brain_service.py \
+        tests/interview_engine_v3/test_driver.py
 git commit -m "refactor(interview_engine): delete verified-knockout gate, tracker, and driver finalize
 
 Remove gate_knockout/KnockoutTracker/KnockoutStep (policy), all ControlPlane knockout
@@ -521,7 +524,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 **Files:**
 - Modify: `app/modules/interview_engine/contracts.py`
 - Modify: `app/modules/interview_engine/brain/input_builder.py`
-- Test: `tests/interview_engine/` (input_builder + contracts fixtures)
+- Test: `tests/interview_engine_v3/` (input_builder + contracts fixtures)
 
 - [ ] **Step 1: `contracts.py` — delete brain knockout fields**
 
@@ -533,11 +536,11 @@ Delete `CoverageProjection.knockout_pending` (~260-286). In `build_turn_input` (
 
 - [ ] **Step 3: Fix tests**
 
-`grep -rn "knockout_pending\|knockout_reflected\|knockout_confirmed" tests/interview_engine`. Delete the `test_knockout_pending_*` cases in the input-builder tests and remove those kwargs from any `BrainTurnInput(...)`/`BrainTurnOutput(...)` construction.
+`grep -rn "knockout_pending\|knockout_reflected\|knockout_confirmed" tests/interview_engine_v3`. Delete the `test_knockout_pending_*` cases in the input-builder tests and remove those kwargs from any `BrainTurnInput(...)`/`BrainTurnOutput(...)` construction.
 
 - [ ] **Step 4: Run the engine suite**
 
-Run: `docker compose exec nexus python -m pytest tests/interview_engine -m "not prompt_quality" -q`
+Run: `docker compose exec nexus python -m pytest tests/interview_engine_v3 -m "not prompt_quality" -q`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -564,7 +567,7 @@ Delete the entire "KNOCKOUT (only when `knockout_pending` lists the signal)" sec
 
 - [ ] **Step 2: Run the engine suite**
 
-Run: `docker compose exec nexus python -m pytest tests/interview_engine -m "not prompt_quality" -q`
+Run: `docker compose exec nexus python -m pytest tests/interview_engine_v3 -m "not prompt_quality" -q`
 Expected: PASS (the prompt change doesn't affect mocked-LLM tests; this confirms nothing else broke).
 
 - [ ] **Step 3: Commit**
@@ -584,7 +587,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - Modify: `app/modules/interview_runtime/evidence.py`
 - Modify: `app/modules/interview_engine/driver.py` (drop the transient `knockout=None` arg)
 - Modify: `app/modules/interview_engine/notes.py` (if `NoteLog.to_session_evidence` declares a `knockout` param)
-- Test: `tests/interview_engine/test_notes.py` + `tests/interview_runtime/`
+- Test: `tests/interview_engine_v3/test_notes.py` + `tests/interview_runtime/`
 
 - [ ] **Step 1: Delete `KnockoutOutcome`, `SessionEvidence.knockout`, `CompletionReason.knockout_close`**
 
@@ -606,7 +609,7 @@ Remove `knockout=`/`KnockoutOutcome`/`knockout_close` from `to_session_evidence(
 
 Run:
 ```bash
-docker compose exec nexus python -m pytest tests/interview_engine tests/interview_runtime -m "not prompt_quality" -q
+docker compose exec nexus python -m pytest tests/interview_engine_v3 tests/interview_runtime -m "not prompt_quality" -q
 ```
 Expected: PASS.
 
@@ -657,7 +660,7 @@ git rm tests/test_session_result_knockout_failures.py \
 
 Run:
 ```bash
-docker compose exec nexus python -m pytest tests/interview_runtime tests/interview_engine -m "not prompt_quality" -q
+docker compose exec nexus python -m pytest tests/interview_runtime tests/interview_engine_v3 -m "not prompt_quality" -q
 ```
 Expected: PASS.
 
@@ -859,7 +862,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ## Task B10: Phase-1B guard test + final verification
 
 **Files:**
-- Create: `tests/interview_engine/test_no_knockout_symbols.py`
+- Create: `tests/interview_engine_v3/test_no_knockout_symbols.py`
 
 - [ ] **Step 1: Write the guard test**
 
@@ -908,7 +911,7 @@ def test_signal_knockout_data_attribute_is_kept():
 
 - [ ] **Step 2: Run it**
 
-Run: `docker compose exec nexus python -m pytest tests/interview_engine/test_no_knockout_symbols.py -q`
+Run: `docker compose exec nexus python -m pytest tests/interview_engine_v3/test_no_knockout_symbols.py -q`
 Expected: PASS. Fix any named offender and re-run.
 
 - [ ] **Step 3: Full suite + prompt grep**
@@ -930,7 +933,7 @@ Talk-test a short screen: confirm no knockout language, a clean full-coverage cl
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/interview_engine/test_no_knockout_symbols.py
+git add tests/interview_engine_v3/test_no_knockout_symbols.py
 git commit -m "test(interview_engine): guard against knockout-behavior symbol regressions
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
