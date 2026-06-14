@@ -15,7 +15,7 @@ import { TheaterStage } from './TheaterStage'
 import { TheaterTopBar } from './TheaterTopBar'
 import { ThisMomentPanel } from './ThisMomentPanel'
 import { VideoControls } from './VideoControls'
-import { buildFlagMarkers, buildQuestionMarkers } from './timeline-model'
+import { buildFlagMarkers, buildQuestionMarkers, pickPosterUrl } from './timeline-model'
 import { useTheaterState } from './useTheaterState'
 import { useVideoController } from './useVideoController'
 import './theater.css'
@@ -80,6 +80,12 @@ export function ReviewTheater({
 
   const markers = useMemo(
     () => buildQuestionMarkers(report.questions, durationMs),
+    [report.questions, durationMs],
+  )
+  // The opening frames are usually blurry; poster the <video> with a real
+  // mid-interview question frame instead (null → no poster attribute).
+  const posterUrl = useMemo(
+    () => pickPosterUrl(report.questions, durationMs),
     [report.questions, durationMs],
   )
   // all flags are clickable ticks; only the top-N carry thumbnails from the API
@@ -206,6 +212,7 @@ export function ReviewTheater({
           <TheaterStage
             videoRef={setVideoEl}
             signedUrl={signedUrl}
+            poster={posterUrl}
             loading={recPending}
             playing={ctrl.playing}
             onTogglePlay={ctrl.togglePlay}

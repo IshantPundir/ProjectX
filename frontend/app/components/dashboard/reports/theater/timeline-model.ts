@@ -91,6 +91,26 @@ export function activeQuestionId(markers: TimelineMarker[], currentMs: number): 
   return id
 }
 
+/**
+ * The thumbnail URL of the question whose `asked_at_ms` sits nearest the
+ * recording midpoint — used as the <video> poster so the still frame is a real
+ * mid-interview moment instead of the (typically blurry) opening frame.
+ *
+ * Only questions with BOTH an `asked_at_ms` and a `thumbnail_url` qualify.
+ * Returns null when none qualify or the duration is missing/zero.
+ */
+export function pickPosterUrl(questions: QuestionOut[], durationMs: number): string | null {
+  if (!durationMs || durationMs <= 0 || !Number.isFinite(durationMs)) return null
+  const midMs = durationMs / 2
+  let best: { url: string; dist: number } | null = null
+  for (const q of questions) {
+    if (q.asked_at_ms == null || q.thumbnail_url == null) continue
+    const dist = Math.abs(q.asked_at_ms - midMs)
+    if (best === null || dist < best.dist) best = { url: q.thumbnail_url, dist }
+  }
+  return best?.url ?? null
+}
+
 /** Index of the last transcript segment whose t_ms <= currentMs (-1 before the first). */
 export function activeSegmentIndex(
   segments: RecordingTranscriptSegment[],

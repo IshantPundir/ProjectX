@@ -7,6 +7,7 @@ import type { Ref } from 'react'
 export function TheaterStage({
   videoRef,
   signedUrl,
+  poster,
   loading,
   playing,
   onTogglePlay,
@@ -14,6 +15,8 @@ export function TheaterStage({
   // callback ref (or ref object) — owner tracks the live node to re-bind effects
   videoRef: Ref<HTMLVideoElement>
   signedUrl: string | null
+  // a mid-interview frame for the <video> poster; omitted when none qualifies
+  poster?: string | null
   loading: boolean
   playing: boolean
   onTogglePlay: () => void
@@ -40,6 +43,7 @@ export function TheaterStage({
       <video
         ref={videoRef}
         src={signedUrl}
+        {...(poster ? { poster } : {})}
         playsInline
         aria-label="Interview session recording"
         onClick={onTogglePlay}
