@@ -1,7 +1,7 @@
 """
 Brain service — D3 task.
 
-ControlPlane.decide(turn_input, *, asked_ids, time_remaining_s) → BrainDecision
+ControlPlane.decide(turn_input, *, asked_ids) → BrainDecision
 
 Responsibilities:
   1. Build the full LLM messages list (prefix + suffix) via build_messages.
@@ -44,9 +44,7 @@ from app.modules.interview_engine.brain.policy import (
     scrub_composed_say,
 )
 from app.modules.interview_engine.brain.resolver import (
-    BudgetConfig,
     ResolverQuestion,
-    budget_config_from_ai_config,
     resolve_next,
 )
 from app.modules.interview_engine.contracts import (
@@ -60,7 +58,6 @@ from app.modules.interview_engine.contracts import (
     DirectiveTone,
     SignalSpec,
 )
-from app.modules.interview_runtime.evidence import CoverageState
 
 if TYPE_CHECKING:
     from app.modules.interview_runtime.schemas import SessionConfig
@@ -114,8 +111,6 @@ class ControlPlane:
         Compact bank view (ResolverQuestion list) — used to resolve next question.
     all_specs:
         Full SignalSpec list — used by the knockout gate + projection helpers.
-    budget_cfg:
-        Time-budget config for resolve_next.
     knockout_tracker:
         Per-session KnockoutTracker; defaults to a fresh one if None.
     llm_call:
@@ -130,7 +125,6 @@ class ControlPlane:
         projection: CoverageProjection,
         resolver_questions: list[ResolverQuestion],
         all_specs: list[SignalSpec],
-        budget_cfg: BudgetConfig,
         knockout_tracker: KnockoutTracker | None = None,
         llm_call: Callable[[list[dict]], Awaitable[BrainTurnOutput]] | None = None,
     ) -> None:
@@ -139,7 +133,6 @@ class ControlPlane:
         self._projection = projection
         self._resolver_questions = resolver_questions
         self._all_specs = all_specs
-        self._budget_cfg = budget_cfg
         self._knockout_tracker = knockout_tracker or KnockoutTracker()
         # Knockout signals for which a reflect-back confirm has already been given
         # to the candidate this session — a knockout close is only honored after
@@ -164,7 +157,6 @@ class ControlPlane:
         turn_input: BrainTurnInput,
         *,
         asked_ids: set[str],
-        time_remaining_s: float,
     ) -> BrainDecision:
         """One full brain turn: LLM call → projection update → Directive derivation."""
 
@@ -201,7 +193,6 @@ class ControlPlane:
             output=output,
             turn_input=turn_input,
             asked_ids=asked_ids,
-            time_remaining_s=time_remaining_s,
         )
 
         # When this turn is a probe, record which dimension was served (coerced to a
@@ -253,7 +244,6 @@ class ControlPlane:
         output: BrainTurnOutput,
         turn_input: BrainTurnInput,
         asked_ids: set[str],
-        time_remaining_s: float,
     ) -> tuple[Directive, str | None]:
         """Map BrainTurnOutput → (Directive, next_question_id) applying all policy gates.
 
@@ -262,13 +252,6 @@ class ControlPlane:
             resolver-selected question id when act==ask; None for all other acts and
             for a close produced when the resolver found no remaining question.
         """
-
-        # Covered signals (for resolver)
-        covered_signals: set[str] = {
-            sr.signal
-            for sr in self._projection.signal_reads()
-            if sr.coverage == CoverageState.sufficient
-        }
 
         # ── Candidate-initiated end — always honored ─────────────────────────
         # A candidate may end the screen at ANY time. The knockout-verification
@@ -357,8 +340,6 @@ class ControlPlane:
             output=output,
             turn_input=turn_input,
             asked_ids=asked_ids,
-            covered_signals=covered_signals,
-            time_remaining_s=time_remaining_s,
         )
 
     def _resolve_move(
@@ -368,8 +349,6 @@ class ControlPlane:
         output: BrainTurnOutput,
         turn_input: BrainTurnInput,
         asked_ids: set[str],
-        covered_signals: set[str],
-        time_remaining_s: float,
     ) -> tuple[Directive, str | None]:
         """Resolve a BrainMove (gate-allowed) → (Directive, next_question_id).
 
@@ -383,8 +362,6 @@ class ControlPlane:
                 return self._resolve_ask(
                     output=output,
                     asked_ids=asked_ids,
-                    covered_signals=covered_signals,
-                    time_remaining_s=time_remaining_s,
                 )
 
             case BrainMove.probe:
@@ -392,8 +369,6 @@ class ControlPlane:
                     output=output,
                     turn_input=turn_input,
                     asked_ids=asked_ids,
-                    covered_signals=covered_signals,
-                    time_remaining_s=time_remaining_s,
                 )
 
             case (
@@ -447,8 +422,6 @@ class ControlPlane:
         *,
         output: BrainTurnOutput,
         asked_ids: set[str],
-        covered_signals: set[str],
-        time_remaining_s: float,
     ) -> tuple[Directive, str | None]:
         """Resolve an `ask` move: deterministic resolver → (bank-text Directive, next_question_id).
 
@@ -458,9 +431,6 @@ class ControlPlane:
         nxt = resolve_next(
             questions=self._resolver_questions,
             asked_ids=asked_ids,
-            covered_signals=covered_signals,
-            time_remaining_s=time_remaining_s,
-            cfg=self._budget_cfg,
             preferred_next_signal=output.preferred_next_signal,
         )
         if nxt is None:
@@ -495,8 +465,6 @@ class ControlPlane:
         output: BrainTurnOutput,
         turn_input: BrainTurnInput,
         asked_ids: set[str],
-        covered_signals: set[str],
-        time_remaining_s: float,
     ) -> tuple[Directive, str | None]:
         """Resolve a `probe` move. The dimension gate decides probe-vs-advance.
 
@@ -516,7 +484,6 @@ class ControlPlane:
             # Cap reached or all dimensions fired → advance.
             return self._resolve_ask(
                 output=output, asked_ids=asked_ids,
-                covered_signals=covered_signals, time_remaining_s=time_remaining_s,
             )
 
         composed = scrub_composed_say(output.composed_say, turn_input.active_question)
@@ -639,7 +606,7 @@ def build_control_plane(
 
     Reads the brain system prompt from prompts/v4/engine/brain.system.txt
     (version from ai_config.engine_brain_prompt_version). Builds session context,
-    resolver questions, all_specs, budget_cfg, and a fresh KnockoutTracker.
+    resolver questions, all_specs, and a fresh KnockoutTracker.
 
     Used by the engine loop (F1) at session start. Tests should construct
     ControlPlane directly with small fixtures.
@@ -654,12 +621,7 @@ def build_control_plane(
     # Build the stable session context
     session_context = build_session_context(config)
 
-    # Build resolver questions from the bank
-    # Weight defaults from signal_metadata; fallback to 1 when not found.
-    signal_weight: dict[str, int] = {}
-    for m in config.signal_metadata:
-        signal_weight[m.value] = m.weight
-
+    # Build resolver questions from the bank (purely positional selection).
     resolver_questions: list[ResolverQuestion] = []
     for q in config.stage.questions:
         primary = q.primary_signal or (q.signal_values[0] if q.signal_values else "")
@@ -667,19 +629,12 @@ def build_control_plane(
             ResolverQuestion(
                 question_id=q.id,
                 primary_signal=primary,
-                tier="core",
-                is_mandatory=q.is_mandatory,
                 position=q.position,
-                weight=signal_weight.get(primary, 1),
-                estimated_minutes=q.estimated_minutes,
             )
         )
 
     # All signal specs (from session_context.signals — already built)
     all_specs: list[SignalSpec] = session_context.signals
-
-    # Budget config from AIConfig
-    budget_cfg = budget_config_from_ai_config()
 
     return ControlPlane(
         session_context=session_context,
@@ -687,7 +642,6 @@ def build_control_plane(
         projection=projection or CoverageProjection(),
         resolver_questions=resolver_questions,
         all_specs=all_specs,
-        budget_cfg=budget_cfg,
         knockout_tracker=KnockoutTracker(),
         llm_call=None,  # use _default_brain_llm in production
     )

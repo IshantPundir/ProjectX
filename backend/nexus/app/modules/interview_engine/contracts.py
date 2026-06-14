@@ -12,7 +12,7 @@ Module layout:
   1. Shared vocabulary imports from evidence (single source).
   2. Brain output (LEAN): BrainMove, SignalObservation, BrainTurnOutput.
   3. Brain input (cache-split: STABLE PREFIX → DYNAMIC SUFFIX):
-     BudgetPhase, SignalSpec, BankQuestionIndex, BrainSessionContext,
+     SignalSpec, BankQuestionIndex, BrainSessionContext,
      ActiveQuestionRubric, SignalRead, WindowTurn, BrainTurnInput.
   4. Directive + mouth: DirectiveAct, DirectiveTone, Directive, MouthTurnInput, BridgeRequest.
   5. Brain service result: BrainDecision (loop contract; after Directive + SignalObservation).
@@ -153,12 +153,6 @@ class BrainTurnOutput(BaseModel):
 # 2. BRAIN INPUT — STABLE PREFIX (built once per session, byte-identical → cached)
 # ============================================================================
 
-class BudgetPhase(StrEnum):
-    """The ONLY time signal the brain sees (the time arithmetic lives in the engine resolver)."""
-    on_track = "on_track"          # plenty of budget — probe normally when warranted
-    winding_down = "winding_down"  # little left — at most one quick elicitation, then let it advance
-
-
 class SignalSpec(BaseModel):
     """One JD signal the screen collects. The FULL set is in the prefix so the brain can credit an
     answer to ANY signal (cross-question / signal-greedy crediting), even one with no dedicated Q."""
@@ -179,7 +173,6 @@ class BankQuestionIndex(BaseModel):
     kind: str                   # experience_check | behavioral | technical_scenario | compliance_binary
     difficulty: str             # easy | medium | hard
     is_mandatory: bool
-    tier: str                   # core | coverage
     text: str
     follow_ups: list[FollowUpDimension]   # the pre-written probe dimensions
 
@@ -286,7 +279,6 @@ class BrainTurnInput(BaseModel):
     )
 
     # --- steering signals (compact) ---
-    budget_phase: BudgetPhase
     uncovered_signals: list[str] = Field(
         default_factory=list,
         description="High-value signals still uncovered (weight-ranked) — focuses the brain's "

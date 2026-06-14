@@ -24,7 +24,6 @@ from app.modules.interview_runtime.evidence import (
     Provenance,
     QuestionOutcome,
     QuestionRecord,
-    QuestionTier,
     SignalEvidence,
     SignalPriority,
     SignalType,
@@ -61,7 +60,6 @@ def _question(
     return QuestionRecord(
         question_id=question_id,
         primary_signal=primary_signal,
-        tier=QuestionTier.core,
         outcome=outcome,
         closure=closure,
         probes_available=2,

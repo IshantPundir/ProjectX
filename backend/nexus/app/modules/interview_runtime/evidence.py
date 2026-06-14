@@ -83,11 +83,6 @@ class CompletionReason(StrEnum):
     error = "error"
 
 
-class QuestionTier(StrEnum):
-    core = "core"          # time-budgeted core set — ALWAYS attempted (never skipped for coverage)
-    coverage = "coverage"  # overflow pool — reached only if time/threads allowed
-
-
 class QuestionOutcome(StrEnum):
     asked = "asked"
     not_reached = "not_reached"  # ran out of time/budget before reaching it (the ONLY reason a Q is un-asked)
@@ -183,7 +178,6 @@ class QuestionRecord(BaseModel):
     for coverage — a dedicated question always runs if reached)."""
     question_id: str
     primary_signal: str
-    tier: QuestionTier
     outcome: QuestionOutcome
     closure: ThreadClosure | None = Field(
         default=None,
@@ -233,8 +227,6 @@ class SessionMeta(BaseModel):
     time_budget_s: float = Field(ge=0, description="The stage's planned time budget.")
     completion: CompletionReason
     questions_asked: int = Field(ge=0)
-    questions_core_total: int = Field(ge=0)
-    questions_overflow_asked: int = Field(ge=0)
 
 
 class SessionEvidence(BaseModel):

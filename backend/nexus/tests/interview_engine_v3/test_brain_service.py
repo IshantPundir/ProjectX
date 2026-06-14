@@ -27,7 +27,6 @@ from app.modules.interview_engine.brain.policy import (
     KnockoutTracker,
 )
 from app.modules.interview_engine.brain.resolver import (
-    BudgetConfig,
     ResolverQuestion,
 )
 from app.modules.interview_engine.brain.service import ControlPlane
@@ -37,7 +36,6 @@ from app.modules.interview_engine.contracts import (
     BrainSessionContext,
     BrainTurnInput,
     BrainTurnOutput,
-    BudgetPhase,
     DirectiveAct,
     SignalObservation,
     SignalSpec,
@@ -190,7 +188,6 @@ def _make_turn_input(
         thread_turn_count=1,
         evidence_so_far=[],
         transcript_window=[],
-        budget_phase=BudgetPhase.on_track,
         uncovered_signals=["distributed_systems", "incident_response"],
         knockout_pending=knockout_pending or [],
     )
@@ -201,20 +198,12 @@ def _make_resolver_questions() -> list[ResolverQuestion]:
         ResolverQuestion(
             question_id="q-001",
             primary_signal="distributed_systems",
-            tier="core",
-            is_mandatory=True,
             position=1,
-            weight=3,
-            estimated_minutes=5.0,
         ),
         ResolverQuestion(
             question_id="q-002",
             primary_signal="incident_response",
-            tier="core",
-            is_mandatory=False,
             position=2,
-            weight=2,
-            estimated_minutes=5.0,
         ),
     ]
 
@@ -242,7 +231,6 @@ def _make_control_plane(
         projection=projection or CoverageProjection(),
         resolver_questions=resolver_questions or _make_resolver_questions(),
         all_specs=all_specs or _make_all_specs(),
-        budget_cfg=BudgetConfig(close_reserve_s=45.0, winding_down_s=90.0),
         knockout_tracker=knockout_tracker,
         llm_call=llm_call,
     )
@@ -297,7 +285,7 @@ async def test_probe_falls_back_to_verbatim_followup_when_not_composed():
     cp = _make_control_plane(llm_call=llm)
     turn = _make_turn_input()
 
-    decision = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    decision = await cp.decide(turn, asked_ids={"q-001"})
 
     assert decision.directive.act == DirectiveAct.probe
     assert decision.directive.say == _FOLLOW_UP_SEED_0
@@ -323,7 +311,7 @@ async def test_probe_uses_composed_targeted_text_when_provided():
     cp = _make_control_plane(llm_call=llm)
     turn = _make_turn_input()
 
-    decision = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    decision = await cp.decide(turn, asked_ids={"q-001"})
 
     assert decision.directive.act == DirectiveAct.probe
     assert decision.directive.say == composed  # composed text, NOT seed_probe
@@ -352,7 +340,7 @@ async def test_composed_probe_is_leak_scrubbed():
     cp = _make_control_plane(llm_call=llm)
     turn = _make_turn_input()
 
-    decision = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    decision = await cp.decide(turn, asked_ids={"q-001"})
 
     assert decision.directive.act == DirectiveAct.probe
     assert decision.directive.say == SAFE_FALLBACK
@@ -379,7 +367,7 @@ async def test_ask_returns_resolver_next_question_text():
     # q-001 is already asked → resolver should pick q-002
     turn = _make_turn_input()
 
-    decision = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    decision = await cp.decide(turn, asked_ids={"q-001"})
 
     assert decision.directive.act == DirectiveAct.ask
     # The say should be the bank text for q-002
@@ -413,7 +401,7 @@ async def test_coverage_projection_updated():
     cp = _make_control_plane(llm_call=llm, projection=projection)
     turn = _make_turn_input()
 
-    await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    await cp.decide(turn, asked_ids={"q-001"})
 
     reads = projection.signal_reads()
     assert len(reads) == 1
@@ -445,7 +433,7 @@ async def test_clarify_with_leaked_rubric_gets_scrubbed():
     cp = _make_control_plane(llm_call=llm)
     turn = _make_turn_input()
 
-    decision = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    decision = await cp.decide(turn, asked_ids={"q-001"})
 
     assert decision.directive.act == DirectiveAct.clarify
     # The composed_say contains the rubric text — must be scrubbed
@@ -484,7 +472,7 @@ async def test_knockout_blocks_premature_close():
     # Inject knockout_pending directly in the turn input
     turn = _make_turn_input(knockout_pending=["distributed_systems"])
 
-    decision = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    decision = await cp.decide(turn, asked_ids={"q-001"})
 
     # The premature close must be blocked
     assert decision.directive.is_terminal is False
@@ -520,7 +508,7 @@ async def test_candidate_end_request_bypasses_knockout_gate():
     cp = _make_control_plane(llm_call=llm, all_specs=all_specs)
     turn = _make_turn_input(knockout_pending=["distributed_systems"])
 
-    decision = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    decision = await cp.decide(turn, asked_ids={"q-001"})
 
     # Candidate-initiated end is honored despite the pending knockout.
     assert decision.directive.is_terminal is True
@@ -548,7 +536,6 @@ def _make_knockout_control_plane(llm_call) -> ControlPlane:
         projection=CoverageProjection(),
         resolver_questions=_make_resolver_questions(),
         all_specs=all_specs,
-        budget_cfg=BudgetConfig(close_reserve_s=45.0, winding_down_s=90.0),
         knockout_tracker=None,
         llm_call=llm_call,
     )
@@ -574,7 +561,7 @@ async def test_knockout_close_forces_reflect_back_before_recording():
     cp = _make_knockout_control_plane(_fake_llm(canned))
     turn = _make_turn_input(knockout_pending=["distributed_systems"])
 
-    decision = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    decision = await cp.decide(turn, asked_ids={"q-001"})
 
     # Reflect-back forced; the screen is NOT ended and nothing is recorded yet.
     assert decision.directive.is_terminal is False
@@ -609,12 +596,12 @@ async def test_brain_confirmed_knockout_closes_after_reflect_back():
     turn = _make_turn_input(knockout_pending=["distributed_systems"])
 
     # Turn 1: the reflect-back (registers the reflect; non-terminal).
-    d1 = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    d1 = await cp.decide(turn, asked_ids={"q-001"})
     assert d1.directive.is_terminal is False
     assert cp.confirmed_knockout_signals() == []
 
     # Turn 2: the close is now honored and the knockout recorded.
-    d2 = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    d2 = await cp.decide(turn, asked_ids={"q-001"})
     assert d2.directive.is_terminal is True
     assert d2.directive.act == DirectiveAct.close
     assert cp.confirmed_knockout_signals() == ["distributed_systems"]
@@ -653,8 +640,8 @@ async def test_knockout_reflected_hint_injected_on_turn_after_reflect():
     cp = _make_knockout_control_plane(_capturing)
     turn = _make_turn_input(knockout_pending=["distributed_systems"])
 
-    await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)  # reflect
-    await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)  # next turn
+    await cp.decide(turn, asked_ids={"q-001"})  # reflect
+    await cp.decide(turn, asked_ids={"q-001"})  # next turn
 
     # Turn 1 had no reflected hint; turn 2 carries it.
     assert "KNOCKOUT ALREADY REFLECTED" not in str(captured[0])
@@ -698,14 +685,13 @@ async def test_brain_knockout_confirmed_without_pending_signal_does_not_fabricat
         projection=CoverageProjection(),
         resolver_questions=_make_resolver_questions(),
         all_specs=all_specs,
-        budget_cfg=BudgetConfig(close_reserve_s=45.0, winding_down_s=90.0),
         knockout_tracker=None,
         llm_call=llm,
     )
     # No knockout flagged absent this turn.
     turn = _make_turn_input(knockout_pending=[])
 
-    decision = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    decision = await cp.decide(turn, asked_ids={"q-001"})
 
     # Close proceeds, but NO knockout is fabricated/recorded.
     assert decision.directive.is_terminal is True
@@ -727,7 +713,7 @@ async def test_hold_returns_nonterminal_directive():
     cp = _make_control_plane(llm_call=llm)
     turn = _make_turn_input()
 
-    decision = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    decision = await cp.decide(turn, asked_ids={"q-001"})
 
     assert decision.directive.act == DirectiveAct.hold
     assert decision.directive.is_terminal is False
@@ -749,7 +735,7 @@ async def test_confirm_returns_nonterminal_directive():
     cp = _make_control_plane(llm_call=llm)
     turn = _make_turn_input()
 
-    decision = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    decision = await cp.decide(turn, asked_ids={"q-001"})
 
     assert decision.directive.act == DirectiveAct.confirm
     assert decision.directive.is_terminal is False
@@ -777,7 +763,7 @@ async def test_probe_exhausted_falls_back_to_ask():
     cp = _make_control_plane(llm_call=llm)
     turn = _make_turn_input(active_rubric=exhausted_rubric)
 
-    decision = await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    decision = await cp.decide(turn, asked_ids={"q-001"})
 
     # Probe exhausted → falls back to ask
     assert decision.directive.act == DirectiveAct.ask
@@ -809,7 +795,7 @@ async def test_close_say_none_and_terminal():
     # No knockout_pending in turn input
     turn = _make_turn_input(knockout_pending=[])
 
-    decision = await cp.decide(turn, asked_ids={"q-001", "q-002"}, time_remaining_s=600.0)
+    decision = await cp.decide(turn, asked_ids={"q-001", "q-002"})
 
     assert decision.directive.act == DirectiveAct.close
     assert decision.directive.say is None
@@ -836,7 +822,7 @@ async def test_llm_mocked_and_called_with_messages():
     cp = _make_control_plane(llm_call=llm)
     turn = _make_turn_input()
 
-    await cp.decide(turn, asked_ids={"q-001"}, time_remaining_s=600.0)
+    await cp.decide(turn, asked_ids={"q-001"})
 
     # Exactly one call was made
     assert len(llm.calls) == 1
@@ -877,7 +863,6 @@ async def test_knockout_flow_advances_and_terminates(_make_control_plane_with_kn
     cp = ControlPlane(
         session_context=ctx, system_prompt="sys", projection=CoverageProjection(),
         resolver_questions=[], all_specs=ctx.signals,
-        budget_cfg=__import__("app.modules.interview_engine.brain.resolver", fromlist=["BudgetConfig"]).BudgetConfig(close_reserve_s=45, winding_down_s=90),
         llm_call=_close_llm,
     )
 
@@ -886,17 +871,15 @@ async def test_knockout_flow_advances_and_terminates(_make_control_plane_with_kn
                                   evaluation_hint="h", follow_ups=[])
 
     def _ti():
-        from app.modules.interview_engine.contracts import BudgetPhase
         return BrainTurnInput(turn_ref="t", active_question=rubric, on_the_floor="?",
                               candidate_utterance="no", thread_turn_count=1,
                               evidence_so_far=[], transcript_window=[],
-                              budget_phase=BudgetPhase.on_track,
                               uncovered_signals=[], knockout_pending=[ko_signal])
 
     # First three closes are BLOCKED + steered (non-terminal), advancing the tracker.
     acts = []
     for _ in range(3):
-        d = await cp.decide(_ti(), asked_ids=set(), time_remaining_s=600)
+        d = await cp.decide(_ti(), asked_ids=set())
         acts.append((d.directive.act.value, d.is_terminal))
     assert all(not term for _, term in acts), f"steps should be non-terminal: {acts}"
     assert all(a == "probe" for a, _ in acts), f"steps should steer via probe: {acts}"
@@ -905,5 +888,5 @@ async def test_knockout_flow_advances_and_terminates(_make_control_plane_with_kn
     assert cp.confirmed_knockout_signals() == [ko_signal]
 
     # The NEXT close is finally allowed through (terminal) — no infinite loop.
-    d4 = await cp.decide(_ti(), asked_ids=set(), time_remaining_s=600)
+    d4 = await cp.decide(_ti(), asked_ids=set())
     assert d4.directive.act.value == "close" and d4.is_terminal

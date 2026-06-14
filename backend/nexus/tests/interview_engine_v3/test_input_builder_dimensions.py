@@ -1,7 +1,6 @@
 from app.modules.interview_engine.brain.input_builder import (
     active_question_rubric, render_suffix, build_turn_input, CoverageProjection,
 )
-from app.modules.interview_engine.contracts import BudgetPhase
 from app.modules.interview_runtime.schemas import QuestionConfig, QuestionRubric
 
 
@@ -32,7 +31,7 @@ def test_render_suffix_shows_dimension_intent_listen_for():
     ti = build_turn_input(
         turn_ref="t1", active_question=r, on_the_floor="...", candidate_utterance="hi",
         thread_turn_count=1, projection=CoverageProjection(), all_specs=[],
-        transcript_window=[], budget_phase=BudgetPhase.on_track,
+        transcript_window=[],
     )
     content = render_suffix(ti)[0]["content"]
     assert "validate_impact" in content     # dimension slug

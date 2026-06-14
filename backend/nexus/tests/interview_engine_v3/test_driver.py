@@ -188,10 +188,10 @@ class _FakeBrain:
         self._call_count = 0
 
     async def decide(
-        self, turn_input: BrainTurnInput, *, asked_ids=None, time_remaining_s=0.0
+        self, turn_input: BrainTurnInput, *, asked_ids=None
     ) -> BrainDecision:
         # Matches ControlPlane.decide: the driver wraps the brain in _BrainAdapter,
-        # which supplies asked_ids + time_remaining_s on every call.
+        # which supplies asked_ids on every call.
         idx = self._call_count
         self._call_count += 1
         if idx < len(self._decisions):
@@ -427,7 +427,7 @@ async def test_floor_question_survives_a_non_question_turn() -> None:
         def __init__(self) -> None:
             self._n = 0
 
-        async def decide(self, turn_input, *, asked_ids=None, time_remaining_s=0.0):
+        async def decide(self, turn_input, *, asked_ids=None):
             seen_on_the_floor.append(turn_input.on_the_floor)
             self._n += 1
             if self._n == 1:
@@ -491,7 +491,7 @@ async def test_pure_backchannel_turn_is_dropped_without_running_brain() -> None:
     brain_calls = {"n": 0}
 
     class _CountingBrain:
-        async def decide(self, turn_input, *, asked_ids=None, time_remaining_s=0.0):
+        async def decide(self, turn_input, *, asked_ids=None):
             brain_calls["n"] += 1
             return BrainDecision(
                 directive=Directive(act=DirectiveAct.probe, say=_FOLLOW_UP_0,
@@ -528,7 +528,7 @@ async def test_floor_interrupted_flag_reaches_the_brain() -> None:
     seen: list[bool] = []
 
     class _CapturingBrain:
-        async def decide(self, turn_input, *, asked_ids=None, time_remaining_s=0.0):
+        async def decide(self, turn_input, *, asked_ids=None):
             seen.append(turn_input.floor_interrupted)
             return BrainDecision(
                 directive=Directive(act=DirectiveAct.hold, say="Take your time.",
@@ -579,7 +579,7 @@ async def test_stall_counter_flags_brain_after_repeated_non_answers() -> None:
     seen: list[bool] = []
 
     class _ClarifyBrain:  # never advances, never returns observations (pure dodge handling)
-        async def decide(self, turn_input, *, asked_ids=None, time_remaining_s=0.0):
+        async def decide(self, turn_input, *, asked_ids=None):
             seen.append(turn_input.stalled)
             return BrainDecision(
                 directive=Directive(act=DirectiveAct.clarify, say="What do you mean?",
@@ -626,7 +626,7 @@ async def test_stall_counter_resets_on_a_real_answer() -> None:
 
     class _ScriptBrain:
         def __init__(self): self._i = 0
-        async def decide(self, turn_input, *, asked_ids=None, time_remaining_s=0.0):
+        async def decide(self, turn_input, *, asked_ids=None):
             seen.append(turn_input.stalled)
             d = scripted[self._i]; self._i += 1
             return d
@@ -688,7 +688,6 @@ def test_render_suffix_floor_interrupted_note() -> None:
     from app.modules.interview_engine.contracts import (
         ActiveQuestionRubric,
         BrainTurnInput,
-        BudgetPhase,
     )
 
     def _ti(flag: bool) -> BrainTurnInput:
@@ -703,7 +702,6 @@ def test_render_suffix_floor_interrupted_note() -> None:
             ),
             on_the_floor="What is X?", floor_interrupted=flag,
             candidate_utterance="hi", thread_turn_count=1,
-            budget_phase=BudgetPhase.on_track,
         )
 
     assert "FLOOR INTERRUPTED" in render_suffix(_ti(True))[0]["content"]
@@ -716,7 +714,6 @@ def test_render_suffix_knockout_reflected_note() -> None:
     from app.modules.interview_engine.contracts import (
         ActiveQuestionRubric,
         BrainTurnInput,
-        BudgetPhase,
     )
 
     def _ti(reflected: list[str]) -> BrainTurnInput:
@@ -731,7 +728,6 @@ def test_render_suffix_knockout_reflected_note() -> None:
             ),
             on_the_floor="What is X?",
             candidate_utterance="hi", thread_turn_count=1,
-            budget_phase=BudgetPhase.on_track,
             knockout_pending=["workato"], knockout_reflected=reflected,
         )
 
@@ -764,26 +760,23 @@ async def test_mouth_adapter_combines_bridge_and_real_line():
 
 async def test_brain_adapter_supplies_resolver_state():
     """Regression: run_turn calls brain.decide(turn_input), but ControlPlane.decide
-    also needs asked_ids + time_remaining_s. _BrainAdapter must supply them.
-    (Live talk-test: TypeError: ControlPlane.decide() missing 'asked_ids' and
-    'time_remaining_s'.)
+    also needs asked_ids. _BrainAdapter must supply it.
+    (Live talk-test: TypeError: ControlPlane.decide() missing 'asked_ids'.)
     """
     from app.modules.interview_engine.driver import _BrainAdapter
 
     seen = {}
 
     class _FakeCP:
-        async def decide(self, turn_input, *, asked_ids, time_remaining_s):
+        async def decide(self, turn_input, *, asked_ids):
             seen["asked_ids"] = asked_ids
-            seen["time_remaining_s"] = time_remaining_s
             return "DECISION"
 
     adapter = _BrainAdapter(_FakeCP())
     adapter.asked_ids = {"q1"}
-    adapter.time_remaining_s = 123.0
     out = await adapter.decide(object())
     assert out == "DECISION"
-    assert seen == {"asked_ids": {"q1"}, "time_remaining_s": 123.0}
+    assert seen == {"asked_ids": {"q1"}}
 
 
 @pytest.mark.asyncio

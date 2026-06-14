@@ -33,7 +33,6 @@ from app.modules.interview_runtime.evidence import (
     SignalType,
     SignalPriority,
     Provenance,
-    QuestionTier,
     QuestionOutcome,
     Speaker,
     CompletionReason,
@@ -79,8 +78,6 @@ def _session_meta() -> SessionMeta:
         time_budget_s=300.0,
         completion=CompletionReason.completed,
         questions_asked=3,
-        questions_core_total=3,
-        questions_overflow_asked=0,
     )
 
 
@@ -99,7 +96,6 @@ def _question_record(question_id: str = "q-1") -> QuestionRecord:
     return QuestionRecord(
         question_id=question_id,
         primary_signal="test_signal",
-        tier=QuestionTier.core,
         outcome=QuestionOutcome.asked,
         probes_available=2,
     )

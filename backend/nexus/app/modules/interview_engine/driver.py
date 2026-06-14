@@ -45,11 +45,8 @@ from app.modules.interview_engine.brain.input_builder import (
     build_turn_input,
 )
 from app.modules.interview_engine.brain.resolver import (
-    BudgetConfig,
     ResolverQuestion,
     build_question_records,
-    budget_config_from_ai_config,
-    compute_budget_phase,
     resolve_next,
 )
 from app.modules.interview_engine.contracts import (
@@ -159,21 +156,19 @@ class _BrainAdapter:
     """Adapts `ControlPlane.decide` to the loop's `Brain.decide(turn_input)` shape.
 
     `run_turn` calls `brain.decide(turn_input)` with no extra args, but
-    `ControlPlane.decide` also needs the per-turn `asked_ids` + `time_remaining_s`
-    (for the deterministic resolver). The driver refreshes those on this adapter
-    right before each `run_turn`, so the loop stays decoupled from resolver state.
+    `ControlPlane.decide` also needs the per-turn `asked_ids` (for the
+    deterministic resolver). The driver refreshes that on this adapter right
+    before each `run_turn`, so the loop stays decoupled from resolver state.
     """
 
     def __init__(self, control_plane: object) -> None:
         self._cp = control_plane
         self.asked_ids: set[str] = set()
-        self.time_remaining_s: float = 0.0
 
     async def decide(self, turn_input):  # type: ignore[no-untyped-def]
         return await self._cp.decide(  # type: ignore[union-attr]
             turn_input,
             asked_ids=self.asked_ids,
-            time_remaining_s=self.time_remaining_s,
         )
 
 
@@ -204,7 +199,8 @@ class SessionDriver:
         Async callable ``(SessionEvidence) -> None`` — injectable.
         Tests pass a fake; agent.py passes a record_session_evidence wrapper.
     time_budget_s:
-        The stage's planned time budget in seconds.
+        planned stage duration in seconds — persisted to SessionMeta for audit;
+        NOT used for runtime question gating.
     started_at:
         Wall-clock datetime when the session started (UTC).
     now_fn:
@@ -236,7 +232,7 @@ class SessionDriver:
         # run_turn expects ONE mouth object with both bridge() + real_line().
         self._mouth_combined = _MouthAdapter(real_plane=mouth, bridge_composer=bridge)
         # run_turn calls brain.decide(turn_input); ControlPlane.decide also needs
-        # per-turn asked_ids + time_remaining_s — refreshed before each run_turn.
+        # per-turn asked_ids — refreshed before each run_turn.
         self._brain_adapter = _BrainAdapter(brain)
         self._notelog = notelog
         self._projection = projection
@@ -250,23 +246,14 @@ class SessionDriver:
         self._forced_superseded = False  # test hook only
 
         # Build resolver questions from the bank (mirrors build_control_plane logic)
-        signal_weight: dict[str, int] = {
-            m.value: m.weight for m in config.signal_metadata
-        }
-        self._resolver_questions: list[ResolverQuestion] = []
-        for q in config.stage.questions:
-            primary = q.primary_signal or (q.signal_values[0] if q.signal_values else "")
-            self._resolver_questions.append(
-                ResolverQuestion(
-                    question_id=q.id,
-                    primary_signal=primary,
-                    tier="core",
-                    is_mandatory=q.is_mandatory,
-                    position=q.position,
-                    weight=signal_weight.get(primary, 1),
-                    estimated_minutes=q.estimated_minutes,
-                )
+        self._resolver_questions: list[ResolverQuestion] = [
+            ResolverQuestion(
+                question_id=q.id,
+                primary_signal=q.primary_signal or (q.signal_values[0] if q.signal_values else ""),
+                position=q.position,
             )
+            for q in config.stage.questions
+        ]
 
         # All signal specs (from signal_metadata)
         self._all_specs: list[SignalSpec] = [
@@ -279,9 +266,6 @@ class SessionDriver:
             )
             for m in config.signal_metadata
         ]
-
-        # Budget config
-        self._budget_cfg: BudgetConfig = budget_config_from_ai_config()
 
         # Anti-stall threshold (env-driven; consecutive non-answer turns before advancing)
         from app.ai.config import ai_config  # local import keeps the driver livekit-free
@@ -311,14 +295,6 @@ class SessionDriver:
         if self._forced_superseded:
             return True
         return bool(self._is_superseded_cb and self._is_superseded_cb())
-
-    # -----------------------------------------------------------------------
-    # Timing helpers
-    # -----------------------------------------------------------------------
-
-    def _time_remaining_s(self) -> float:
-        elapsed = (self._now_fn() - self._started_at).total_seconds()
-        return max(0.0, self._time_budget_s - elapsed)
 
     # -----------------------------------------------------------------------
     # Internal helpers
@@ -428,14 +404,9 @@ class SessionDriver:
 
         Returns the spoken opener text.
         """
-        covered_signals: set[str] = set()  # nothing covered yet
-
         nxt = resolve_next(
             questions=self._resolver_questions,
             asked_ids=self._asked_ids,
-            covered_signals=covered_signals,
-            time_remaining_s=self._time_remaining_s(),
-            cfg=self._budget_cfg,
         )
 
         turn_ref = self._make_turn_ref()
@@ -572,7 +543,6 @@ class SessionDriver:
             projection=self._projection,
             all_specs=self._all_specs,
             transcript_window=self._build_transcript_window(),
-            budget_phase=compute_budget_phase(self._time_remaining_s(), self._budget_cfg),
             floor_interrupted=self._floor_interrupted,  # P2: was the last question cut off?
             stalled=self._stall_count >= self._stall_threshold,  # anti-stall: dodged this question too many times?
         )
@@ -601,7 +571,6 @@ class SessionDriver:
 
         # Refresh the brain adapter's per-turn resolver state before run_turn.
         self._brain_adapter.asked_ids = set(self._asked_ids)
-        self._brain_adapter.time_remaining_s = self._time_remaining_s()
 
         decision = await run_turn(
             ctx,
@@ -802,13 +771,6 @@ class SessionDriver:
         questions: list[QuestionRecord] = question_records_for_prov
 
         # 4. SessionMeta
-        questions_core_total = sum(
-            1 for q in self._resolver_questions if q.tier == "core"
-        )
-        questions_overflow_asked = sum(
-            1 for q in self._resolver_questions
-            if q.tier == "coverage" and q.question_id in self._asked_ids
-        )
         meta = SessionMeta(
             session_id=self._config.session_id,
             job_id=self._config.job_id,
@@ -820,8 +782,6 @@ class SessionDriver:
             time_budget_s=self._time_budget_s,
             completion=completion,
             questions_asked=len(self._asked_ids),
-            questions_core_total=questions_core_total,
-            questions_overflow_asked=questions_overflow_asked,
         )
 
         # 4b. Record a KnockoutOutcome for any knockout signal the brain VERIFIED

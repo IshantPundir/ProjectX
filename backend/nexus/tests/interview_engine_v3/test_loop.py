@@ -43,7 +43,6 @@ from app.modules.interview_engine.contracts import (
     MouthTurnInput,
     SignalObservation,
     ActiveQuestionRubric,
-    BudgetPhase,
     CoverageState,
 )
 from app.modules.interview_engine.notes import NoteLog
@@ -113,7 +112,6 @@ def _brain_turn_input() -> BrainTurnInput:
         thread_turn_count=1,
         evidence_so_far=[],
         transcript_window=[],
-        budget_phase=BudgetPhase.on_track,
         uncovered_signals=[],
         knockout_pending=[],
     )

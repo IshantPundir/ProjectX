@@ -29,7 +29,6 @@ from app.modules.interview_engine.contracts import (
     ActiveQuestionRubric,
     BrainSessionContext,
     BrainTurnInput,
-    BudgetPhase,
     SignalRead,
     SignalSpec,
     WindowTurn,
@@ -205,13 +204,6 @@ class TestBuildSessionContext:
         ctx = build_session_context(config)
         assert len(ctx.bank_index) == 2
 
-    def test_bank_index_all_core(self):
-        """All questions in the flat bank are tier='core'."""
-        config = _make_session_config()
-        ctx = build_session_context(config)
-        for qi in ctx.bank_index:
-            assert qi.tier == "core"
-
     def test_bank_index_primary_signal(self):
         config = _make_session_config()
         ctx = build_session_context(config)
@@ -329,7 +321,6 @@ class TestPrefixByteIdentical:
             projection=proj,
             all_specs=ctx.signals,
             transcript_window=[],
-            budget_phase=BudgetPhase.on_track,
         )
 
         prefix_after = render_prefix(sys_prompt, ctx)
@@ -374,7 +365,6 @@ class TestNoRubricInPrefix:
             projection=proj,
             all_specs=ctx.signals,
             transcript_window=[],
-            budget_phase=BudgetPhase.on_track,
         )
         suffix = render_suffix(turn_input)
         suffix_text = json.dumps(suffix)
@@ -405,7 +395,6 @@ class TestCandidateUtteranceFenced:
             projection=proj,
             all_specs=ctx.signals,
             transcript_window=[],
-            budget_phase=BudgetPhase.on_track,
         )
         suffix = render_suffix(turn_input)
         suffix_text = json.dumps(suffix)
@@ -704,7 +693,6 @@ class TestSuffixBounded:
             projection=proj,
             all_specs=ctx.signals,
             transcript_window=[],
-            budget_phase=BudgetPhase.on_track,
         )
         suffix = render_suffix(turn_input)
         suffix_text = json.dumps(suffix)
@@ -730,7 +718,6 @@ class TestSuffixBounded:
             projection=proj,
             all_specs=ctx.signals,
             transcript_window=[],
-            budget_phase=BudgetPhase.on_track,
         )
         suffix = render_suffix(turn_input)
         suffix_text = json.dumps(suffix)
@@ -765,7 +752,6 @@ class TestBuildMessages:
                 WindowTurn(turn_ref="t-0", speaker="agent",
                            text="Tell me about your distributed systems experience."),
             ],
-            budget_phase=BudgetPhase.on_track,
         )
         messages = build_messages(sys_prompt, ctx, turn_input)
 
@@ -793,7 +779,6 @@ class TestBuildMessages:
             projection=proj,
             all_specs=ctx.signals,
             transcript_window=[],
-            budget_phase=BudgetPhase.winding_down,
         )
         messages = build_messages(sys_prompt, ctx, turn_input)
 
