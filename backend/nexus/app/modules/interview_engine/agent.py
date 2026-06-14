@@ -213,9 +213,11 @@ class _EngineAgent(Agent):
     def __init__(self, *, assembler: TurnAssembler, **kwargs) -> None:
         super().__init__(**kwargs)
         self._assembler = assembler
-        # Latest committed turn's per-word STT timings, stashed by ``stt_node``
-        # from the most recent FINAL_TRANSCRIPT. Task 3 reads + clears this in
-        # ``on_user_turn_completed`` to attach word timing to the transcript.
+        # Current turn's per-word STT timings, stashed by ``stt_node`` —
+        # accumulated across the turn's FINAL_TRANSCRIPT events (reset when
+        # ``on_user_turn_completed`` consumes them) to attach word timing to the
+        # transcript. Deepgram emits multiple finals per turn (one per utterance
+        # segment), so this MUST extend, not overwrite, across segments.
         self._pending_words: list[RawWord] = []
 
     async def stt_node(self, audio, model_settings):  # type: ignore[override]
@@ -223,13 +225,17 @@ class _EngineAgent(Agent):
 
         Delegates to the default STT node (``Agent.default.stt_node``) and yields
         EVERY event unchanged — it must not alter STT or turn-detection behavior.
-        For each FINAL_TRANSCRIPT it records the per-word timings on
-        ``self._pending_words`` so the next ``on_user_turn_completed`` (Task 3)
-        can emit them on the transcript / hand them to the assembler.
+        For each FINAL_TRANSCRIPT it ACCUMULATES the per-word timings onto
+        ``self._pending_words`` (accumulated across the turn's FINAL_TRANSCRIPT
+        events; reset when ``on_user_turn_completed`` consumes them) so the next
+        ``on_user_turn_completed`` (Task 3) can emit them on the transcript /
+        hand them to the assembler. Deepgram emits multiple finals per turn (one
+        per utterance segment); overwriting here would keep only the last
+        segment's few words.
         """
         async for event in Agent.default.stt_node(self, audio, model_settings):
             if event.type == _lk_stt.SpeechEventType.FINAL_TRANSCRIPT:
-                self._pending_words = words_from_final_transcript(event)
+                self._pending_words.extend(words_from_final_transcript(event))
             yield event
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:  # type: ignore[override]
