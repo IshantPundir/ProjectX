@@ -19,7 +19,6 @@ without pulling heavy deps; the heavy work happens only when the actor RUNS.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import tempfile
 from datetime import UTC, datetime
@@ -32,7 +31,7 @@ from sqlalchemy import select, text
 
 from app.config import settings
 from app.database import get_bypass_session
-from app.modules.reel import render
+from app.modules.reel import render, timing
 from app.modules.reel.director import edl_to_dict, generate_edl, validate_edl
 from app.modules.reel.models import SessionReel
 from app.storage import get_object_storage
@@ -40,32 +39,18 @@ from app.storage import get_object_storage
 logger = structlog.get_logger("reel.actor")
 
 
-def _resolve_events(session_id: str, stored_ref: str | None) -> list[dict]:
-    """Load the engine event log (audio.user.state / turn.captured / dispatch).
+def _parse_iso(value: str | None) -> datetime | None:
+    """Parse an ISO-8601 ``meta.started_at`` (the engine span origin) → tz-aware datetime.
 
-    Resolves by session_id against this process's configured event-log dir first
-    (the engine stores an absolute container path not mounted in the worker), then
-    the stored ref; degrades to empty events.
+    Tolerates the trailing ``Z`` (UTC) form ``datetime.fromisoformat`` rejected
+    before 3.11. Returns ``None`` on missing/unparseable input.
     """
-    candidates: list[Path] = []
-    if settings.engine_event_log_dir:
-        candidates.append(Path(settings.engine_event_log_dir) / f"{session_id}.json")
-    if stored_ref:
-        candidates.append(Path(stored_ref))
-        if settings.engine_event_log_dir:
-            candidates.append(Path(settings.engine_event_log_dir) / Path(stored_ref).name)
-    # Repo-mounted event-log dir (dev + portable fallback). NOTE: durable
-    # cross-container event-log storage in production is a known open concern
-    # shared with the reporting actor (the reel has a HARD dependency on it for
-    # VAD timing, unlike the report which degrades to empty events).
-    repo_dir = Path(__file__).resolve().parents[3] / "engine-events"
-    candidates.append(repo_dir / f"{session_id}.json")
-    for path in candidates:
-        try:
-            return json.loads(path.read_text()).get("events", [])
-        except Exception:  # noqa: BLE001 — try the next candidate
-            continue
-    return []
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
 
 
 async def _load_inputs(db, session_id: UUID, tenant_id: UUID) -> dict:
@@ -73,8 +58,8 @@ async def _load_inputs(db, session_id: UUID, tenant_id: UUID) -> dict:
     row = (await db.execute(text(
         "SELECT r.verdict, r.verdict_reason, r.summary, r.question_scorecards, "
         "       r.signal_scorecards, j.title AS role_title, c.name AS candidate_name, "
-        "       s.recording_s3_key, s.recording_started_at, s.transcript, "
-        "       s.raw_result_json "
+        "       s.recording_s3_key, s.recording_started_at, "
+        "       s.session_evidence_json "
         "FROM sessions s "
         "LEFT JOIN session_reports r ON r.session_id = s.id AND r.tenant_id = s.tenant_id "
         "LEFT JOIN candidate_job_assignments a ON a.id = s.assignment_id "
@@ -106,13 +91,21 @@ async def _build_and_upload(session_id: UUID, tenant_id: UUID,
     if not inp["recording_s3_key"]:
         raise RuntimeError("recording not ready")
 
+    # Gen-3 durable evidence is the timing + transcript spine. The transcript is
+    # session-relative ms; the offset shifts it onto the recording (video) clock.
+    evidence = inp["session_evidence_json"] or {}
+    transcript = evidence.get("transcript") or []
+    meta_started_at = _parse_iso((evidence.get("meta") or {}).get("started_at"))
+    if not transcript or meta_started_at is None:
+        # Fail honestly rather than cutting an empty/mis-timed clip.
+        raise RuntimeError("session evidence not ready")
+    offset_ms = timing.recording_offset_ms(
+        meta_started_at, inp["recording_started_at"])
+
     summary = inp["summary"] or {}
     why_positive = (summary.get("decision") or {}).get("why_positive")
     if isinstance(why_positive, dict):
         why_positive = why_positive.get("body")
-    events = _resolve_events(
-        str(session_id), (inp["raw_result_json"] or {}).get("audit_envelope_ref"))
-    rec_start_ms = int(inp["recording_started_at"].timestamp() * 1000)
 
     raw = await generate_edl(
         candidate_name=inp["candidate_name"], role_title=inp["role_title"],
@@ -120,9 +113,9 @@ async def _build_and_upload(session_id: UUID, tenant_id: UUID,
         why_positive=why_positive, strengths=summary.get("strengths", []),
         question_scorecards=inp["question_scorecards"] or [],
         signal_scorecards=inp["signal_scorecards"] or [],
-        transcript=list(inp["transcript"] or []), correlation_id=correlation_id,
+        transcript=transcript, correlation_id=correlation_id,
     )
-    vedl = validate_edl(raw, list(inp["transcript"] or []))
+    vedl = validate_edl(raw, transcript)
     log.info("reel.actor.edl_validated", n_beats=len(vedl.beats),
              duration_ms=vedl.duration_ms)
 
@@ -131,11 +124,10 @@ async def _build_and_upload(session_id: UUID, tenant_id: UUID,
     with tempfile.TemporaryDirectory() as tmp:
         rec_path = os.path.join(tmp, "recording.mp4")
         await storage.download_to_path(inp["recording_s3_key"], rec_path)
-        anchor, speaking = await render.prepare_anchor(events, rec_path, rec_start_ms)
         out_path = os.path.join(tmp, "reel.mp4")
         _, chapters = await render.render_reel(
-            beats=vedl.beats, recording_path=rec_path, events=events,
-            speaking=speaking, anchor=anchor, tmp_dir=tmp, out_path=out_path,
+            beats=vedl.beats, recording_path=rec_path, offset_ms=offset_ms,
+            tmp_dir=tmp, out_path=out_path,
         )
         duration_ms = await render.probe_duration_ms(out_path)
         data = await asyncio.to_thread(Path(out_path).read_bytes)
