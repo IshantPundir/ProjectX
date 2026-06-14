@@ -1,7 +1,9 @@
 'use client'
 
 import type { ReportRead } from '@/lib/api/reports'
+import { useSessionRecording } from '@/lib/hooks/use-session-recording'
 import { verdictMeta, TONE_BG, TONE_INK } from './report-format'
+import { pickPosterUrl } from './theater/timeline-model'
 
 // Re-exported for back-compat: the pure helper + seek-api type live in the theater model.
 // `PlaybackSeekApi` is consumed by the theater (TheaterStage / useTheaterState).
@@ -25,8 +27,14 @@ export function SessionPlayback({
   onOpen: () => void
 }) {
   const v = verdictMeta(report.verdict)
-  // A real recording frame for the poster — first question that has one.
-  const poster = report.questions.find((q) => q.thumbnail_url)?.thumbnail_url ?? null
+  // Poster the static entry with the same mid-interview question frame the
+  // ReviewTheater <video> uses, so opening the theater isn't a visual jump.
+  // duration_seconds → durationMs mirrors ReviewTheater; the recording query is
+  // shared (TanStack dedupes on the session-recording key). When the duration
+  // isn't known yet, pickPosterUrl returns null → the gradient fallback shows.
+  const { data: rec } = useSessionRecording(report.session_id ?? '')
+  const durationMs = (rec?.duration_seconds ?? 0) * 1000
+  const poster = pickPosterUrl(report.questions, durationMs)
   return (
     <div className={CARD} style={{ borderColor: 'var(--px-hairline)' }}>
       <button
