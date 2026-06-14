@@ -219,6 +219,7 @@ async def _drive(
     *,
     tenant_id: uuid.UUID,
     correlation_id: str,
+    started_at_wall: datetime,
 ) -> None:
     """Gen-3 three-tier drive loop (Path A+ — native turn detection).
 
@@ -240,14 +241,10 @@ async def _drive(
 
     Thin glue: all orchestration logic lives in driver.py (SessionDriver).
     """
-    from datetime import UTC, datetime
-
     from app.database import get_bypass_session
     from app.modules.interview_engine.driver import build_session_driver
     from app.modules.interview_runtime import record_session_evidence
     from app.modules.interview_runtime.evidence import CompletionReason
-
-    started_at = datetime.now(UTC)
 
     # ── Build the persist callable ───────────────────────────────────────────
     async def _persist(evidence):  # type: ignore[no-untyped-def]
@@ -268,7 +265,12 @@ async def _drive(
         config,
         voice=_InterruptAwareVoice(session),
         persist=_persist,
-        started_at=started_at,
+        # Co-anchored with the assembler's monotonic clock to the SAME session
+        # origin instant (captured together in run() at the assembler-build site).
+        # The driver clocks AGENT spans (+ SessionEvidence.meta.started_at) off this
+        # wall anchor; the assembler clocks CANDIDATE spans off its co-captured
+        # monotonic anchor — so both speakers live on ONE shared timeline (RC-4).
+        started_at=started_at_wall,
         is_superseded=assembler.is_superseded,
         on_committed=assembler.confirm_committed,
     )
@@ -494,6 +496,19 @@ async def run(
                 log.warning("engine.heartbeat_failed", exc_info=True)
             await asyncio.sleep(settings.engine_heartbeat_interval_seconds)
 
+    # ── Single session origin (RC-4) ─────────────────────────────────────────
+    # Capture the wall + monotonic anchors TOGETHER at one instant (here, after
+    # wait_for_participant — the natural session-start point now that the candidate
+    # has joined). The monotonic anchor (t0_monotonic) is t=0 for the assembler's
+    # session clock (CANDIDATE turn spans); the wall anchor (started_at_wall) is
+    # t=0 for the SessionDriver (AGENT spans + SessionEvidence.meta.started_at).
+    # Co-capturing means both name the SAME instant, so candidate and agent spans
+    # share ONE origin in SessionEvidence (pre_turn_gap_ms + the cross-speaker
+    # timeline are only meaningful if the origins match). The top-of-run monotonic
+    # `started_at` above is left untouched — it only drives the duration_s log.
+    started_at_wall = datetime.now(UTC)
+    t0_monotonic = time.monotonic()
+
     # Build the per-session turn source BEFORE starting the session so the
     # assembler (and via it, _drive's consume task) can receive committed turns
     # from the first fragment.
@@ -506,9 +521,10 @@ async def run(
     # loop re-runs on the merged answer rather than a partial one.
     assembler = TurnAssembler(
         sink=turn_source,
-        # Anchor to session start so candidate turn spans are session-relative
-        # ms (comparable to AGENT lines), not raw absolute monotonic (RC-4).
-        clock=make_session_clock(started_at),
+        # Anchor to the co-captured session origin (t0_monotonic) so candidate
+        # turn spans are session-relative ms on the SAME timeline as the AGENT
+        # spans the driver clocks off started_at_wall (one shared origin — RC-4).
+        clock=make_session_clock(t0_monotonic),
         timer=AsyncioTimerScheduler(),
         grace_s=ai_config.engine_assembly_grace_s,
         max_duration_s=ai_config.engine_assembly_max_duration_s,
@@ -553,6 +569,7 @@ async def run(
             session, turn_source, assembler, config, ctx,
             tenant_id=tenant_id,
             correlation_id=correlation_id,
+            started_at_wall=started_at_wall,
         )
     finally:
         heartbeat_task.cancel()
