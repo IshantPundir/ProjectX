@@ -13,8 +13,8 @@ transcript order, so the Nth answer run has ref N-1.
 """
 import pytest
 
+from app.config import settings
 from app.modules.reel.director import (
-    MAX_TOTAL_MS,
     NoClipBeatsError,
     ReelBeat,
     ReelEdlOut,
@@ -145,22 +145,36 @@ def test_disjoint_word_ranges_both_kept():
     assert len(_by_kind(validate_edl(edl, [_cand("t-1", 12)]), "clip")) == 2
 
 
-# --- per-clip soft cap ----------------------------------------------------
+# --- per-clip soft cap (config-driven) ------------------------------------
 
-def test_overlong_clip_is_trimmed_to_the_soft_cap():
-    # 0..24 on a 1000ms grid ~= 24.9s; soft cap 16s.
+def test_overlong_clip_is_trimmed_when_cap_configured_low(monkeypatch):
+    # Mechanism-preserved: with the per-clip soft cap configured LOW (16s), a
+    # ~24.9s clip (0..24 on a 1000ms grid) is still trimmed inward to fit.
+    monkeypatch.setattr(settings, "reel_clip_soft_cap_ms", 16_000)
     clip = _by_kind(validate_edl(ReelEdlOut(beats=[_clip(0, 0, 24)]),
                                  [_cand("t-1", 25)]), "clip")[0]
     assert clip.duration_ms <= 16_000
     assert clip.words[0]["text"] == "w0"
 
 
-# --- total budget: group-by-lead-card -------------------------------------
+def test_long_clip_not_trimmed_at_default_high_cap():
+    # At the relaxed default (~10 min), a >16s clip survives un-trimmed so the
+    # candidate's full evidence is shown.
+    assert settings.reel_clip_soft_cap_ms >= 600_000
+    clip = _by_kind(validate_edl(ReelEdlOut(beats=[_clip(0, 0, 24)]),
+                                 [_cand("t-1", 25)]), "clip")[0]
+    assert clip.words[0]["text"] == "w0"
+    assert clip.words[-1]["text"] == "w24"   # nothing trimmed off the tail
+    assert clip.duration_ms > 16_000
 
-def test_over_budget_drops_trailing_point_groups_keeping_one():
-    # Seven ~15s clips (15 words on a 1000ms grid) far exceed the 80s budget,
-    # forcing trailing point-groups (card + clip) to drop. agents between ->
-    # separate runs (refs 0..6).
+
+# --- total budget: group-by-lead-card (config-driven) ---------------------
+
+def test_over_budget_drops_trailing_point_groups_keeping_one(monkeypatch):
+    # Mechanism-preserved: with the total budget configured LOW (80s), seven
+    # ~15s clips far exceed it, forcing trailing point-groups (card + clip) to
+    # drop. agents between -> separate runs (refs 0..6).
+    monkeypatch.setattr(settings, "reel_max_total_ms", 80_000)
     n = 7
     transcript = []
     for i in range(n):
@@ -176,7 +190,25 @@ def test_over_budget_drops_trailing_point_groups_keeping_one():
     clips = _by_kind(vedl, "clip")
     assert 1 <= len(clips) < 7
     assert len(_by_kind(vedl, "point")) == len(clips)
-    assert vedl.duration_ms <= MAX_TOTAL_MS
+    assert vedl.duration_ms <= settings.reel_max_total_ms
+
+
+def test_no_clips_dropped_at_default_high_budget():
+    # At the relaxed default (~1 h), many clips all survive — none dropped — so
+    # the candidate's full evidence is shown.
+    assert settings.reel_max_total_ms >= 3_600_000
+    n = 7
+    transcript = []
+    for i in range(n):
+        transcript += [_cand(f"t-{i}", 16), _agent()]
+    beats = [ReelBeat(kind="title", on_screen_text="t"),
+             ReelBeat(kind="match", on_screen_text="m")]
+    for i in range(n):
+        beats += [ReelBeat(kind="point", on_screen_text=f"p{i}"), _clip(i, 0, 15)]
+    beats.append(ReelBeat(kind="outro", on_screen_text="o"))
+    vedl = validate_edl(ReelEdlOut(beats=beats), transcript)
+    assert len(_by_kind(vedl, "clip")) == n
+    assert len(_by_kind(vedl, "point")) == n
 
 
 # --- >=1 clip or fail ------------------------------------------------------

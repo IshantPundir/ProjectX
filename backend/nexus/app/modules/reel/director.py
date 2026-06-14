@@ -28,12 +28,16 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from app.config import settings
 from app.modules.reel.transcript import AnswerRun, answer_runs, is_pause_before
 
 # --- tuning constants (transcript-space; ms) ------------------------------
-MAX_TOTAL_MS = 80_000        # soft target (quality may run a little over)
+# The per-clip soft cap (CLIP_SOFT_CAP_MS) and total budget (MAX_TOTAL_MS) are
+# config-driven — read at use-site from ``settings.reel_clip_soft_cap_ms`` /
+# ``settings.reel_max_total_ms`` (relaxed to effectively-unlimited defaults "for
+# now" to show full candidate evidence; the trim/drop MECHANISM is preserved so
+# they can be re-tightened via config). See app/config.py.
 TARGET_MS = 60_000           # aim for ~60s
-CLIP_SOFT_CAP_MS = 16_000    # a single clip may run this long to show full substance
 EST_BOUNDARY_PAUSE_MS = 500  # estimated inter-turn pause inside a multi-turn clip
 SPEAK_WPS = 2.75             # ~165 wpm, Arjun narration, for card duration estimate
 _CARD_FLOOR_MS = {"title": 3_000, "match": 4_000, "point": 3_500, "outro": 4_000}
@@ -124,7 +128,8 @@ def _resolve_clip(beat: ReelBeat, runs_by_ref: dict[int, AnswerRun]) -> Validate
     """Resolve a clip/experience beat over its answer run, or None to drop it.
 
     Drops on a hallucinated run ref or an out-of-bounds / inverted word range.
-    Edge-trims disfluencies, then trims over-cap clips inward to ``CLIP_SOFT_CAP_MS``.
+    Edge-trims disfluencies, then trims over-cap clips inward to the configured
+    per-clip soft cap (``settings.reel_clip_soft_cap_ms``).
     """
     ref = beat.source_turn_ref
     run = runs_by_ref.get(ref) if ref is not None else None
@@ -138,8 +143,9 @@ def _resolve_clip(beat: ReelBeat, runs_by_ref: dict[int, AnswerRun]) -> Validate
     if not selected:
         return None
     # per-clip soft cap: drop trailing words until the estimate fits.
+    clip_soft_cap_ms = settings.reel_clip_soft_cap_ms
     while len(selected) > 1 and _estimate_clip_duration(
-            [_word_dict(w) for w in selected]) > CLIP_SOFT_CAP_MS:
+            [_word_dict(w) for w in selected]) > clip_soft_cap_ms:
         selected = selected[:-1]
 
     words = [_word_dict(w) for w in selected]
@@ -191,12 +197,14 @@ def _group_body(body: list[ValidatedBeat]) -> list[list[ValidatedBeat]]:
 
 
 def _fit_budget(beats: list[ValidatedBeat]) -> list[ValidatedBeat]:
-    """Drop trailing groups until total <= ``MAX_TOTAL_MS``, preserving narrative.
+    """Drop trailing groups until total <= the budget, preserving narrative.
 
-    title (leading) and outro (trailing) are pinned; the body is grouped so a
-    dropped clip takes its ask/credit with it. The last clip-bearing group is
-    never dropped (>=1 clip is guaranteed by validate_edl).
+    Budget is config-driven (``settings.reel_max_total_ms``). title (leading) and
+    outro (trailing) are pinned; the body is grouped so a dropped clip takes its
+    ask/credit with it. The last clip-bearing group is never dropped (>=1 clip is
+    guaranteed by validate_edl).
     """
+    max_total_ms = settings.reel_max_total_ms
     title = [beats[0]] if beats and beats[0].kind == "title" else []
     outro = [beats[-1]] if beats and beats[-1].kind == "outro" else []
     body = beats[len(title): len(beats) - len(outro)]
@@ -206,7 +214,7 @@ def _fit_budget(beats: list[ValidatedBeat]) -> list[ValidatedBeat]:
         return sum(b.duration_ms for g in groups for b in g) + \
             sum(b.duration_ms for b in title) + sum(b.duration_ms for b in outro)
 
-    while groups and total() > MAX_TOTAL_MS:
+    while groups and total() > max_total_ms:
         clip_groups = sum(1 for g in groups if _has_clip(g))
         if _has_clip(groups[-1]) and clip_groups <= 1:
             break   # would drop the only clip group — stop

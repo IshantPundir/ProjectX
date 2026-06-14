@@ -650,6 +650,14 @@ class Settings(BaseSettings):
     # PREFIX only — concatenated into keys like
     # ``reel_director:{prompt_version}:{model}``. Bump on a prompt-family change.
     reel_director_prompt_cache_key_prefix: str = "reel_director"
+    # Per-clip soft cap (ms): validate_edl trims trailing words off a clip until
+    # its estimate fits this. Relaxed to ~10 min to show full candidate evidence
+    # ("for now"); lower it to re-enable tighter per-clip reels.
+    reel_clip_soft_cap_ms: int = 600_000
+    # Total reel budget (ms): validate_edl drops trailing clip groups until the
+    # total fits this. Relaxed to ~1 h to show full candidate evidence ("for
+    # now"); lower it to re-enable tighter total-duration reels.
+    reel_max_total_ms: int = 3_600_000
 
     # --- Gen-3 native turn detection — endpointing (Path A+) ---
     # ── Interview engine — turn handling (gen-3 native turn detection) ──
