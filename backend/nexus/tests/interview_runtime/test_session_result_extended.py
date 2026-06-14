@@ -41,7 +41,6 @@ def test_session_result_construction():
         total_probes_fired=0,
         full_transcript=[],
         completed_at="2026-05-07T00:00:00Z",
-        knockout_failures=[],
         audio_tuning_summary=None,
         signal_ledger=SignalLedgerSnapshot(
             entries=[],

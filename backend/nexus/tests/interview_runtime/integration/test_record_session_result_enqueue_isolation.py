@@ -62,7 +62,6 @@ def _result(session_id: uuid.UUID) -> SessionResult:
         total_probes_fired=2,
         full_transcript=[],
         completed_at=datetime.now(UTC).isoformat(),
-        knockout_failures=[],
         # Non-None coverage_summary => the report-scoring enqueue path fires.
         coverage_summary={"communication": "sufficient"},
         audit_envelope_ref=None,

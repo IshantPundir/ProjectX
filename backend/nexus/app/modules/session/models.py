@@ -71,11 +71,6 @@ class Session(Base):
     recording_bytes: Mapped[int | None] = mapped_column(BigInteger)
     raw_result_json: Mapped[dict | None] = mapped_column(JSONB)
     session_evidence_json: Mapped[dict | None] = mapped_column(JSONB)
-    knockout_failures: Mapped[list[dict]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=sql_text("'[]'::jsonb"),
-    )
     audio_tuning_summary: Mapped[dict | None] = mapped_column(JSONB)
     engine_checkpoint: Mapped[dict | None] = mapped_column(
         JSONB, nullable=True, default=None,
