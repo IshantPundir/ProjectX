@@ -118,8 +118,8 @@ Four concrete weaknesses in the current client-side proctoring, all reported fro
 ## 8. Section 4 — Second-screen handling (G4)
 
 ### 8.1 Multi-monitor pre-check gate (4a)
-- **Pre-check:** read **`window.screen.isExtended`**. When `true`, add a **readiness condition to `CameraMicStep`** (same mechanism it already uses to block "Continue" until camera/mic are ready): message "Please disconnect additional displays to continue," re-checked on the screen `change` event + a manual retry button.
-- **Graceful degradation:** `isExtended` is Chromium-supported but not universal. When `undefined`/unsupported, **do not block** (detect where we can — deterrent, not a hard wall). No `getScreenDetails()` permission prompt.
+- **Pre-check:** read **`window.screen.isExtended`** in `CameraMicStep` (live-updating via the screen `change` event). **As-built (amended 2026-06-15):** a detected second display is a **non-blocking warning**, not a hard block — the candidate sees a caution message ("We detected more than one display. A single screen is recommended — using multiple displays is flagged during the interview.") and may still **Continue**. This keeps the multi-display signal uniformly a *warning* (consistent with the in-session soft `multiple_displays` and the "deterrent, not a hard wall" philosophy), and unblocks legitimate dual-monitor dev/test setups. (The original design blocked Continue; relaxed to a warning after live testing.)
+- **Graceful degradation:** `isExtended` is Chromium-supported but not universal. When `undefined`/unsupported, **no warning** (detect where we can). No `getScreenDetails()` permission prompt.
 - **In-session:** subscribe to the screen `change` event during the live session; if displays become extended mid-interview, fire a **`multiple_displays`** violation (soft, counted) → surfaces via the Section 2 popup.
 
 ### 8.2 New violation kind `multiple_displays`
@@ -133,7 +133,19 @@ Threads through end-to-end:
 
 ### 8.4 Testing
 - `proctoring.py`: `classify_severity("multiple_displays") == "soft"` and a `decide_termination` escalation case.
-- Frontend: `isExtended` gate blocks/permits `CameraMicStep` continue; `ReadingAccumulator` fires after the rolling-window pattern; the in-session screen-change handler reports `multiple_displays`.
+- Frontend: `isExtended` warning shows but `CameraMicStep` still permits Continue; `ReadingAccumulator` fires after the rolling-window pattern; the in-session screen-change handler reports `multiple_displays`.
+
+---
+
+## 8b. Post-implementation addition — proctoring termination dry-run toggle
+
+Added 2026-06-15 (not in the original brainstorm) to test the full proctoring UX in production-like conditions without ending the session.
+
+- **`PROCTORING_TERMINATION_ENABLED`** — backend env (`app/config.py`, `Settings.proctoring_termination_enabled: bool = True`). Default `true` ⇒ production behavior unchanged.
+- **Backend is the source of truth** (it cancels the LiveKit room + transitions session state). When `false`, `record_proctoring_event` still appends the violation, increments counts, and returns them, but computes `effective_terminal = terminal and termination_enabled`: it skips the state transition / `cancel_room` / `proctoring_outcome` stamp and instead audits a distinct **`session.proctoring_termination_suppressed`** event (`would_be_outcome` payload). Returns `terminated=false`.
+- **Propagated to the candidate app** via the existing `ProctoringConfig` (`/start`, `/rejoin`) as a new field **`terminate_enabled`** (`schemas.py`, default `True`). The frontend controller (`use-proctoring-controller.ts`) short-circuits `terminate()` when `config.terminate_enabled === false` **without latching `terminatedRef`**, so all subsequent warnings/popups/counter keep firing.
+- **Both gates are load-bearing:** the frontend hard-violation path terminates locally *before* the backend responds (so the client gate is required); the backend cancels the room independently (so the backend gate is required).
+- **Tests:** backend (`tests/test_session_proctoring_service.py`) — dry-run keeps the session `active`, no `cancel_room`, violation still recorded; default-true still terminates; `_build_proctoring_config` forwards the flag. Frontend (`use-proctoring-controller.test.tsx`) — no terminate + no latch under dry-run; default still terminates.
 
 ---
 
@@ -165,6 +177,10 @@ Threads through end-to-end:
 - Popup is for **soft** violations; **toast removed**; `ViolationBorder` **kept** as accent.
 - **Arm-at-connect only**; hard fullscreen gate **deferred**.
 - Second screen = **both** a pre-check `isExtended` gate **and** strengthened gaze (wire `ReadingAccumulator`). Display check **folded into `CameraMicStep`**. `multiple_displays` = **soft/counted**.
+
+**As-built amendments (post-brainstorm, 2026-06-15):**
+- Multi-display pre-check relaxed from a **hard block** to a **non-blocking warning** (see §8.1) — uniform "warn" signal; unblocks dual-monitor test setups.
+- Added the **`PROCTORING_TERMINATION_ENABLED` dry-run toggle** (see §8b) — disables session termination on both planes while keeping all warnings/popups/counters/audit.
 
 ## 11. Risks & Mitigations
 
