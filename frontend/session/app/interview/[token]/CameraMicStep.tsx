@@ -162,25 +162,27 @@ export function CameraMicStep({ onPass, proctored = false }: Props) {
             </>
           )}
         </div>
-        {status === 'ready' && noisy && (
-          <p
-            className="mt-3 text-[13px]"
-            style={{ lineHeight: 1.6, color: 'var(--px-caution)' }}
-            role="status"
-          >
-            Your environment sounds noisy. The interview will still work,
-            but for the cleanest call, find a quieter spot.
-          </p>
-        )}
-        {status === 'ready' && displayWarn && (
-          <p
-            className="mt-3 text-[13px]"
-            style={{ lineHeight: 1.6, color: 'var(--px-caution)' }}
-            role="status"
-          >
-            We detected more than one display. A single screen is recommended —
-            using multiple displays is flagged during the interview.
-          </p>
+        {status === 'ready' && (noisy || displayWarn) && (
+          <div role="status" className="mt-3 space-y-2">
+            {noisy && (
+              <p
+                className="text-[13px]"
+                style={{ lineHeight: 1.6, color: 'var(--px-caution)' }}
+              >
+                Your environment sounds noisy. The interview will still work,
+                but for the cleanest call, find a quieter spot.
+              </p>
+            )}
+            {displayWarn && (
+              <p
+                className="text-[13px]"
+                style={{ lineHeight: 1.6, color: 'var(--px-caution)' }}
+              >
+                We detected more than one display. A single screen is recommended —
+                using multiple displays is flagged during the interview.
+              </p>
+            )}
+          </div>
         )}
       </div>
     </section>

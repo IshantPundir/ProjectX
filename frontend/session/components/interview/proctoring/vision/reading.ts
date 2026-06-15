@@ -12,9 +12,10 @@ interface Sample {
 }
 
 /**
- * Rolling-window reading detector (spec §7②). Flags sustained off-screen
- * attention WITH horizontal scanning rhythm. Head-pose-derived zones only
- * (the caller passes pose-based zones), so this never fires on iris alone.
+ * Rolling-window reading detector. Flags sustained off-screen attention WITH a
+ * horizontal scanning rhythm (the "reading a second screen" pattern). Driven by
+ * head-pose-derived zones only (the caller passes pose-based zones) — never eye/
+ * iris tracking. Consumed by use-vision-guard to strengthen looking_away_sustained.
  */
 export class ReadingAccumulator {
   private samples: Sample[] = []
@@ -52,9 +53,5 @@ export class ReadingAccumulator {
     const span = this.samples[this.samples.length - 1].t - this.samples[0].t
     if (span < WINDOW_MS * 0.6) return false // need a sustained window
     return this.offScreenRatio() >= MIN_OFF_RATIO && this.directionChanges() >= MIN_DIRECTION_CHANGES
-  }
-
-  reset(): void {
-    this.samples = []
   }
 }
