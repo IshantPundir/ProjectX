@@ -1,3 +1,4 @@
+// app/interview/[token]/WizardShell.tsx
 'use client'
 
 import { useMemo, useState } from 'react'
@@ -8,43 +9,33 @@ import { CompletionScreen } from '@/components/interview/app/CompletionScreen'
 import { ProctoringEndedScreen } from '@/components/interview/app/ProctoringEndedScreen'
 import { useCandidateSession } from '@/lib/hooks/use-candidate-session'
 
-import { CameraMicStep } from './CameraMicStep'
-import { ConsentStep } from './ConsentStep'
-import { OtpStep } from './OtpStep'
-import { WelcomeStep } from './WelcomeStep'
+import { IntroStage } from './IntroStage'
+import { ReadyStage } from './ReadyStage'
+import { StageTransition } from './StageTransition'
+import { VerifyStage } from './VerifyStage'
 import { WizardFrame } from './WizardFrame'
 
-const App = dynamic(
-  () => import('@/components/interview/app/app').then((m) => m.App),
-  {
-    ssr: false,
-    loading: () => (
-      <div
-        className="grid min-h-screen place-items-center text-[14px]"
-        style={{ color: 'var(--px-fg-2)' }}
-      >
-        Connecting…
-      </div>
-    ),
-  },
-)
+const App = dynamic(() => import('@/components/interview/app/app').then((m) => m.App), {
+  ssr: false,
+  loading: () => (
+    <div className="grid min-h-dvh place-items-center text-[14px] text-px-fg-3">Connecting…</div>
+  ),
+})
 
-type WizardStepKey = 'consent' | 'otp' | 'cam-mic' | 'error'
+type Stage = 'intro' | 'verify' | 'ready'
 
 export function WizardShell({ token }: { token: string }) {
   const { data, isLoading, error } = useCandidateSession(token)
   const [camMicPassed, setCamMicPassed] = useState(false)
-  const [introSeen, setIntroSeen] = useState(false)
 
-  const currentStep = useMemo<WizardStepKey>(() => {
-    if (!data) return 'error'
-    if (data.state === 'cancelled' || data.state === 'error') return 'error'
-    if (data.state === 'created' || data.state === 'pre_check') return 'consent'
+  const stage = useMemo<Stage>(() => {
+    if (!data) return 'intro'
+    if (data.state === 'created' || data.state === 'pre_check') return 'intro'
     if (data.state === 'consented') {
-      if (data.otp_required && !data.otp_verified_at) return 'otp'
-      return 'cam-mic'
+      if (data.otp_required && !data.otp_verified_at) return 'verify'
+      return 'ready'
     }
-    return 'cam-mic'
+    return 'ready'
   }, [data])
 
   const appConfig = useMemo<AppConfig>(
@@ -59,13 +50,18 @@ export function WizardShell({ token }: { token: string }) {
     [data],
   )
 
+  // The progress indicator: OTP only contributes a step when required.
+  const { steps, currentIndex } = useMemo(() => {
+    const otp = !!data?.otp_required
+    const labels = otp ? ['Welcome', 'Verify', 'Ready'] : ['Welcome', 'Ready']
+    const idx = stage === 'intro' ? 0 : stage === 'verify' ? 1 : labels.length - 1
+    return { steps: labels, currentIndex: idx }
+  }, [data?.otp_required, stage])
+
   if (isLoading) {
     return (
-      <WizardFrame companyName="" jobTitle="" current="welcome" otpRequired={false}>
-        <div
-          className="rounded-[14px] border p-6 text-center text-sm"
-          style={{ background: 'var(--px-surface)', borderColor: 'var(--px-hairline)', color: 'var(--px-fg-3)' }}
-        >
+      <WizardFrame companyName="" jobTitle="" steps={['Welcome', 'Ready']} currentIndex={0}>
+        <div className="px-glass mx-auto max-w-md rounded-2xl p-6 text-center text-sm text-px-fg-3">
           Loading…
         </div>
       </WizardFrame>
@@ -74,15 +70,10 @@ export function WizardShell({ token }: { token: string }) {
 
   if (error) {
     return (
-      <WizardFrame companyName="" jobTitle="" current="welcome" otpRequired={false}>
-        <div
-          className="rounded-[14px] border p-8 text-center"
-          style={{ background: 'var(--px-surface)', borderColor: 'var(--px-hairline)' }}
-        >
-          <h1 className="px-serif m-0 text-[28px] font-normal" style={{ color: 'var(--px-fg)' }}>
-            This link isn&apos;t valid
-          </h1>
-          <p className="mx-auto mt-3 max-w-sm text-[14px]" style={{ color: 'var(--px-fg-3)', lineHeight: 1.7 }}>
+      <WizardFrame companyName="" jobTitle="" steps={['Welcome', 'Ready']} currentIndex={0}>
+        <div className="px-glass mx-auto max-w-md rounded-2xl p-8 text-center">
+          <h1 className="px-serif m-0 text-[28px] font-normal text-px-fg">This link isn&rsquo;t valid</h1>
+          <p className="mx-auto mt-3 max-w-sm text-[14px] leading-relaxed text-px-fg-3">
             The invite may have been revoked, replaced, or expired. Please contact the recruiter who sent it.
           </p>
         </div>
@@ -92,54 +83,61 @@ export function WizardShell({ token }: { token: string }) {
 
   if (!data) return null
 
-  // Already completed → terminal screen, no rejoin button.
-  if (data.state === 'completed') {
-    return <CompletionScreen />
+  if (data.state === 'completed') return <CompletionScreen />
+  if (data.state === 'terminated') return <ProctoringEndedScreen reason={data.proctoring_outcome} />
+  if (data.state === 'cancelled' || data.state === 'error') {
+    return (
+      <WizardFrame
+        companyName={data.company_name}
+        jobTitle={data.job_title}
+        steps={steps}
+        currentIndex={0}
+        accent={appConfig.accent}
+      >
+        <div className="px-glass mx-auto max-w-md rounded-2xl p-8 text-center">
+          <h1 className="px-serif m-0 text-[28px] font-normal text-px-fg">This session has ended</h1>
+          <p className="mx-auto mt-3 max-w-sm text-[14px] leading-relaxed text-px-fg-3">
+            This interview link is no longer active. Please contact the recruiter who sent it.
+          </p>
+        </div>
+      </WizardFrame>
+    )
   }
 
-  // Ended by proctoring policy → terminal screen (NOT the cam/mic step).
-  // The token is consumed, so /start would 409; show why it ended instead.
-  if (data.state === 'terminated') {
-    return <ProctoringEndedScreen reason={data.proctoring_outcome} />
-  }
-
-  // Active session → rejoin path. Bypasses cam-mic + consent (already passed).
+  // Active session → rejoin path (bypasses pre-check; already consented).
   if (data.state === 'active') {
     return <App appConfig={appConfig} token={token} preCheck={data} mode="rejoin" />
   }
 
-  // Cam-mic passed → start path.
-  if (currentStep === 'cam-mic' && camMicPassed) {
-    return <App appConfig={appConfig} token={token} preCheck={data} mode="start" />
+  // Ready + devices passed → start path with autoStart (no redundant WelcomeView).
+  if (stage === 'ready' && camMicPassed) {
+    return <App appConfig={appConfig} token={token} preCheck={data} mode="start" autoStart />
   }
-
-  // Map to the stepper's accepted set: 'error' (cancelled/error session) and the
-  // pre-consent welcome gate both render as 'welcome' (no active step).
-  const stepperCurrent: 'consent' | 'otp' | 'cam-mic' | 'welcome' =
-    currentStep === 'error'
-      ? 'welcome'
-      : !introSeen && currentStep === 'consent'
-        ? 'welcome'
-        : currentStep
 
   return (
     <WizardFrame
       companyName={data.company_name}
       jobTitle={data.job_title}
-      current={stepperCurrent}
-      otpRequired={data.otp_required}
+      steps={steps}
+      currentIndex={currentIndex}
       accent={appConfig.accent}
     >
-      {currentStep === 'consent' && !introSeen && (
-        <WelcomeStep durationMinutes={data.duration_minutes} onBegin={() => setIntroSeen(true)} />
-      )}
-      {currentStep === 'consent' && introSeen && (
-        <ConsentStep token={token} consentText={data.consent_text} />
-      )}
-      {currentStep === 'otp' && <OtpStep token={token} otpIssuedAt={data.otp_issued_at} />}
-      {currentStep === 'cam-mic' && !camMicPassed && (
-        <CameraMicStep onPass={() => setCamMicPassed(true)} proctored={data.proctoring_enabled} />
-      )}
+      <StageTransition stageKey={stage}>
+        {stage === 'intro' && (
+          <IntroStage
+            token={token}
+            companyName={data.company_name}
+            jobTitle={data.job_title}
+            durationMinutes={data.duration_minutes}
+            consentText={data.consent_text}
+            proctoringEnabled={data.proctoring_enabled}
+          />
+        )}
+        {stage === 'verify' && <VerifyStage token={token} otpIssuedAt={data.otp_issued_at} />}
+        {stage === 'ready' && (
+          <ReadyStage onStart={() => setCamMicPassed(true)} proctored={data.proctoring_enabled} />
+        )}
+      </StageTransition>
     </WizardFrame>
   )
 }
