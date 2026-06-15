@@ -110,6 +110,7 @@ class ProctoringConfig(BaseModel):
     enabled: bool
     soft_violation_limit: int = Field(ge=1, le=20)
     fullscreen_grace_seconds: int = Field(ge=3, le=60)
+    terminate_enabled: bool = True
 
 
 class ProctoringEventRequest(BaseModel):

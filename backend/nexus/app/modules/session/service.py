@@ -99,6 +99,7 @@ async def _build_proctoring_config(
         enabled=settings_.proctoring_enabled,
         soft_violation_limit=settings_.proctoring_soft_violation_limit,
         fullscreen_grace_seconds=settings_.proctoring_fullscreen_grace_seconds,
+        terminate_enabled=settings.proctoring_termination_enabled,
     )
 
 
@@ -876,11 +877,16 @@ async def record_proctoring_event(
         soft_limit=tenant_settings.proctoring_soft_violation_limit,
     )
 
+    # PROCTORING_TERMINATION_ENABLED=false → dry-run: record + count + audit, but
+    # never actually end the session (keep it ACTIVE so all warnings keep firing).
+    termination_enabled = settings.proctoring_termination_enabled
+    effective_terminal = terminal and termination_enabled
+
     # Reassigning a new list marks the JSONB attribute dirty for the flush.
     sess.proctoring_violations = violations
     sess.proctoring_violation_count = len(violations)
 
-    if terminal:
+    if effective_terminal:
         sess.proctoring_outcome = outcome
         sess.state = transition(SessionState.ACTIVE, SessionState.TERMINATED).value
         sess.state_changed_at = datetime.now(UTC)
@@ -921,6 +927,26 @@ async def record_proctoring_event(
                 "correlation_id": correlation_id,
             },
         )
+    elif terminal:
+        # Termination disabled (dry-run): the violation is recorded above and
+        # counted, but we keep the session ACTIVE and audit the suppression so a
+        # genuine "would have terminated" is visible in the trail.
+        await db.flush()
+        await log_event(
+            db,
+            tenant_id=tenant_id,
+            actor_id=None,
+            actor_email=None,
+            action="session.proctoring_termination_suppressed",
+            resource="session",
+            resource_id=sess.id,
+            payload={
+                "would_be_outcome": outcome,
+                "kind": kind,
+                "violation_count": len(violations),
+                "correlation_id": correlation_id,
+            },
+        )
     else:
         await db.flush()
         await log_event(
@@ -940,7 +966,7 @@ async def record_proctoring_event(
         )
 
     return ProctoringEventResult(
-        terminated=terminal,
+        terminated=effective_terminal,
         violation_count=len(violations),
         soft_violation_count=soft_count,
     )

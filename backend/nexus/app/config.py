@@ -727,5 +727,12 @@ class Settings(BaseSettings):
     # analysis can be re-run later from the report page.
     auto_analyze_proctoring: bool = True
 
+    # When False, proctoring records violations + returns counts/audits as
+    # normal but NEVER terminates the session (no room cancel, no state
+    # transition); the frontend skips its local termination too (propagated via
+    # ProctoringConfig.terminate_enabled). Dry-run for testing proctoring UX in
+    # production-like conditions. Default True = production behavior unchanged.
+    proctoring_termination_enabled: bool = True
+
 
 settings = Settings()

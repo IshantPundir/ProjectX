@@ -244,11 +244,14 @@ async def test_pre_check_exposes_proctoring_outcome_for_terminated_session(db: A
 
 @pytest.mark.asyncio
 async def test_build_proctoring_config_uses_lazy_defaults(db: AsyncSession):
-    """A tenant with no tenant_settings row → schema defaults (enabled, 3, 10)."""
+    """A tenant with no tenant_settings row → schema defaults (enabled, 3, 10).
+    terminate_enabled mirrors the global setting (default True).
+    """
     cfg = await session_service._build_proctoring_config(db, uuid.uuid4())
     assert cfg.enabled is True
     assert cfg.soft_violation_limit == 3
     assert cfg.fullscreen_grace_seconds == 10
+    assert cfg.terminate_enabled is True
 
 
 @pytest.mark.asyncio
@@ -272,3 +275,90 @@ async def test_build_proctoring_config_reads_tenant_row(db: AsyncSession):
     assert cfg.enabled is False
     assert cfg.soft_violation_limit == 5
     assert cfg.fullscreen_grace_seconds == 20
+
+
+# ---------------------------------------------------------------------------
+# PROCTORING_TERMINATION_ENABLED dry-run toggle
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_termination_disabled_hard_kind_keeps_session_active(
+    db: AsyncSession, monkeypatch
+):
+    """PROCTORING_TERMINATION_ENABLED=False → hard kind records violation but
+    does NOT terminate: result.terminated is False, session stays active,
+    violation count increments, cancel_room is NOT called.
+    """
+    monkeypatch.setattr(session_service.settings, "proctoring_termination_enabled", False)
+    mock_cancel = AsyncMock()
+    monkeypatch.setattr(session_service, "cancel_room", mock_cancel)
+
+    sess, tenant_id = await make_active_session(db, uuid.uuid4())
+
+    result = await session_service.record_proctoring_event(
+        db,
+        session_id=sess.id,
+        tenant_id=tenant_id,
+        kind="devtools",
+        occurred_at=datetime.now(UTC),
+        correlation_id="cid-dry-run",
+    )
+
+    # The result must say "not terminated"
+    assert result.terminated is False
+    assert result.violation_count == 1
+    assert result.already_terminal is False
+
+    # The session must remain active in the DB
+    await db.refresh(sess)
+    assert sess.state == SessionState.ACTIVE.value
+    assert sess.proctoring_outcome is None
+    assert sess.proctoring_violation_count == 1
+
+    # cancel_room must NOT have been called
+    mock_cancel.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_termination_enabled_default_hard_kind_terminates(
+    db: AsyncSession, monkeypatch
+):
+    """Regression: with PROCTORING_TERMINATION_ENABLED=True (default), a hard
+    kind still terminates normally — the flag must not disturb existing behavior.
+    """
+    monkeypatch.setattr(session_service.settings, "proctoring_termination_enabled", True)
+    monkeypatch.setattr(session_service, "cancel_room", AsyncMock())
+
+    sess, tenant_id = await make_active_session(db, uuid.uuid4())
+
+    result = await session_service.record_proctoring_event(
+        db,
+        session_id=sess.id,
+        tenant_id=tenant_id,
+        kind="devtools",
+        occurred_at=datetime.now(UTC),
+        correlation_id="cid-enabled",
+    )
+
+    assert result.terminated is True
+    assert result.violation_count == 1
+
+    await db.refresh(sess)
+    assert sess.state == SessionState.TERMINATED.value
+    assert sess.proctoring_outcome == "devtools"
+
+
+@pytest.mark.asyncio
+async def test_build_proctoring_config_exposes_terminate_enabled(db: AsyncSession, monkeypatch):
+    """_build_proctoring_config forwards settings.proctoring_termination_enabled
+    as ProctoringConfig.terminate_enabled.
+    """
+    monkeypatch.setattr(session_service.settings, "proctoring_termination_enabled", False)
+
+    cfg = await session_service._build_proctoring_config(db, uuid.uuid4())
+    assert cfg.terminate_enabled is False
+
+    monkeypatch.setattr(session_service.settings, "proctoring_termination_enabled", True)
+    cfg2 = await session_service._build_proctoring_config(db, uuid.uuid4())
+    assert cfg2.terminate_enabled is True
