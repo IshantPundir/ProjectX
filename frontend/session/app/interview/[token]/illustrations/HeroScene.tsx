@@ -5,31 +5,34 @@
 // few drifting particles. Token-colored via the inherited --px-accent. Motion is
 // CSS-only and reduced-motion-safe (the keyframes are gated in globals.css; see
 // a later task). Decorative — aria-hidden.
+import { useId } from 'react'
 import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion'
 
 export function HeroScene({ className }: { className?: string }) {
   const reduced = usePrefersReducedMotion()
+  const uid = useId()
+  const orbGlowId = `orbGlow-${uid}`
+  const deskFadeId = `deskFade-${uid}`
   return (
     <svg
       aria-hidden="true"
       viewBox="0 0 320 320"
       className={className}
-      role="presentation"
     >
       <defs>
-        <radialGradient id="orbGlow" cx="50%" cy="42%" r="55%">
+        <radialGradient id={orbGlowId} cx="50%" cy="42%" r="55%">
           <stop offset="0%" stopColor="var(--px-accent)" stopOpacity="0.9" />
           <stop offset="55%" stopColor="var(--px-accent)" stopOpacity="0.35" />
           <stop offset="100%" stopColor="var(--px-accent)" stopOpacity="0" />
         </radialGradient>
-        <linearGradient id="deskFade" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={deskFadeId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="var(--px-accent)" stopOpacity="0.18" />
           <stop offset="100%" stopColor="var(--px-accent)" stopOpacity="0" />
         </linearGradient>
       </defs>
 
       {/* glow halo */}
-      <circle cx="160" cy="140" r="120" fill="url(#orbGlow)" />
+      <circle cx="160" cy="140" r="120" fill={`url(#${orbGlowId})`} />
 
       {/* orb */}
       <g className={reduced ? undefined : 'hero-orb'}>
@@ -39,7 +42,7 @@ export function HeroScene({ className }: { className?: string }) {
       </g>
 
       {/* desk horizon */}
-      <rect x="40" y="232" width="240" height="60" rx="10" fill="url(#deskFade)" />
+      <rect x="40" y="232" width="240" height="60" rx="10" fill={`url(#${deskFadeId})`} />
       <line x1="40" y1="232" x2="280" y2="232" stroke="var(--px-hairline-strong)" strokeWidth="1.5" />
 
       {/* drifting particles */}
