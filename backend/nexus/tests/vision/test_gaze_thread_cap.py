@@ -30,6 +30,9 @@ def _install_stubs(monkeypatch, retinaface_cls, captured):
         def get_outputs(self):
             return [types.SimpleNamespace(name="yaw"), types.SimpleNamespace(name="pitch")]
 
+        def get_providers(self):
+            return ["CPUExecutionProvider"]
+
     ort = types.ModuleType("onnxruntime")
     ort.SessionOptions = _SessionOptions
     ort.ExecutionMode = _ExecutionMode
@@ -68,19 +71,20 @@ def test_gaze_session_thread_capped_and_retinaface_fallback(monkeypatch):
     assert captured["rf_built"] is True
 
 
-def test_retinaface_receives_capped_options_when_supported(monkeypatch):
+def test_retinaface_receives_capped_providers_when_supported(monkeypatch):
     captured = {}
 
-    class _RetinaFace:  # uniface version that DOES accept sess_options
-        def __init__(self, sess_options=None):
-            captured["rf_so"] = sess_options
+    class _RetinaFace:  # uniface version that DOES accept providers
+        def __init__(self, providers=None):
+            captured["rf_providers"] = providers
 
     _install_stubs(monkeypatch, _RetinaFace, captured)
     from app.modules.vision.gaze.mobilegaze import MobileGazeEstimator
 
     MobileGazeEstimator(weights_path="/w.onnx", intra_op_threads=1)
-    # The same capped SessionOptions handed to the gaze session is passed to
-    # RetinaFace when the uniface version supports it.
-    assert captured["rf_so"] is not None
-    assert captured["rf_so"] is captured["so"]
-    assert captured["rf_so"].intra_op_num_threads == 1
+    # uniface>=3 accepts a `providers` arg → RetinaFace runs on the SAME
+    # providers as the gaze session (GPU-accelerated detection when CUDA is
+    # available). Thread-bounding on CPU is via the docker cgroup `cpus` cap,
+    # NOT sess_options. With no providers requested the estimator falls back to
+    # ["CPUExecutionProvider"], which is what RetinaFace must receive.
+    assert captured["rf_providers"] == ["CPUExecutionProvider"]
