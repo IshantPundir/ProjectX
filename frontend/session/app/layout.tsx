@@ -35,7 +35,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ProjectX Interview",
+  title: "BinQle.ai Interview",
   description: "AI-led interview session",
 };
 
