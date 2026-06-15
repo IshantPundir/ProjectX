@@ -8,7 +8,7 @@ const voiceState = 'listening'
 const endMock = vi.fn()
 vi.mock('@livekit/components-react', () => ({
   useVoiceAssistant: () => ({ state: voiceState }),
-  useSessionContext: () => ({ end: endMock }),
+  useSessionContext: () => ({ end: endMock, isConnected: true }),
   useLocalParticipant: () => ({
     localParticipant: { getTrackPublication: () => undefined },
   }),
