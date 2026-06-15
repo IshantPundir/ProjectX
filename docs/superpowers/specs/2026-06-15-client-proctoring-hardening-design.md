@@ -48,14 +48,16 @@ Four concrete weaknesses in the current client-side proctoring, all reported fro
 
 ## 5. Section 1 — Vision face-detection upgrade (G1)
 
-**Approach (chosen Option A):** add a MediaPipe `FaceDetector` with the **full-range** model as the authoritative face *count*; keep `FaceLandmarker` for head-pose/gaze/blink of the primary face only.
+**Approach (chosen Option A):** add a MediaPipe `FaceDetector` with the officially-supported **short-range** model as the authoritative face *count*; keep `FaceLandmarker` for head-pose/gaze/blink of the primary face only.
+
+> **Feasibility note (2026-06-15):** the modern Tasks `FaceDetector` ships **only the short-range BlazeFace model** (~2m); full-range is "coming soon" and not a vendorable Tasks asset. Force-loading a legacy full-range `.tflite` lacks Tasks metadata and is an unsupported hack — rejected per the no-hacks rule. **Decision:** short-range detector is the live deterrent (a real upgrade over the landmarker, which returns only the dominant face and drops a close second person); **far/background faces (>~2m) are owned by the server-side RetinaFace plane** (`app/modules/vision/`), which already runs post-interview and is far better at tiny faces than anything we'd run live. The client stays a deterrent — this is by design, not a gap.
 
 ### 5.1 New module `proctoring/vision/face-detector.ts`
-- `createFaceDetector()` — lazily creates a MediaPipe `FaceDetector` (`@mediapipe/tasks-vision`, same package) from a **same-origin** full-range model `public/mediapipe/blaze_face_full_range.tflite`, with `runningMode: 'VIDEO'`, `delegate: 'GPU'`, `minDetectionConfidence ≈ 0.5`. Mirrors `createFaceLandmarker()` exactly (dynamic import; **shared `FilesetResolver`** instance — created once, passed to both factories).
+- `createFaceDetector()` — lazily creates a MediaPipe `FaceDetector` (`@mediapipe/tasks-vision`, same package) from a **same-origin** short-range model `public/mediapipe/blaze_face_short_range.tflite`, with `runningMode: 'VIDEO'`, `delegate: 'GPU'`, and `minDetectionConfidence ≈ 0.3` (lowered from the 0.5 default to stretch effective range for a slightly-back second face). Mirrors `createFaceLandmarker()` exactly (dynamic import; **shared `FilesetResolver`** instance — created once, passed to both factories).
 - Exposes a small typed result (`{ faceCount: number; topConfidence: number }`) derived from `detector.detectForVideo(video, ts).detections`, so `use-vision-guard` does not depend on MediaPipe types directly.
 
 ### 5.2 Asset
-- Commit `blaze_face_full_range.tflite` into `public/mediapipe/` (full-range = faces within ~5m, vs short-range ~2m). Sourced from the official MediaPipe model storage; no CDN at runtime. Document provenance + license in the plan (mirrors how `face_landmarker.task` is vendored).
+- Commit `blaze_face_short_range.tflite` into `public/mediapipe/`, fetched from the official MediaPipe model storage (`https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite`); no CDN at runtime. Document provenance + license in the plan (mirrors how `face_landmarker.task` is vendored).
 
 ### 5.3 `use-vision-guard.ts` changes
 - Reuse the **single** detached `<video>` element and the existing `requestAnimationFrame` loop.
@@ -150,7 +152,7 @@ Threads through end-to-end:
 - `app/interview/[token]/CameraMicStep.tsx` (pre-check) — `isExtended` readiness gate. *(Human-review: camera/mic step flow.)*
 - A new in-session screen-change subscription (likely a small `use-display-guard.ts` hook mounted by `ProctoringGuard`, env-armed) for `multiple_displays`.
 - `lib/api/candidate-session.ts` — `ProctoringKind` gains `multiple_displays`. *(Human-review: sole API surface.)*
-- `public/mediapipe/blaze_face_full_range.tflite` — **new** vendored asset.
+- `public/mediapipe/blaze_face_short_range.tflite` — **new** vendored asset.
 
 **Backend — `backend/nexus/`**
 - `app/modules/session/proctoring.py` — `multiple_displays` → soft (`VIOLATION_SEVERITY`).
@@ -159,7 +161,7 @@ Threads through end-to-end:
 
 ## 10. Decisions Log (resolved during brainstorm)
 
-- Vision = **Option A** (MediaPipe FaceDetector full-range alongside the landmarker). Detector sampled at ~2–3 fps. Model binary vendored into `public/mediapipe/`.
+- Vision = **Option A** (MediaPipe FaceDetector alongside the landmarker), using the supported **short-range** model at `minDetectionConfidence ≈ 0.3`; far/background faces are the server RetinaFace plane's job (full-range Tasks model unavailable — see §5 feasibility note). Detector sampled at ~2–3 fps. Model binary vendored into `public/mediapipe/`.
 - Popup is for **soft** violations; **toast removed**; `ViolationBorder` **kept** as accent.
 - **Arm-at-connect only**; hard fullscreen gate **deferred**.
 - Second screen = **both** a pre-check `isExtended` gate **and** strengthened gaze (wire `ReadingAccumulator`). Display check **folded into `CameraMicStep`**. `multiple_displays` = **soft/counted**.
@@ -168,5 +170,5 @@ Threads through end-to-end:
 
 - **Two MediaPipe graphs on a weak candidate machine** → detector throttled to ~2–3 fps; shared `FilesetResolver`; GPU delegate. Revisit cadence if frame rate drops (debug overlay shows fps).
 - **`isExtended` unsupported on some browsers** → graceful no-block; the gaze plane + server plane remain the backstop.
-- **Full-range model recall on tiny faces** → if still insufficient, the server-side RetinaFace plane is the authority; the client stays a deterrent (acceptable by design).
+- **Short-range model misses far (>~2m) background faces** → accepted by design; the server-side RetinaFace plane is the authority on tiny/far faces. The client short-range detector still materially upgrades the common close-second-person case over the landmarker. `minDetectionConfidence ≈ 0.3` stretches effective range; revisit if it raises false positives (debug overlay shows the count + confidence).
 - **Early-armed focus guard false positives** → arm on `connected` state; permissions already granted pre-`onStart`; covered by tests.
