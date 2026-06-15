@@ -58,22 +58,3 @@ def relative_words(raw: list[RawWord]) -> list[WordTiming]:
             WordTiming(text=text, start_ms=start_ms, end_ms=end_ms, confidence=conf)
         )
     return out
-
-
-def turn_bounds(*, anchor_ms: int, words: list[WordTiming]) -> tuple[int, int]:
-    """Best-effort turn speech bounds on the session clock.
-
-    ``anchor_ms`` is the turn's commit timestamp (the existing ``timestamp_ms``).
-    We treat it as the turn END and walk back by the spoken duration
-    (last word's relative end). With no words, both bounds collapse to the
-    anchor. Never returns a negative start.
-
-    Intentionally approximate (commit fires after the endpointing silence, so
-    the true speech end is slightly earlier); the reel render adds a safety pad
-    and Phase 2 refines the absolute mapping against a real recording.
-    """
-    if not words:
-        return anchor_ms, anchor_ms
-    duration_ms = words[-1].end_ms
-    start_ms = max(0, anchor_ms - duration_ms)
-    return start_ms, anchor_ms

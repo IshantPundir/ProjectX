@@ -46,7 +46,6 @@ from app.modules.interview_runtime.service import (
 from app.modules.interview_runtime.transcript_timing import (
     asked_at_ms_by_question_evidence,
     relative_words,
-    turn_bounds,
 )
 
 __all__ = [
@@ -79,5 +78,4 @@ __all__ = [
     "record_session_evidence",
     "record_session_result",
     "relative_words",
-    "turn_bounds",
 ]
