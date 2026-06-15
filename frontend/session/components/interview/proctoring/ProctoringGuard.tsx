@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, type ReactNode } from 'react'
-import { useVoiceAssistant } from '@livekit/components-react'
+import { useVoiceAssistant, useSessionContext } from '@livekit/components-react'
 
 import type { ProctoringConfig } from '@/lib/api/candidate-session'
 import { useProctoringController } from './use-proctoring-controller'
@@ -40,39 +40,44 @@ export function ProctoringGuard({
 }) {
   const cfg = config ?? DISABLED
   const { state } = useVoiceAssistant()
-  const [armed, setArmed] = useState(false)
+  const ctx = useSessionContext() as unknown as { isConnected?: boolean }
+  const connected = !!ctx?.isConnected
+  const [visionSettled, setVisionSettled] = useState(false)
 
-  // Arm only once the agent is live + a short settle window, so the LiveKit
-  // connect, media publish, and the start-gesture fullscreen entry all settle
-  // before enforcement begins (prevents self-inflicted terminations).
+  // Two-tier arming. ENV guards (fullscreen/focus/visibility/keyboard/devtools)
+  // arm as soon as the room is CONNECTED — they don't need the camera, so the
+  // pre-conversation window is monitored identically to mid-interview (closes
+  // the pre-start fullscreen-exit gap). The VISION guard waits an extra settle
+  // after the agent goes live so the candidate getting seated doesn't
+  // self-trigger a "looking away" nudge.
   useEffect(() => {
-    if (armed || !cfg.enabled) return
+    if (visionSettled || !cfg.enabled) return
     if (state === 'listening' || state === 'thinking' || state === 'speaking') {
-      const t = setTimeout(() => setArmed(true), ARM_SETTLE_MS)
+      const t = setTimeout(() => setVisionSettled(true), ARM_SETTLE_MS)
       return () => clearTimeout(t)
     }
-  }, [state, armed, cfg.enabled])
+  }, [state, visionSettled, cfg.enabled])
 
   const controller = useProctoringController({ token, config: cfg, onTerminated })
-  const enforce = armed && cfg.enabled
+  const envArmed = cfg.enabled && connected
+  const visionArmed = envArmed && visionSettled
 
-  useVisibilityGuard({ armed: enforce, onViolation: controller.report })
-  useKeyboardGuard({ armed: enforce, onViolation: controller.report })
-  useDevtoolsGuard({ armed: enforce, onViolation: controller.report })
+  useVisibilityGuard({ armed: envArmed, onViolation: controller.report })
+  useKeyboardGuard({ armed: envArmed, onViolation: controller.report })
+  useDevtoolsGuard({ armed: envArmed, onViolation: controller.report })
   const focus = useFocusGuard({
-    armed: enforce,
+    armed: envArmed,
     graceSeconds: cfg.fullscreen_grace_seconds,
     onViolation: controller.report,
   })
   const fs = useFullscreenGuard({
-    armed: enforce,
+    armed: envArmed,
     graceSeconds: cfg.fullscreen_grace_seconds,
     onViolation: controller.report,
   })
-  // Vision violations report through the SAME controller as the behavioral
-  // guards: soft, counted toward the shared limit, backend-terminated on
-  // escalation (same toast + border flash as tab-switch etc.).
-  const vision = useVisionGuard({ armed: enforce, onViolation: controller.report })
+  // Vision reports through the SAME controller (soft, counted). Armed only after
+  // the agent-speech settle so seating movement doesn't self-trigger a nudge.
+  const vision = useVisionGuard({ armed: visionArmed, onViolation: controller.report })
 
   return (
     <>
