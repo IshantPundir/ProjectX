@@ -1,6 +1,6 @@
 /**
  * Smoke test for the App entry point's welcome-view branch in start vs
- * rejoin modes. Heavy mocking — the goal is to verify our outcome-routing
+ * rejoin modes. Heavy mocking -- the goal is to verify our outcome-routing
  * code, not LiveKit's session lifecycle. Anything below useSession is
  * stubbed out.
  */
@@ -15,9 +15,11 @@ vi.mock('@/components/interview/app/hooks/use-session-state-fallback', () => ({
   useSessionStateFallback: vi.fn().mockReturnValue(null),
 }))
 
+const mockStart = vi.fn().mockResolvedValue(undefined)
+
 vi.mock('@livekit/components-react', () => ({
   useSession: () => ({
-    start: vi.fn(),
+    start: mockStart,
     end: vi.fn(),
     isConnected: false,
     connectionState: 'idle',
@@ -75,18 +77,21 @@ const PRE_CHECK: PreCheckResponse = {
 }
 
 describe('App', () => {
-  it('renders the welcome view in start mode when not connected', () => {
+  it('renders the connecting view in start mode with autoStart (wizard Ready stage path)', () => {
     render(
       <App
         appConfig={APP_CONFIG_DEFAULTS}
         token="tok-1"
         preCheck={PRE_CHECK}
         mode="start"
+        autoStart
       />,
     )
     expect(
-      screen.getByRole('button', { name: /start interview/i }),
+      screen.getByText(/connecting you to your interview/i),
     ).toBeInTheDocument()
+    // autoStart fires onStart immediately -- session.start() must be called once on mount
+    expect(mockStart).toHaveBeenCalledOnce()
   })
 
   it('renders the rejoin welcome copy in rejoin mode when not connected', () => {

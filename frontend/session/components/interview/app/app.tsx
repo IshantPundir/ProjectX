@@ -28,6 +28,9 @@ interface Props {
   token: string
   preCheck: PreCheckResponse
   mode: 'start' | 'rejoin'
+  /** When true (start path from the wizard's Ready stage), connect immediately
+   *  instead of showing an in-session welcome screen. */
+  autoStart?: boolean
 }
 
 /**
@@ -40,7 +43,7 @@ interface Props {
  * a ref so React Strict Mode double-invoke or hot reload doesn't trigger a second
  * POST (which would 409 because /start is atomically single-use).
  */
-export function App({ appConfig, token, preCheck, mode }: Props) {
+export function App({ appConfig, token, preCheck, mode, autoStart = false }: Props) {
   const [outcome, setOutcome] = useState<Outcome>('live')
   const [errorCode, setErrorCode] = useState<string | null>(null)
   const [isStartPending, setIsStartPending] = useState(false)
@@ -147,6 +150,14 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
     })
   }, [session, preCheck.proctoring_enabled])
 
+  const autoStartedRef = useRef(false)
+  useEffect(() => {
+    if (autoStart && !autoStartedRef.current) {
+      autoStartedRef.current = true
+      onStart()
+    }
+  }, [autoStart, onStart])
+
   return (
     <AgentSessionProvider session={session}>
       <OutcomeWatcher
@@ -171,6 +182,7 @@ export function App({ appConfig, token, preCheck, mode }: Props) {
           proctoring={proctoring}
           proctoringReason={proctoringReason}
           onProctoringTerminated={onProctoringTerminated}
+          autoStart={autoStart}
         />
       </OutcomePrecedenceController>
       <StartAudioButton label="Start audio" />

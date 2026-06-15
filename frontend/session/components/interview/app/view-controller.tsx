@@ -9,6 +9,7 @@ import { CompletionScreen } from './CompletionScreen'
 import { DisconnectError } from './DisconnectError'
 import { ReconnectingOverlay } from './ReconnectingOverlay'
 import { WelcomeView } from './welcome-view'
+import { ConnectingView } from './ConnectingView'
 import { useAgentGraceTimeout } from './hooks/use-agent-grace-timeout'
 import { ProctoringGuard } from '../proctoring/ProctoringGuard'
 import { ProctoringEndedScreen } from './ProctoringEndedScreen'
@@ -29,6 +30,7 @@ interface Props {
   proctoring: ProctoringConfig | null
   proctoringReason: string | null
   onProctoringTerminated: (reason: ProctoringTermination) => void
+  autoStart?: boolean
 }
 
 export function ViewController({
@@ -44,6 +46,7 @@ export function ViewController({
   proctoring,
   proctoringReason,
   onProctoringTerminated,
+  autoStart,
 }: Props) {
   const ctx = useSessionContext() as unknown as { isConnected?: boolean; end?: () => void }
   const isConnected = !!ctx?.isConnected
@@ -61,6 +64,9 @@ export function ViewController({
   }
 
   if (!isConnected) {
+    // Start path auto-connects from the wizard's Ready stage -- show a connecting
+    // screen, not a second welcome/start screen. Rejoin keeps its confirm screen.
+    if (autoStart) return <ConnectingView />
     return (
       <WelcomeView
         companyName={appConfig.companyName}
