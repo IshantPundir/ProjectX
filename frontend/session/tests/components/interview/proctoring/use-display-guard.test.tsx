@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const { isMultiDisplay, subscribeDisplayChange } = vi.hoisted(() => ({
   isMultiDisplay: vi.fn(),
-  subscribeDisplayChange: vi.fn(() => () => {}),
+  subscribeDisplayChange: vi.fn((_cb: () => void) => () => {}),
 }))
 vi.mock('@/lib/proctoring/displays', () => ({ isMultiDisplay, subscribeDisplayChange }))
 
