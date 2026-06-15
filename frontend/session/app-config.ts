@@ -29,14 +29,14 @@ export interface AppConfig {
 }
 
 export const APP_CONFIG_DEFAULTS: AppConfig = {
-  companyName: 'ProjectX',
-  pageTitle: 'ProjectX · Interview',
+  companyName: 'BinQle.ai',
+  pageTitle: 'BinQle.ai · Interview',
   pageDescription: 'AI-led interview',
   supportsChatInput: true,
   supportsVideoInput: true,
   supportsScreenShare: true,
   isPreConnectBufferEnabled: true,
-  logo: '/projectx-logo.svg',
+  logo: '/brand/binqle-mark.png',
   startButtonText: 'Start interview',
   accent: '#8B5CF6',
   audioVisualizerType: 'aura',
