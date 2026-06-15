@@ -16,6 +16,13 @@ export interface BorderFlash {
   key: number
 }
 
+export interface ViolationNotice {
+  kind: ProctoringKind
+  softCount: number
+  limit: number
+  key: number
+}
+
 export interface UseProctoringControllerArgs {
   token: string
   config: ProctoringConfig
@@ -25,6 +32,8 @@ export interface UseProctoringControllerArgs {
 export interface ProctoringController {
   report: (kind: ProctoringKind) => Promise<void>
   flash: BorderFlash | null
+  notice: ViolationNotice | null
+  dismissNotice: () => void
 }
 
 export function useProctoringController({
@@ -36,6 +45,9 @@ export function useProctoringController({
   const [flash, setFlash] = useState<BorderFlash | null>(null)
   const flashKey = useRef(0)
   const softCount = useRef(0)
+  const [notice, setNotice] = useState<ViolationNotice | null>(null)
+  const noticeKey = useRef(0)
+  const dismissNotice = useCallback(() => setNotice(null), [])
   const terminatedRef = useRef(false)
 
   const terminate = useCallback(
@@ -66,11 +78,15 @@ export function useProctoringController({
         return
       }
 
-      // Soft: warn, then let the backend decide the threshold.
+      // Soft: surface a modal notice, then let the backend decide the threshold.
       softCount.current += 1
-      toast.warning(
-        `Warning ${softCount.current} of ${config.soft_violation_limit}: please avoid ${VIOLATION_LABEL[kind]}.`,
-      )
+      noticeKey.current += 1
+      setNotice({
+        kind,
+        softCount: softCount.current,
+        limit: config.soft_violation_limit,
+        key: noticeKey.current,
+      })
       try {
         const res = await candidateSessionApi.proctoringEvent(token, {
           kind,
@@ -84,5 +100,5 @@ export function useProctoringController({
     [token, config.soft_violation_limit, terminate],
   )
 
-  return { report, flash }
+  return { report, flash, notice, dismissNotice }
 }

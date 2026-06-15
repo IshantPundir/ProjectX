@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
 
 import { candidateSessionApi } from '@/lib/api/candidate-session'
 import { useProctoringController } from '@/components/interview/proctoring/use-proctoring-controller'
@@ -54,5 +55,33 @@ describe('useProctoringController', () => {
       await result.current.report('fullscreen_abandoned')
     })
     expect(onTerminated).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('useProctoringController — soft notice', () => {
+  it('sets a notice and does NOT toast.warning on a soft violation', async () => {
+    vi.spyOn(candidateSessionApi, 'proctoringEvent').mockResolvedValue({
+      terminated: false, violation_count: 1, soft_violation_count: 1,
+    })
+    const { result } = renderHook(() =>
+      useProctoringController({ token: 't', config: cfg, onTerminated: vi.fn() }),
+    )
+    await act(async () => {
+      await result.current.report('keyboard')
+    })
+    expect(result.current.notice).toMatchObject({ kind: 'keyboard', softCount: 1, limit: 3 })
+    expect(toast.warning).not.toHaveBeenCalled()
+  })
+
+  it('dismissNotice clears the notice', async () => {
+    vi.spyOn(candidateSessionApi, 'proctoringEvent').mockResolvedValue({
+      terminated: false, violation_count: 1, soft_violation_count: 1,
+    })
+    const { result } = renderHook(() =>
+      useProctoringController({ token: 't', config: cfg, onTerminated: vi.fn() }),
+    )
+    await act(async () => { await result.current.report('keyboard') })
+    act(() => { result.current.dismissNotice() })
+    expect(result.current.notice).toBeNull()
   })
 })
