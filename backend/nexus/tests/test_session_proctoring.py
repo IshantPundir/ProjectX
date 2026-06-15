@@ -94,3 +94,15 @@ def test_vision_kind_over_limit_terminates_via_shared_counter(kind):
     )
     assert terminal is True
     assert outcome == "soft_threshold_exceeded"
+
+
+def test_multiple_displays_is_soft():
+    assert classify_severity("multiple_displays") == "soft"
+
+
+def test_multiple_displays_over_limit_terminates_via_shared_counter():
+    terminal, outcome = decide_termination(
+        kind="multiple_displays", soft_count_including_new=4, soft_limit=3
+    )
+    assert terminal is True
+    assert outcome == "soft_threshold_exceeded"

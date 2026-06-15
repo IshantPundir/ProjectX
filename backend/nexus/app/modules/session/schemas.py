@@ -98,6 +98,7 @@ ProctoringKind = Literal[
     "multiple_faces",
     "face_not_visible",
     "looking_away_sustained",
+    "multiple_displays",
 ]
 
 

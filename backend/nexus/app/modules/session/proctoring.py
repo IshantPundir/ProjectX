@@ -29,6 +29,10 @@ VIOLATION_SEVERITY: dict[str, Severity] = {
     "multiple_faces": "soft",
     "face_not_visible": "soft",
     "looking_away_sustained": "soft",
+    # Second-screen: a multi-display setup detected mid-session. SOFT — could be
+    # accidental; backend stays authoritative on the threshold. Pre-check also
+    # gates multi-display before the interview starts (client). See spec §8.
+    "multiple_displays": "soft",
 }
 
 
