@@ -53,11 +53,17 @@ export function useProctoringController({
   const terminate = useCallback(
     (reason: ProctoringTermination) => {
       if (terminatedRef.current) return
+      if (config.terminate_enabled === false) {
+        // Dry-run (server-propagated): keep the session alive so all warnings,
+        // popups and the counter keep firing as in production. Do NOT latch
+        // terminatedRef, so subsequent violations are still processed.
+        return
+      }
       terminatedRef.current = true
       onTerminated(reason) // sets the app-level terminal ref synchronously
       ctx.end?.() // disconnect; OutcomeWatcher is guarded against this
     },
-    [ctx, onTerminated],
+    [ctx, onTerminated, config.terminate_enabled],
   )
 
   const report = useCallback(

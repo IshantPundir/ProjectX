@@ -72,6 +72,10 @@ export interface ProctoringConfig {
   enabled: boolean
   soft_violation_limit: number
   fullscreen_grace_seconds: number
+  /** When false (server-propagated, e.g. PROCTORING_TERMINATION_ENABLED=false),
+   * proctoring still warns/counts/pops up but never ends the session — a dry-run
+   * for testing the proctoring UX in production-like conditions. */
+  terminate_enabled?: boolean
 }
 
 export interface ProctoringEventBody {

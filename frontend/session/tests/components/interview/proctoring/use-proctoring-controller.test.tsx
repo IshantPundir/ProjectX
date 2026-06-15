@@ -58,6 +58,50 @@ describe('useProctoringController', () => {
   })
 })
 
+describe('useProctoringController — dry-run (terminate_enabled=false)', () => {
+  const dryCfg = { ...cfg, terminate_enabled: false }
+
+  it('does not terminate on a hard violation when termination is disabled', async () => {
+    vi.spyOn(candidateSessionApi, 'proctoringEvent').mockResolvedValue({
+      terminated: false, violation_count: 1, soft_violation_count: 0,
+    })
+    const onTerminated = vi.fn()
+    const { result } = renderHook(() =>
+      useProctoringController({ token: 't', config: dryCfg, onTerminated }),
+    )
+    await act(async () => { await result.current.report('devtools') })
+    expect(onTerminated).not.toHaveBeenCalled()
+  })
+
+  it('keeps processing further violations after a hard one (no latch)', async () => {
+    vi.spyOn(candidateSessionApi, 'proctoringEvent').mockResolvedValue({
+      terminated: false, violation_count: 2, soft_violation_count: 1,
+    })
+    const onTerminated = vi.fn()
+    const { result } = renderHook(() =>
+      useProctoringController({ token: 't', config: dryCfg, onTerminated }),
+    )
+    await act(async () => { await result.current.report('devtools') })
+    await act(async () => { await result.current.report('keyboard') })
+    // The soft violation after the hard one still produced a notice (not blocked
+    // by a latched terminatedRef).
+    expect(result.current.notice).toMatchObject({ kind: 'keyboard' })
+    expect(onTerminated).not.toHaveBeenCalled()
+  })
+
+  it('still terminates a hard violation when terminate_enabled is omitted (default)', async () => {
+    vi.spyOn(candidateSessionApi, 'proctoringEvent').mockResolvedValue({
+      terminated: false, violation_count: 1, soft_violation_count: 0,
+    })
+    const onTerminated = vi.fn()
+    const { result } = renderHook(() =>
+      useProctoringController({ token: 't', config: cfg, onTerminated }),
+    )
+    await act(async () => { await result.current.report('devtools') })
+    expect(onTerminated).toHaveBeenCalledWith('devtools')
+  })
+})
+
 describe('useProctoringController — soft notice', () => {
   it('sets a notice and does NOT toast.warning on a soft violation', async () => {
     vi.spyOn(candidateSessionApi, 'proctoringEvent').mockResolvedValue({
