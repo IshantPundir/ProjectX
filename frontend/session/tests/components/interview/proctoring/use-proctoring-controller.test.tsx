@@ -84,4 +84,18 @@ describe('useProctoringController — soft notice', () => {
     act(() => { result.current.dismissNotice() })
     expect(result.current.notice).toBeNull()
   })
+
+  it('accumulates softCount and bumps the notice key across successive soft violations', async () => {
+    vi.spyOn(candidateSessionApi, 'proctoringEvent').mockResolvedValue({
+      terminated: false, violation_count: 1, soft_violation_count: 1,
+    })
+    const { result } = renderHook(() =>
+      useProctoringController({ token: 't', config: cfg, onTerminated: vi.fn() }),
+    )
+    await act(async () => { await result.current.report('keyboard') })
+    const firstKey = result.current.notice!.key
+    await act(async () => { await result.current.report('looking_away_sustained') })
+    expect(result.current.notice).toMatchObject({ kind: 'looking_away_sustained', softCount: 2 })
+    expect(result.current.notice!.key).toBeGreaterThan(firstKey)
+  })
 })
