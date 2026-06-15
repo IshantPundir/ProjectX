@@ -44,6 +44,14 @@ def _patch_bypass_session_to(db: AsyncSession):
     return patch("app.middleware.auth.get_bypass_session", _fake_bypass)
 
 
+@pytest.fixture(autouse=True)
+def _termination_enabled(monkeypatch):
+    """Pin PROCTORING_TERMINATION_ENABLED on so these endpoint tests are
+    hermetic regardless of the developer's local .env (a dev may set it false
+    for dry-run testing)."""
+    monkeypatch.setattr(session_service.settings, "proctoring_termination_enabled", True)
+
+
 @pytest.mark.asyncio
 async def test_hard_violation_returns_terminated_true(db: AsyncSession):
     """POST devtools (hard kind) for an active session → 200, terminated=True."""

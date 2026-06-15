@@ -40,6 +40,14 @@ async def make_active_session(db: AsyncSession, tenant_id: uuid.UUID):  # type: 
     return session, actual_tenant_id
 
 
+@pytest.fixture(autouse=True)
+def _termination_enabled(monkeypatch):
+    """Pin PROCTORING_TERMINATION_ENABLED on so the termination-behavior tests
+    are hermetic regardless of the developer's local .env. The dry-run tests
+    override this to False inside the test body."""
+    monkeypatch.setattr(session_service.settings, "proctoring_termination_enabled", True)
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -245,13 +253,13 @@ async def test_pre_check_exposes_proctoring_outcome_for_terminated_session(db: A
 @pytest.mark.asyncio
 async def test_build_proctoring_config_uses_lazy_defaults(db: AsyncSession):
     """A tenant with no tenant_settings row → schema defaults (enabled, 3, 10).
-    terminate_enabled mirrors the global setting (default True).
+
+    terminate_enabled coverage lives in test_build_proctoring_config_exposes_terminate_enabled.
     """
     cfg = await session_service._build_proctoring_config(db, uuid.uuid4())
     assert cfg.enabled is True
     assert cfg.soft_violation_limit == 3
     assert cfg.fullscreen_grace_seconds == 10
-    assert cfg.terminate_enabled is True
 
 
 @pytest.mark.asyncio
