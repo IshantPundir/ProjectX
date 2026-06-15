@@ -3,10 +3,13 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/px'
+import { isMultiDisplay, subscribeDisplayChange } from '@/lib/proctoring/displays'
 import { sampleNoiseFloorDbfs } from './sampleNoiseFloorDbfs'
 
 interface Props {
   onPass: () => void
+  /** When true, gate Continue on a single-display setup (proctored sessions). */
+  proctored?: boolean
 }
 
 type Status = 'idle' | 'prompting' | 'sampling' | 'ready' | 'denied'
@@ -18,12 +21,20 @@ type Status = 'idle' | 'prompting' | 'sampling' | 'ready' | 'denied'
 // above -30.
 const NOISE_WARN_DBFS = -30
 
-export function CameraMicStep({ onPass }: Props) {
+export function CameraMicStep({ onPass, proctored = false }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [status, setStatus] = useState<Status>('idle')
   const [error, setError] = useState<string | null>(null)
   const [noiseDbfs, setNoiseDbfs] = useState<number | null>(null)
+  const [multiDisplay, setMultiDisplay] = useState<boolean | null>(null)
+  useEffect(() => {
+    if (!proctored) return
+    const refresh = () => setMultiDisplay(isMultiDisplay())
+    refresh()
+    return subscribeDisplayChange(refresh)
+  }, [proctored])
+  const displayBlocked = proctored && multiDisplay === true
 
   const start = async () => {
     setStatus('prompting')
@@ -134,7 +145,18 @@ export function CameraMicStep({ onPass }: Props) {
               >
                 Camera and mic are working ✓
               </span>
-              <Button onClick={onPass}>Continue →</Button>
+              {displayBlocked ? (
+                <>
+                  <span className="text-sm" style={{ color: 'var(--px-danger)' }} role="status">
+                    Please disconnect additional displays to continue.
+                  </span>
+                  <Button variant="outline" onClick={() => setMultiDisplay(isMultiDisplay())}>
+                    Re-check
+                  </Button>
+                </>
+              ) : (
+                <Button onClick={onPass}>Continue →</Button>
+              )}
             </>
           )}
           {status === 'denied' && (

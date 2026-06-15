@@ -19,6 +19,12 @@ vi.mock('@/app/interview/[token]/sampleNoiseFloorDbfs', () => ({
   sampleNoiseFloorDbfs: vi.fn(),
 }))
 
+const { isMultiDisplay, subscribeDisplayChange } = vi.hoisted(() => ({
+  isMultiDisplay: vi.fn((): boolean | null => null),
+  subscribeDisplayChange: vi.fn((_cb: () => void) => () => {}),
+}))
+vi.mock('@/lib/proctoring/displays', () => ({ isMultiDisplay, subscribeDisplayChange }))
+
 import { CameraMicStep } from '@/app/interview/[token]/CameraMicStep'
 import { sampleNoiseFloorDbfs } from '@/app/interview/[token]/sampleNoiseFloorDbfs'
 
@@ -110,5 +116,56 @@ describe('CameraMicStep', () => {
         expect(screen.getByText(/sounds noisy/i)).toBeInTheDocument()
       })
     }
+  })
+})
+
+describe('CameraMicStep — multi-display gate', () => {
+  let getUserMediaMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    getUserMediaMock = vi.fn()
+    Object.defineProperty(navigator, 'mediaDevices', {
+      value: {
+        getUserMedia: getUserMediaMock,
+        enumerateDevices: vi.fn().mockResolvedValue([]),
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      },
+      writable: true,
+      configurable: true,
+    })
+    mockSampleNoiseFloorDbfs.mockResolvedValue(-100)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('blocks Continue when proctored and a second display is detected', async () => {
+    isMultiDisplay.mockReturnValue(true)
+    mockSampleNoiseFloorDbfs.mockResolvedValue(-45)
+    getUserMediaMock.mockResolvedValueOnce(buildStream(buildAudioTrack()))
+    render(<CameraMicStep onPass={vi.fn()} proctored />)
+    fireEvent.click(screen.getByRole('button', { name: /test camera/i }))
+    await waitFor(() => expect(screen.getByText(/disconnect additional displays/i)).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /continue/i })).toBeNull()
+  })
+
+  it('allows Continue when proctored but single-display', async () => {
+    isMultiDisplay.mockReturnValue(false)
+    mockSampleNoiseFloorDbfs.mockResolvedValue(-45)
+    getUserMediaMock.mockResolvedValueOnce(buildStream(buildAudioTrack()))
+    render(<CameraMicStep onPass={vi.fn()} proctored />)
+    fireEvent.click(screen.getByRole('button', { name: /test camera/i }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /continue/i })).toBeInTheDocument())
+  })
+
+  it('does not gate when not proctored even if extended', async () => {
+    isMultiDisplay.mockReturnValue(true)
+    mockSampleNoiseFloorDbfs.mockResolvedValue(-45)
+    getUserMediaMock.mockResolvedValueOnce(buildStream(buildAudioTrack()))
+    render(<CameraMicStep onPass={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: /test camera/i }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /continue/i })).toBeInTheDocument())
   })
 })
