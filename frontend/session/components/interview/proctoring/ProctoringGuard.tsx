@@ -9,6 +9,7 @@ import { useVisibilityGuard } from './use-visibility-guard'
 import { useFocusGuard } from './use-focus-guard'
 import { useKeyboardGuard } from './use-keyboard-guard'
 import { useDevtoolsGuard } from './use-devtools-guard'
+import { useDisplayGuard } from './use-display-guard'
 import { useFullscreenGuard } from './use-fullscreen-guard'
 import { useVisionGuard } from './use-vision-guard'
 import { ViolationBorder } from './ViolationBorder'
@@ -70,6 +71,7 @@ export function ProctoringGuard({
   useVisibilityGuard({ armed: envArmed, onViolation: controller.report })
   useKeyboardGuard({ armed: envArmed, onViolation: controller.report })
   useDevtoolsGuard({ armed: envArmed, onViolation: controller.report })
+  useDisplayGuard({ armed: envArmed, onViolation: controller.report })
   const focus = useFocusGuard({
     armed: envArmed,
     graceSeconds: cfg.fullscreen_grace_seconds,
