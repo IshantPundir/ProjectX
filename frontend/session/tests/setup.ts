@@ -108,7 +108,7 @@ if (typeof globalThis.IntersectionObserver === 'undefined') {
 
 /**
  * `getUserMedia` polyfill. jsdom does not implement
- * `navigator.mediaDevices`. CameraMicStep + the LiveKit publish path
+ * `navigator.mediaDevices`. ReadyStage + the LiveKit publish path
  * touch it on mount; tests that don't explicitly exercise device
  * selection get a sane no-op default and can override per-test.
  */

@@ -15,7 +15,7 @@ export function useConsent(token: string) {
     // Flip state to 'consented' on the cached /pre-check response
     // synchronously so WizardShell advances on this render tick. Awaiting
     // invalidateQueries alone races with React's subscriber-notify hop and
-    // sometimes strands the wizard on ConsentStep until the user reloads.
+    // sometimes strands the wizard on the Intro stage until the user reloads.
     // The follow-up invalidation refreshes any other fields.
     onSuccess: () => {
       qc.setQueryData<PreCheckResponse>(

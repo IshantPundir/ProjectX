@@ -13,9 +13,9 @@ export function useVerifyOtp(token: string) {
   return useMutation<void, Error, VerifyOtpBody>({
     mutationFn: (body) => candidateSessionApi.verifyOtp(token, body),
     // Stamp otp_verified_at on the cached /pre-check response synchronously
-    // so WizardShell advances to CameraMicStep on this render tick. Awaiting
+    // so WizardShell advances to the Ready stage on this render tick. Awaiting
     // invalidateQueries alone races with React's subscriber-notify hop and
-    // sometimes leaves the wizard stuck on OtpStep until the user reloads.
+    // sometimes leaves the wizard stuck on the Verify stage until the user reloads.
     // The follow-up invalidation refreshes any other fields the server may
     // have changed.
     onSuccess: () => {
