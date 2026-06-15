@@ -34,7 +34,10 @@ export function CameraMicStep({ onPass, proctored = false }: Props) {
     refresh()
     return subscribeDisplayChange(refresh)
   }, [proctored])
-  const displayBlocked = proctored && multiDisplay === true
+  // Multi-display is a non-blocking WARNING at pre-check (a deterrent, not a
+  // hard wall) — the candidate may still continue. A connected second screen is
+  // also flagged in-session via useDisplayGuard (soft `multiple_displays`).
+  const displayWarn = proctored && multiDisplay === true
 
   const start = async () => {
     setStatus('prompting')
@@ -145,18 +148,7 @@ export function CameraMicStep({ onPass, proctored = false }: Props) {
               >
                 Camera and mic are working ✓
               </span>
-              {displayBlocked ? (
-                <>
-                  <span className="text-sm" style={{ color: 'var(--px-danger)' }} role="status">
-                    Please disconnect additional displays to continue.
-                  </span>
-                  <Button variant="outline" onClick={() => setMultiDisplay(isMultiDisplay())}>
-                    Re-check
-                  </Button>
-                </>
-              ) : (
-                <Button onClick={onPass}>Continue →</Button>
-              )}
+              <Button onClick={onPass}>Continue →</Button>
             </>
           )}
           {status === 'denied' && (
@@ -178,6 +170,16 @@ export function CameraMicStep({ onPass, proctored = false }: Props) {
           >
             Your environment sounds noisy. The interview will still work,
             but for the cleanest call, find a quieter spot.
+          </p>
+        )}
+        {status === 'ready' && displayWarn && (
+          <p
+            className="mt-3 text-[13px]"
+            style={{ lineHeight: 1.6, color: 'var(--px-caution)' }}
+            role="status"
+          >
+            We detected more than one display. A single screen is recommended —
+            using multiple displays is flagged during the interview.
           </p>
         )}
       </div>

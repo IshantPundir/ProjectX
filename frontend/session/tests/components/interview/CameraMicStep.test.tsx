@@ -141,14 +141,14 @@ describe('CameraMicStep — multi-display gate', () => {
     vi.restoreAllMocks()
   })
 
-  it('blocks Continue when proctored and a second display is detected', async () => {
+  it('warns but still allows Continue when proctored and a second display is detected', async () => {
     isMultiDisplay.mockReturnValue(true)
     mockSampleNoiseFloorDbfs.mockResolvedValue(-45)
     getUserMediaMock.mockResolvedValueOnce(buildStream(buildAudioTrack()))
     render(<CameraMicStep onPass={vi.fn()} proctored />)
     fireEvent.click(screen.getByRole('button', { name: /test camera/i }))
-    await waitFor(() => expect(screen.getByText(/disconnect additional displays/i)).toBeInTheDocument())
-    expect(screen.queryByRole('button', { name: /continue/i })).toBeNull()
+    await waitFor(() => expect(screen.getByText(/more than one display/i)).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /continue/i })).toBeInTheDocument()
   })
 
   it('allows Continue when proctored but single-display', async () => {
@@ -176,6 +176,6 @@ describe('CameraMicStep — multi-display gate', () => {
     render(<CameraMicStep onPass={vi.fn()} proctored />)
     fireEvent.click(screen.getByRole('button', { name: /test camera/i }))
     await waitFor(() => expect(screen.getByRole('button', { name: /continue/i })).toBeInTheDocument())
-    expect(screen.queryByText(/disconnect additional displays/i)).toBeNull()
+    expect(screen.queryByText(/more than one display/i)).toBeNull()
   })
 })
