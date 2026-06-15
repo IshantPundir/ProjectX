@@ -18,3 +18,14 @@ endpoints:
     description: "Candidate session app (frontend/session, port 3002)"
     upstream:
       url: 3002
+
+  # Self-hosted LiveKit SFU *signaling* only (HTTP/WS on 7880). The candidate
+  # browser loads the session app over HTTPS, so it must reach the SFU over WSS
+  # — a plain ws:// is blocked as mixed content. ngrok gives a trusted-cert
+  # https endpoint we flip to wss for signaling. WebRTC *media* does NOT go
+  # through here: it flows LAN-direct (UDP 50000-60000) to this host's LAN IP,
+  # so this only works for candidates on the same WiFi.
+  - name: livekit-signaling
+    description: "Self-hosted LiveKit SFU signaling (port 7880)"
+    upstream:
+      url: 7880

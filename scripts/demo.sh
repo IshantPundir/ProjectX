@@ -9,11 +9,20 @@
 #           containers.
 #   status  Show which mode is active and the current ngrok URLs.
 #
-# Scope (decided 2026-05-18):
-#   - This script DOES touch:  ngrok lifecycle, backend/nexus/.env,
-#     frontend/session/.env.local, backend docker compose.
+# Scope (decided 2026-05-18; extended 2026-06-15 for self-hosted LiveKit):
+#   - This script DOES touch:  ngrok lifecycle (backend + session + LiveKit
+#     signaling tunnels), backend/nexus/.env (CANDIDATE_SESSION_BASE_URL,
+#     CORS_ORIGINS, LIVEKIT_PUBLIC_URL), frontend/session/.env.local
+#     (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_LIVEKIT_WS_URL), backend docker compose
+#     (incl. bringing up the self-hosted LiveKit plane).
 #   - This script does NOT:    start `npm run dev` for any frontend, touch the
 #     recruiter app (frontend/app), or change anything Supabase-related.
+#
+# Self-hosted LiveKit / LAN-only note:
+#   WebRTC media flows LAN-direct (UDP 50000-60000) to this host's LAN IP — ngrok
+#   only carries the low-bandwidth signaling. So candidates MUST be on the same
+#   WiFi as this machine. True remote (internet) candidates need LiveKit Cloud
+#   or a public-VM SFU; that is out of scope for this script.
 #
 # After running `lan`, restart the session app yourself:
 #     (cd frontend/session && npm run dev)
@@ -114,8 +123,8 @@ start_ngrok() {
   echo $! > "$NGROK_PID_FILE"
 }
 
-# Poll the ngrok local API until both endpoints are visible. Returns
-# "<backend>|<session>" on stdout.
+# Poll the ngrok local API until all three endpoints are visible. Returns
+# "<backend>|<session>|<livekit>" on stdout.
 fetch_tunnel_urls() {
   local deadline=$(( $(date +%s) + 25 ))
   while [[ "$(date +%s)" -lt $deadline ]]; do
@@ -123,19 +132,23 @@ fetch_tunnel_urls() {
       die "ngrok exited unexpectedly. Tail of $NGROK_LOG_FILE:
 $(tail -20 "$NGROK_LOG_FILE" 2>/dev/null || echo "(no log)")"
     fi
-    local raw backend session
+    local raw backend session livekit
     raw="$(curl -fsS http://127.0.0.1:4040/api/tunnels 2>/dev/null || true)"
     if [[ -n "$raw" ]]; then
       backend=$(echo "$raw" | jq -r '.tunnels[] | select(.name=="nexus-backend") | .public_url' | head -1)
       session=$(echo "$raw" | jq -r '.tunnels[] | select(.name=="session-frontend") | .public_url' | head -1)
-      if [[ "$backend" =~ ^https?:// && "$session" =~ ^https?:// ]]; then
-        echo "${backend}|${session}"
+      livekit=$(echo "$raw" | jq -r '.tunnels[] | select(.name=="livekit-signaling") | .public_url' | head -1)
+      if [[ "$backend" =~ ^https?:// && "$session" =~ ^https?:// && "$livekit" =~ ^https?:// ]]; then
+        echo "${backend}|${session}|${livekit}"
         return 0
       fi
     fi
     sleep 1
   done
-  die "Timed out waiting for ngrok tunnels (check $NGROK_LOG_FILE)"
+  die "Timed out waiting for ngrok tunnels (check $NGROK_LOG_FILE).
+Note: this now needs THREE simultaneous tunnels (backend + session + LiveKit).
+The ngrok free tier caps simultaneous tunnels — if the log shows a limit error,
+upgrade the ngrok plan or reserve domains."
 }
 
 backup_envs_once() {
@@ -211,9 +224,20 @@ recreate_backend_containers() {
   (cd "$BACKEND_DIR" && docker compose up -d --force-recreate nexus nexus-worker nexus-engine)
 }
 
+ensure_livekit_plane() {
+  # The self-hosted LiveKit SFU must be running for ANY interview (local or LAN).
+  # COMPOSE_FILE (.env) already merges docker-compose.livekit.yml, so these
+  # service names resolve. Plain `up -d` (no --force-recreate) is idempotent and
+  # won't drop an in-progress call. Without this, create_room hits a dead SFU and
+  # the candidate sees AGENT_NO_SHOW.
+  (cd "$BACKEND_DIR" && docker compose up -d livekit-redis livekit-server livekit-egress)
+}
+
 read_env_value() {
   local file="$1" key="$2"
-  grep -E "^${key}=" "$file" 2>/dev/null | head -1 | cut -d= -f2-
+  # `|| true` keeps a missing key (grep exit 1) or a head-closed-pipe SIGPIPE
+  # from tripping `set -euo pipefail`. Callers treat empty as <unset>.
+  grep -E "^${key}=" "$file" 2>/dev/null | head -1 | cut -d= -f2- || true
 }
 
 # ---------------------------------------------------------------------------
@@ -226,22 +250,35 @@ cmd_lan() {
   info "Backing up env files (if first time)…"
   backup_envs_once
 
+  info "Ensuring the self-hosted LiveKit plane is up…"
+  ensure_livekit_plane
+
   info "Starting ngrok…"
   start_ngrok
 
   info "Waiting for tunnels to come up…"
   local urls; urls="$(fetch_tunnel_urls)"
-  local backend_url="${urls%|*}"
-  local session_url="${urls#*|}"
+  local backend_url session_url livekit_url
+  IFS='|' read -r backend_url session_url livekit_url <<< "$urls"
+
+  # The candidate browser loads the session app over HTTPS, so it must reach the
+  # SFU over WSS (a plain ws:// would be blocked as mixed content). Flip the
+  # ngrok https endpoint to wss for signaling. The session app's CSP connect-src
+  # needs BOTH schemes (the livekit-client opens a WebSocket AND issues an
+  # https fetch to /rtc/v1/validate against the same host).
+  local livekit_wss="${livekit_url/https:/wss:}"
   echo "    backend  → $backend_url"
   echo "    session  → $session_url"
+  echo "    livekit  → $livekit_wss (signaling; media is LAN-direct)"
 
-  info "Rewriting backend/nexus/.env (CANDIDATE_SESSION_BASE_URL, CORS_ORIGINS)…"
+  info "Rewriting backend/nexus/.env (CANDIDATE_SESSION_BASE_URL, LIVEKIT_PUBLIC_URL, CORS_ORIGINS)…"
   set_env_var "$BACKEND_ENV" "CANDIDATE_SESSION_BASE_URL" "$session_url"
+  set_env_var "$BACKEND_ENV" "LIVEKIT_PUBLIC_URL" "$livekit_wss"
   set_cors_origins "$BACKEND_ENV" "$session_url" "$backend_url" "${LOCAL_ORIGINS[@]}"
 
-  info "Rewriting frontend/session/.env.local (NEXT_PUBLIC_API_URL)…"
+  info "Rewriting frontend/session/.env.local (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_LIVEKIT_WS_URL)…"
   set_env_var "$SESSION_ENV" "NEXT_PUBLIC_API_URL" "$backend_url"
+  set_env_var "$SESSION_ENV" "NEXT_PUBLIC_LIVEKIT_WS_URL" "$livekit_wss $livekit_url"
 
   info "Recreating backend docker containers so they read the new env…"
   recreate_backend_containers
@@ -254,16 +291,25 @@ $(ok "LAN mode is live.")
     ${session_url}/interview/<token>
 
   Public backend:  $backend_url
+  LiveKit signal:  $livekit_wss  (media is LAN-direct — same WiFi only)
   ngrok dashboard: http://127.0.0.1:4040
 
 Next steps:
-  1. (Re)start the session app — required because Next.js reads .env.local on boot:
+  1. (Re)start the session app — required because Next.js reads .env.local on boot
+     (this is also how it picks up the new NEXT_PUBLIC_LIVEKIT_WS_URL):
        (cd frontend/session && npm run dev)
   2. From your recruiter dashboard at http://localhost:3000, send an invite.
   3. Grab the candidate URL from the dry-run email log:
        docker compose -f $BACKEND_DIR/docker-compose.yml logs --tail=200 nexus \\
          | grep -E 'invite_url|email.dry_run'
-  4. Open that URL on any device on the WiFi.
+  4. Open that URL on a device that is ON THE SAME WiFi as this machine.
+     (WebRTC media goes LAN-direct to this host — a phone on cellular or a
+      remote laptop will connect signaling but get no audio/video.)
+
+If the candidate joins but the interviewer never connects / no audio:
+  - Confirm this host's firewall allows inbound UDP 50000-60000 (+ TCP 7881)
+    from the LAN, e.g.:  sudo ss -ulnp | grep -E ':5[0-9]{4}'
+  - Confirm the LiveKit plane is healthy:  docker compose ps livekit-server
 
 When you're done:  $(basename "$0") local
 EOF
@@ -279,11 +325,14 @@ cmd_local() {
     info "ngrok already stopped"
   fi
 
+  info "Ensuring the self-hosted LiveKit plane is up (needed for local interviews too)…"
+  ensure_livekit_plane
+
   if restore_envs; then
     info "Restored env files to their pre-LAN values"
     info "Recreating backend docker containers so they read the restored env…"
     recreate_backend_containers
-    ok "Local mode restored. If your session app was running, restart it to pick up NEXT_PUBLIC_API_URL=http://localhost:8000."
+    ok "Local mode restored. If your session app was running, restart it to pick up NEXT_PUBLIC_API_URL=http://localhost:8000 and the local LIVEKIT_PUBLIC_URL."
   else
     info "No env backup to restore — nothing to change"
   fi
@@ -298,11 +347,16 @@ cmd_status() {
   fi
   session_api="$(read_env_value "$SESSION_ENV" "NEXT_PUBLIC_API_URL")"
   backend_csbu="$(read_env_value "$BACKEND_ENV" "CANDIDATE_SESSION_BASE_URL")"
+  local backend_lk_public session_lk_ws
+  backend_lk_public="$(read_env_value "$BACKEND_ENV" "LIVEKIT_PUBLIC_URL")"
+  session_lk_ws="$(read_env_value "$SESSION_ENV" "NEXT_PUBLIC_LIVEKIT_WS_URL")"
 
   echo "Mode: $mode"
   echo
-  echo "  frontend/session NEXT_PUBLIC_API_URL : ${session_api:-<unset>}"
-  echo "  backend          CANDIDATE_SESSION_BASE_URL: ${backend_csbu:-<unset>}"
+  echo "  frontend/session NEXT_PUBLIC_API_URL        : ${session_api:-<unset>}"
+  echo "  frontend/session NEXT_PUBLIC_LIVEKIT_WS_URL : ${session_lk_ws:-<unset>}"
+  echo "  backend          CANDIDATE_SESSION_BASE_URL : ${backend_csbu:-<unset>}"
+  echo "  backend          LIVEKIT_PUBLIC_URL         : ${backend_lk_public:-<unset>}"
   echo
 
   if ngrok_pid_alive; then
