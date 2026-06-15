@@ -168,4 +168,14 @@ describe('CameraMicStep — multi-display gate', () => {
     fireEvent.click(screen.getByRole('button', { name: /test camera/i }))
     await waitFor(() => expect(screen.getByRole('button', { name: /continue/i })).toBeInTheDocument())
   })
+
+  it('does not block a proctored session when display detection is unsupported (null)', async () => {
+    isMultiDisplay.mockReturnValue(null)
+    mockSampleNoiseFloorDbfs.mockResolvedValue(-45)
+    getUserMediaMock.mockResolvedValueOnce(buildStream(buildAudioTrack()))
+    render(<CameraMicStep onPass={vi.fn()} proctored />)
+    fireEvent.click(screen.getByRole('button', { name: /test camera/i }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /continue/i })).toBeInTheDocument())
+    expect(screen.queryByText(/disconnect additional displays/i)).toBeNull()
+  })
 })
