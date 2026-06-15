@@ -20,6 +20,16 @@ vi.mock('@/components/interview/proctoring/vision/face-landmarker', () => ({
   }),
   blendshape: () => 0,
 }))
+vi.mock('@/components/interview/proctoring/vision/face-detector', () => ({
+  createFaceDetector: vi.fn().mockResolvedValue({
+    detectForVideo: vi.fn(() => ({ detections: [] })),
+    close: vi.fn(),
+  }),
+  summarizeDetections: (r: { detections?: unknown[] }) => ({
+    faceCount: r.detections?.length ?? 0,
+    topConfidence: 0,
+  }),
+}))
 vi.mock('sonner', () => ({ toast: { warning: vi.fn(), error: vi.fn() } }))
 // Pin the debug flag OFF explicitly so this negative case is deterministic
 // regardless of an ambient NEXT_PUBLIC_PROCTORING_DEBUG in .env.local (Vitest
