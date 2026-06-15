@@ -15,6 +15,7 @@ import { ViolationBorder } from './ViolationBorder'
 import { VisionDebugOverlay } from './VisionDebugOverlay'
 import { FullscreenGraceOverlay } from './FullscreenGraceOverlay'
 import { FocusGraceOverlay } from './FocusGraceOverlay'
+import { ViolationNoticeOverlay } from './ViolationNoticeOverlay'
 import type { ProctoringTermination } from './violation-kinds'
 import { env } from '@/lib/env'
 
@@ -77,6 +78,15 @@ export function ProctoringGuard({
     <>
       {children}
       {cfg.enabled && <ViolationBorder flash={controller.flash} />}
+      {cfg.enabled && controller.notice && (
+        <ViolationNoticeOverlay
+          key={controller.notice.key}
+          kind={controller.notice.kind}
+          softCount={controller.notice.softCount}
+          limit={controller.notice.limit}
+          onAcknowledge={controller.dismissNotice}
+        />
+      )}
       {cfg.enabled && fs.showOverlay && (
         <FullscreenGraceOverlay secondsLeft={fs.secondsLeft} onReturn={fs.returnToFullscreen} />
       )}
