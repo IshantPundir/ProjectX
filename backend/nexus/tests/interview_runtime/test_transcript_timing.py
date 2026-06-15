@@ -1,37 +1,53 @@
 from __future__ import annotations
 
-from app.modules.interview_runtime import question_asked_at_ms, relative_words, turn_bounds
+from app.modules.interview_runtime import (
+    asked_at_ms_by_question_evidence,
+    relative_words,
+)
 from app.modules.interview_runtime.models import WordTiming
 
 
-# --- question_asked_at_ms (pre-existing; restored after an accidental overwrite) ---
+# --- asked_at_ms_by_question_evidence (gen-3: over session_evidence_json["transcript"]) ---
+#
+# Gen-3 turn dict shape (SessionEvidence.transcript dumped to JSON):
+#   {"speaker": "agent"|"candidate", "question_id": str|None,
+#    "span": {"start_ms": int, "end_ms": int}, "words": [...]}
 
-def test_picks_earliest_agent_timestamp_per_question():
+def test_picks_earliest_agent_span_start_per_question():
     transcript = [
-        {"role": "agent", "text": "Q1?", "timestamp_ms": 1000, "question_id": "q1"},
-        {"role": "candidate", "text": "...", "timestamp_ms": 1500, "question_id": "q1"},
-        {"role": "agent", "text": "probe q1", "timestamp_ms": 2000, "question_id": "q1"},
-        # earlier timestamp appearing LATER in the list must still win (out-of-order guard):
-        {"role": "agent", "text": "resend q1", "timestamp_ms": 500, "question_id": "q1"},
-        {"role": "agent", "text": "Q2?", "timestamp_ms": 3000, "question_id": "q2"},
+        {"speaker": "agent", "question_id": "q1", "span": {"start_ms": 1000, "end_ms": 1500}},
+        {"speaker": "candidate", "question_id": "q1", "span": {"start_ms": 1600, "end_ms": 2000}},
+        {"speaker": "agent", "question_id": "q1", "span": {"start_ms": 2000, "end_ms": 2400}},
+        # earlier start appearing LATER in the list must still win (out-of-order guard):
+        {"speaker": "agent", "question_id": "q1", "span": {"start_ms": 500, "end_ms": 900}},
+        {"speaker": "agent", "question_id": "q2", "span": {"start_ms": 3000, "end_ms": 3400}},
     ]
-    assert question_asked_at_ms(transcript) == {"q1": 500, "q2": 3000}
+    assert asked_at_ms_by_question_evidence(transcript) == {"q1": 500, "q2": 3000}
 
 
-def test_ignores_candidate_and_untagged_lines():
+def test_ignores_candidate_and_untagged_agent_turns():
     transcript = [
-        {"role": "agent", "text": "filler", "timestamp_ms": 100, "question_id": None},
-        {"role": "candidate", "text": "hi", "timestamp_ms": 200, "question_id": "q1"},
-        {"role": "agent", "text": "Q1?", "timestamp_ms": 300, "question_id": "q1"},
+        {"speaker": "agent", "question_id": None, "span": {"start_ms": 100, "end_ms": 150}},
+        {"speaker": "candidate", "question_id": "q1", "span": {"start_ms": 200, "end_ms": 300}},
+        {"speaker": "agent", "question_id": "q1", "span": {"start_ms": 300, "end_ms": 700}},
     ]
-    assert question_asked_at_ms(transcript) == {"q1": 300}
+    assert asked_at_ms_by_question_evidence(transcript) == {"q1": 300}
+
+
+def test_skips_turns_missing_span_or_start_ms():
+    transcript = [
+        {"speaker": "agent", "question_id": "q1"},  # no span
+        {"speaker": "agent", "question_id": "q1", "span": {}},  # span, no start_ms
+        {"speaker": "agent", "question_id": "q1", "span": {"start_ms": 800, "end_ms": 900}},
+    ]
+    assert asked_at_ms_by_question_evidence(transcript) == {"q1": 800}
 
 
 def test_empty_transcript_returns_empty():
-    assert question_asked_at_ms([]) == {}
+    assert asked_at_ms_by_question_evidence([]) == {}
 
 
-# --- relative_words / turn_bounds (Phase 1 candidate-reel helpers) ---
+# --- relative_words (Phase 1 candidate-reel helper) ---
 
 def test_relative_words_anchors_to_first_word():
     # (text, start_seconds, end_seconds, confidence) on the STT stream clock.
@@ -57,21 +73,3 @@ def test_relative_words_clamps_negative_drift_to_zero():
     out = relative_words(raw)
     assert out[0].start_ms == 0
     assert out[1].start_ms == 0  # clamped, not -20
-
-
-def test_turn_bounds_anchors_end_to_commit_and_back_off_duration():
-    words = relative_words([("six", 12.40, 12.72, 0.99), ("years", 12.80, 13.30, 0.97)])
-    start_ms, end_ms = turn_bounds(anchor_ms=42000, words=words)
-    assert end_ms == 42000
-    assert start_ms == 42000 - 900
-
-
-def test_turn_bounds_no_words_returns_anchor_for_both():
-    assert turn_bounds(anchor_ms=42000, words=[]) == (42000, 42000)
-
-
-def test_turn_bounds_never_negative():
-    words = relative_words([("x", 0.0, 50.0, 0.9)])  # 50s "word" (pathological)
-    start_ms, end_ms = turn_bounds(anchor_ms=1000, words=words)
-    assert start_ms == 0
-    assert end_ms == 1000

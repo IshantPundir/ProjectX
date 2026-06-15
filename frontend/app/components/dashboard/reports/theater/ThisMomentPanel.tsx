@@ -12,6 +12,23 @@ const KIND_LABEL: Record<string, string> = {
   multiple_faces: 'Multiple faces',
 }
 
+// Engine per-question closure → human label. Unknown/null values are omitted.
+const CLOSURE_LABEL: Record<string, string> = {
+  satisfied: 'Satisfied',
+  tapped_out: 'Tapped out',
+  absent: 'Absent',
+  truncated: 'Truncated',
+}
+
+// Rubric-anchored grade (level) → human label.
+const LEVEL_LABEL: Record<string, string> = {
+  strong: 'Strong',
+  solid: 'Solid',
+  thin: 'Thin',
+  absent: 'Absent',
+  not_reached: 'Not reached',
+}
+
 export type MomentSelection =
   | { type: 'question'; question: QuestionOut }
   | { type: 'flag'; flag: FlagMarker }
@@ -69,6 +86,31 @@ export function ThisMomentPanel({
               {selection.question.candidate_quote}
             </p>
           )}
+          {(() => {
+            const closure = selection.question.closure
+            const closureLabel = closure ? CLOSURE_LABEL[closure] ?? null : null
+            const levelLabel = selection.question.level ? LEVEL_LABEL[selection.question.level] ?? null : null
+            // Omit entirely when the question was never asked / no engine verdict.
+            if (!closureLabel && !levelLabel) return null
+            return (
+              <div className="mb-2">
+                <div className="text-[9.5px] font-bold uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>Agent verdict</div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                  {closureLabel && (
+                    <span
+                      className="rounded-md px-2 py-0.5 text-[10px] font-extrabold"
+                      style={{ background: TONE_BG.neutral, color: TONE_INK.neutral }}
+                    >
+                      {closureLabel}
+                    </span>
+                  )}
+                  {levelLabel && (
+                    <span className="text-[12px] font-bold" style={{ color: 'var(--px-fg-3)' }}>{levelLabel}</span>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
           {selection.question.our_read && (
             <>
               <div className="text-[9.5px] font-bold uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>Our read</div>

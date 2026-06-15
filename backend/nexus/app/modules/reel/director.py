@@ -4,18 +4,18 @@ Two layers:
 
   * ``generate_edl`` (LLM, manual-tested): reads the report ground truth + the
     word-timed transcript and emits a raw ``ReelEdlOut`` whose ``clip``/
-    ``experience`` beats reference a candidate turn by its ``turn.captured``
-    COMMIT (``source_turn_ref``) and a turn-relative WORD-INDEX range
-    ``[in_word, out_word]``. The LLM never sees video ms / VAD spans.
+    ``experience`` beats reference an ANSWER RUN by its run index
+    (``source_turn_ref``) and a turn-relative WORD-INDEX range
+    ``[in_word, out_word]``. The LLM never sees video ms.
   * ``validate_edl`` (pure, deterministic guardrails — this file): resolves the
-    word indices to turn-relative ms (``in_ms``/``out_ms``), rejects
-    hallucinations (unknown ref / out-of-bounds index), enforces the duration
-    budget (per-clip soft cap, then drop trailing question groups), and fails
-    honestly if no clip survives.
+    word indices to per-word records (each carrying its turn's ``turn_ref`` +
+    ``turn_start_ms`` + turn-relative ms), rejects hallucinations (unknown ref /
+    out-of-bounds index), enforces the duration budget (per-clip soft cap, then
+    drop trailing question groups), and fails honestly if no clip survives.
 
-The renderer maps a validated beat to video exactly as the clips-core spike does:
-``video = answer_span(commit) + wall_anchor - pipeline_lag + [in_ms, out_ms]``
-(see ``timing.py``); the Director stays purely in transcript space.
+The renderer maps a validated beat to video by the gen-3 word-timed contract:
+``video_ms = turn_start_ms + rel_ms + offset`` (see ``timing.py`` /
+``render._clip_to_video``); the Director stays purely in transcript space.
 
 Keep this import-light enough for the lean image — the LLM call imports ``app.ai``
 lazily so the pure validation path (and its tests) need no OpenAI/ffmpeg deps.
@@ -28,17 +28,21 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from app.config import settings
 from app.modules.reel.transcript import AnswerRun, answer_runs, is_pause_before
 
 # --- tuning constants (transcript-space; ms) ------------------------------
-MAX_TOTAL_MS = 80_000        # soft target (quality may run a little over)
+# The per-clip soft cap (CLIP_SOFT_CAP_MS) and total budget (MAX_TOTAL_MS) are
+# config-driven — read at use-site from ``settings.reel_clip_soft_cap_ms`` /
+# ``settings.reel_max_total_ms`` (relaxed to effectively-unlimited defaults "for
+# now" to show full candidate evidence; the trim/drop MECHANISM is preserved so
+# they can be re-tightened via config). See app/config.py.
 TARGET_MS = 60_000           # aim for ~60s
-CLIP_SOFT_CAP_MS = 16_000    # a single clip may run this long to show full substance
 EST_BOUNDARY_PAUSE_MS = 500  # estimated inter-turn pause inside a multi-turn clip
 SPEAK_WPS = 2.75             # ~165 wpm, Arjun narration, for card duration estimate
 _CARD_FLOOR_MS = {"title": 3_000, "match": 4_000, "point": 3_500, "outro": 4_000}
 
-# Edge-only disfluency/discourse tokens trimmed off a clip's IN/OUT (and captions).
+# Edge-only disfluency/discourse tokens trimmed off a clip's IN/OUT.
 # This is lexical edge cleanup, NOT semantic intent classification.
 _EDGE_TRIM = {"um", "uh", "uhh", "umm", "mm", "mmm", "er", "ah", "hmm", "so",
               "like", "yeah", "okay", "ok", "sure", "well", "right"}
@@ -55,11 +59,10 @@ class NoClipBeatsError(Exception):
 # --- LLM output schema -----------------------------------------------------
 class ReelBeat(BaseModel):
     kind: BeatKind
-    source_turn_ref: int | None = None   # commit (timestamp_ms); clip/experience only
-    in_word: int | None = None           # index into the turn's words[]
+    source_turn_ref: int | None = None   # answer-run index; clip/experience only
+    in_word: int | None = None           # index into the run's words[]
     out_word: int | None = None
     on_screen_text: str | None = None    # card copy (title/ask/credit/outro)
-    caption: str | None = None           # optional hint; words[] is the caption truth
     narration_text: str | None = None    # Arjun TTS script for card beats
 
 
@@ -73,11 +76,11 @@ class ValidatedBeat:
     kind: str
     duration_ms: int
     source_turn_ref: int | None = None
-    # clip/experience: the selected words, each carrying its origin turn + turn-
-    # relative timing so the renderer maps a multi-turn clip to one contiguous cut.
+    # clip/experience: the selected words, each carrying its origin turn
+    # (turn_ref + turn_start_ms) + turn-relative timing so the renderer maps a
+    # multi-turn clip to one contiguous cut.
     words: list[dict] = field(default_factory=list)
     on_screen_text: str | None = None
-    caption: str | None = None
     narration_text: str | None = None
 
 
@@ -100,7 +103,7 @@ def _estimate_clip_duration(words: list[dict]) -> int:
     prev = words[0]
     boundaries = 0
     for w in words[1:]:
-        if w["turn_commit"] != prev["turn_commit"]:
+        if w["turn_ref"] != prev["turn_ref"]:
             total += prev["rel_end_ms"] - seg_start
             boundaries += 1
             seg_start = w["rel_start_ms"]
@@ -123,7 +126,8 @@ def _resolve_clip(beat: ReelBeat, runs_by_ref: dict[int, AnswerRun]) -> Validate
     """Resolve a clip/experience beat over its answer run, or None to drop it.
 
     Drops on a hallucinated run ref or an out-of-bounds / inverted word range.
-    Edge-trims disfluencies, then trims over-cap clips inward to ``CLIP_SOFT_CAP_MS``.
+    Edge-trims disfluencies, then trims over-cap clips inward to the configured
+    per-clip soft cap (``settings.reel_clip_soft_cap_ms``).
     """
     ref = beat.source_turn_ref
     run = runs_by_ref.get(ref) if ref is not None else None
@@ -137,20 +141,22 @@ def _resolve_clip(beat: ReelBeat, runs_by_ref: dict[int, AnswerRun]) -> Validate
     if not selected:
         return None
     # per-clip soft cap: drop trailing words until the estimate fits.
+    clip_soft_cap_ms = settings.reel_clip_soft_cap_ms
     while len(selected) > 1 and _estimate_clip_duration(
-            [_word_dict(w) for w in selected]) > CLIP_SOFT_CAP_MS:
+            [_word_dict(w) for w in selected]) > clip_soft_cap_ms:
         selected = selected[:-1]
 
     words = [_word_dict(w) for w in selected]
     return ValidatedBeat(
         kind=beat.kind, duration_ms=_estimate_clip_duration(words),
         source_turn_ref=ref, words=words, on_screen_text=beat.on_screen_text,
-        caption=beat.caption, narration_text=beat.narration_text,
+        narration_text=beat.narration_text,
     )
 
 
 def _word_dict(w) -> dict:
-    return {"idx": w.idx, "text": w.text, "turn_commit": w.turn_commit,
+    return {"idx": w.idx, "text": w.text, "turn_ref": w.turn_ref,
+            "turn_start_ms": w.turn_start_ms,
             "rel_start_ms": w.rel_start_ms, "rel_end_ms": w.rel_end_ms}
 
 
@@ -161,7 +167,7 @@ def _estimate_card(beat: ReelBeat) -> ValidatedBeat:
     dur = max(_CARD_FLOOR_MS.get(beat.kind, 2_000), est)
     return ValidatedBeat(
         kind=beat.kind, duration_ms=dur, on_screen_text=beat.on_screen_text,
-        caption=beat.caption, narration_text=beat.narration_text,
+        narration_text=beat.narration_text,
     )
 
 
@@ -189,12 +195,14 @@ def _group_body(body: list[ValidatedBeat]) -> list[list[ValidatedBeat]]:
 
 
 def _fit_budget(beats: list[ValidatedBeat]) -> list[ValidatedBeat]:
-    """Drop trailing groups until total <= ``MAX_TOTAL_MS``, preserving narrative.
+    """Drop trailing groups until total <= the budget, preserving narrative.
 
-    title (leading) and outro (trailing) are pinned; the body is grouped so a
-    dropped clip takes its ask/credit with it. The last clip-bearing group is
-    never dropped (>=1 clip is guaranteed by validate_edl).
+    Budget is config-driven (``settings.reel_max_total_ms``). title (leading) and
+    outro (trailing) are pinned; the body is grouped so a dropped clip takes its
+    ask/credit with it. The last clip-bearing group is never dropped (>=1 clip is
+    guaranteed by validate_edl).
     """
+    max_total_ms = settings.reel_max_total_ms
     title = [beats[0]] if beats and beats[0].kind == "title" else []
     outro = [beats[-1]] if beats and beats[-1].kind == "outro" else []
     body = beats[len(title): len(beats) - len(outro)]
@@ -204,7 +212,7 @@ def _fit_budget(beats: list[ValidatedBeat]) -> list[ValidatedBeat]:
         return sum(b.duration_ms for g in groups for b in g) + \
             sum(b.duration_ms for b in title) + sum(b.duration_ms for b in outro)
 
-    while groups and total() > MAX_TOTAL_MS:
+    while groups and total() > max_total_ms:
         clip_groups = sum(1 for g in groups if _has_clip(g))
         if _has_clip(groups[-1]) and clip_groups <= 1:
             break   # would drop the only clip group — stop
@@ -446,7 +454,7 @@ async def _dev_main(session_id: str) -> int:
     print(f"[director] validated {len(vedl.beats)} beats, {vedl.duration_ms/1000:.1f}s")
     for b in vedl.beats:
         if b.words:
-            turns = sorted({w["turn_commit"] for w in b.words})
+            turns = sorted({w["turn_ref"] for w in b.words})
             quote = " ".join(w["text"] for w in b.words)
             print(f"   {b.kind:11s} {b.duration_ms/1000:4.1f}s  turns={turns}")
             print(f"               CLIP: \"{quote}\"")

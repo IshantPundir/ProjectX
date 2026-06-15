@@ -6,6 +6,7 @@ import {
   activeSegmentIndex,
   buildFlagMarkers,
   buildQuestionMarkers,
+  pickPosterUrl,
 } from '@/components/dashboard/reports/theater/timeline-model'
 
 function q(partial: Partial<QuestionOut>): QuestionOut {
@@ -66,6 +67,44 @@ describe('activeQuestionId', () => {
   it('ignores markers with null asked_at_ms', () => {
     const markers = buildQuestionMarkers([q({ question_id: 'q1', asked_at_ms: null })], 10_000)
     expect(activeQuestionId(markers, 9999)).toBeNull()
+  })
+})
+
+describe('pickPosterUrl', () => {
+  it('picks the qualifying question nearest the recording midpoint', () => {
+    const questions = [
+      q({ question_id: 'q1', asked_at_ms: 10_000, thumbnail_url: 'thumb-q1' }),
+      q({ question_id: 'q2', asked_at_ms: 58_000, thumbnail_url: 'thumb-q2' }),
+      q({ question_id: 'q3', asked_at_ms: 110_000, thumbnail_url: 'thumb-q3' }),
+    ]
+    // midpoint = 60_000 → q2 (58_000) is closest
+    expect(pickPosterUrl(questions, 120_000)).toBe('thumb-q2')
+  })
+
+  it('ignores questions missing a thumbnail or asked_at_ms', () => {
+    const questions = [
+      // closest to midpoint but no thumbnail → ineligible
+      q({ question_id: 'q1', asked_at_ms: 60_000, thumbnail_url: null }),
+      // has thumbnail but no timing → ineligible
+      q({ question_id: 'q2', asked_at_ms: null, thumbnail_url: 'thumb-q2' }),
+      // fully qualifying, further from midpoint
+      q({ question_id: 'q3', asked_at_ms: 20_000, thumbnail_url: 'thumb-q3' }),
+    ]
+    expect(pickPosterUrl(questions, 120_000)).toBe('thumb-q3')
+  })
+
+  it('returns null when no question qualifies', () => {
+    const questions = [
+      q({ asked_at_ms: 30_000, thumbnail_url: null }),
+      q({ asked_at_ms: null, thumbnail_url: 'thumb' }),
+    ]
+    expect(pickPosterUrl(questions, 120_000)).toBeNull()
+  })
+
+  it('returns null when duration is missing or zero', () => {
+    const questions = [q({ asked_at_ms: 30_000, thumbnail_url: 'thumb' })]
+    expect(pickPosterUrl(questions, 0)).toBeNull()
+    expect(pickPosterUrl(questions, Number.NaN)).toBeNull()
   })
 })
 

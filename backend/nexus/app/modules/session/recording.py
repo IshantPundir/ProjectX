@@ -62,6 +62,39 @@ class RecordingPlayback(BaseModel):
     transcript: list[TranscriptSegment] = []
 
 
+def _recording_offset_ms(
+    evidence_json: dict | None, recording_started_at: datetime | None
+) -> int:
+    """ms to add to an engine-session timestamp to land on the video clock.
+
+    The video (recording) clock starts at ``sessions.recording_started_at``; the
+    engine's per-question / span timestamps are relative to the engine session
+    start (``SessionEvidence.meta.started_at``). The frontend maps
+    ``video_ms = session_ms + offset_ms`` (verified against ``useVideoController``:
+    ``currentMs = video.currentTime*1000 − offsetMs``), so the offset is the gap
+    between the two clocks:
+
+        offset_ms = round((meta_started_at − recording_started_at) * 1000)
+
+    Pure + total: any missing/malformed input yields 0 (capsules fall back to
+    seeking at the raw session time — the pre-fix behavior — rather than raising
+    into the playback path).
+    """
+    if recording_started_at is None or not isinstance(evidence_json, dict):
+        return 0
+    meta = evidence_json.get("meta")
+    if not isinstance(meta, dict):
+        return 0
+    started_at_raw = meta.get("started_at")
+    if not isinstance(started_at_raw, str):
+        return 0
+    try:
+        meta_started_at = datetime.fromisoformat(started_at_raw.replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    return round((meta_started_at - recording_started_at).total_seconds() * 1000)
+
+
 def _build_transcript(raw: list | None) -> list[TranscriptSegment]:
     """Map the persisted transcript JSONB into player-friendly segments.
 
@@ -266,11 +299,15 @@ async def get_session_recording_playback(
         url = await get_object_storage().presign_get_url(
             sess.recording_s3_key, ttl_seconds=ttl
         )
+        offset_ms = _recording_offset_ms(
+            sess.session_evidence_json, sess.recording_started_at
+        )
         return RecordingPlayback(
             status="ready",
             signed_url=url,
             expires_at=datetime.now(UTC) + timedelta(seconds=ttl),
             duration_seconds=sess.recording_duration_seconds,
+            offset_ms=offset_ms,
             transcript=transcript,
         )
 

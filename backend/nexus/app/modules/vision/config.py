@@ -118,8 +118,8 @@ class VisionConfig:
         return self._s.vision_thumbnail_webp_quality
 
     @property
-    def thumbnail_top_flag_count(self) -> int:
-        return self._s.vision_thumbnail_top_flag_count
+    def thumbnail_max_flag_count(self) -> int:
+        return self._s.vision_thumbnail_max_flag_count
 
 
 vision_config = VisionConfig(settings)

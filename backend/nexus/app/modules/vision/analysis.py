@@ -41,8 +41,9 @@ def observations_from_estimates(
     return obs
 
 
-# Severity ordering for proctoring flags (higher = more serious). Decides which
-# flags earn a timeline thumbnail when there are more than top_n.
+# Severity ordering for proctoring flags (higher = more serious). When a run is
+# pathological and the safety cap (max_count) bites, the most serious flags are
+# the ones kept.
 _FLAG_SEVERITY: dict[str, int] = {
     "multiple_faces": 3,
     "off_screen_sustained": 2,
@@ -51,11 +52,18 @@ _FLAG_SEVERITY: dict[str, int] = {
 }
 
 
-def select_flag_targets(flagged_intervals: list[dict], *, top_n: int) -> list[dict]:
-    """Return the top-N most serious flags (by severity, then confidence, then
-    earliest start), each as the original interval dict. Pure — no I/O."""
+def select_flag_targets(flagged_intervals: list[dict], *, max_count: int) -> list[dict]:
+    """Return EVERY flagged interval (one thumbnail per proctoring violation), as
+    the original interval dicts — but bounded at ``max_count`` as a safety cap to
+    avoid a pathological run producing thousands of thumbnails.
+
+    Intervals without a ``start_ms`` (no frame to grab) are skipped. Ordering is
+    deterministic: most serious first (severity → confidence → earliest start),
+    so if the cap bites, the kept thumbnails are the most important ones. Pure —
+    no I/O."""
+    with_start = [f for f in flagged_intervals if f.get("start_ms") is not None]
     ranked = sorted(
-        flagged_intervals,
+        with_start,
         key=lambda f: (
             _FLAG_SEVERITY.get(f.get("kind", ""), 0),
             float(f.get("confidence") or 0.0),
@@ -63,7 +71,7 @@ def select_flag_targets(flagged_intervals: list[dict], *, top_n: int) -> list[di
         ),
         reverse=True,
     )
-    return ranked[: max(0, top_n)]
+    return ranked[: max(0, max_count)]
 
 
 def _target_frame_index(t_ms: int, src_fps: float, frame_count: int) -> int:

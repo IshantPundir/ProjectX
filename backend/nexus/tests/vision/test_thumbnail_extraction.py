@@ -3,26 +3,43 @@ from app.modules.vision.analysis import _target_frame_index, select_flag_targets
 
 # --- select_flag_targets ---
 
-def test_selects_top_n_by_severity_then_confidence():
+def test_returns_all_flags_under_cap():
+    # Every flagged interval (proctoring violation) earns a thumbnail target.
     flags = [
         {"kind": "down_glance", "start_ms": 100, "end_ms": 200, "confidence": 0.6},
         {"kind": "off_screen_sustained", "start_ms": 300, "end_ms": 800, "confidence": 0.65},
         {"kind": "multiple_faces", "start_ms": 900, "end_ms": 1000, "confidence": 0.9},
         {"kind": "down_glance", "start_ms": 1100, "end_ms": 1200, "confidence": 0.6},
     ]
-    out = select_flag_targets(flags, top_n=2)
-    assert [t["kind"] for t in out] == ["multiple_faces", "off_screen_sustained"]
-    assert out[0]["start_ms"] == 900
+    out = select_flag_targets(flags, max_count=100)
+    assert len(out) == 4
+    # deterministic ordering: most serious first (severity → confidence → earliest)
+    assert [t["kind"] for t in out] == [
+        "multiple_faces", "off_screen_sustained", "down_glance", "down_glance",
+    ]
 
 
 def test_empty_flags_returns_empty():
-    assert select_flag_targets([], top_n=6) == []
+    assert select_flag_targets([], max_count=100) == []
 
 
-def test_caps_at_top_n():
+def test_skips_flags_without_start_ms():
+    flags = [
+        {"kind": "down_glance", "end_ms": 200, "confidence": 0.6},  # no start_ms
+        {"kind": "multiple_faces", "start_ms": 900, "end_ms": 1000, "confidence": 0.9},
+    ]
+    out = select_flag_targets(flags, max_count=100)
+    assert [t["kind"] for t in out] == ["multiple_faces"]
+
+
+def test_caps_at_max_count_keeping_most_serious():
     flags = [{"kind": "down_glance", "start_ms": i, "end_ms": i + 1, "confidence": 0.6}
              for i in range(10)]
-    assert len(select_flag_targets(flags, top_n=3)) == 3
+    flags.append({"kind": "multiple_faces", "start_ms": 50, "end_ms": 60, "confidence": 0.9})
+    out = select_flag_targets(flags, max_count=3)
+    assert len(out) == 3
+    # the most serious flag survives the cap
+    assert out[0]["kind"] == "multiple_faces"
 
 
 # --- _target_frame_index ---

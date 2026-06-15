@@ -18,7 +18,7 @@ from sqlalchemy import select, text
 
 from app.config import settings
 from app.database import get_bypass_session
-from app.modules.interview_runtime import question_asked_at_ms
+from app.modules.interview_runtime import asked_at_ms_by_question_evidence
 from app.modules.session.models import Session
 from app.modules.vision.analysis import (  # light: cv2 imports lazily inside grab_thumbnails
     grab_thumbnails,
@@ -158,12 +158,14 @@ async def _persist_timeline_thumbnails(
     sid = uuid.UUID(session_id)
     tid = uuid.UUID(tenant_id)
 
-    q_times = question_asked_at_ms(transcript)
+    q_times = asked_at_ms_by_question_evidence(transcript)
     targets: list[tuple[str, str, int]] = [
         ("question", qid, t_ms) for qid, t_ms in q_times.items()
     ]
+    # Every flagged interval (proctoring violation) earns a thumbnail, capped at
+    # a high safety max to bound pathological runs.
     for flag in select_flag_targets(
-        flagged_intervals, top_n=vision_config.thumbnail_top_flag_count
+        flagged_intervals, max_count=vision_config.thumbnail_max_flag_count
     ):
         start = flag.get("start_ms")
         if start is None:
@@ -261,7 +263,13 @@ async def _run(session_id: str, tenant_id: str) -> None:
                             Session.tenant_id == uuid.UUID(tenant_id),
                         )
                     )).scalar_one_or_none()
-                    transcript = list(sess_row.transcript or []) if sess_row else []
+                    # Gen-3: the transcript lives inside the append-only evidence
+                    # blob (the legacy sessions.transcript column is empty), as
+                    # turn dicts {speaker, question_id, span:{start_ms}, words}.
+                    transcript = list(
+                        ((sess_row.session_evidence_json or {}).get("transcript") or [])
+                        if sess_row else []
+                    )
                     await _persist_timeline_thumbnails(
                         db, session_id=session_id, tenant_id=tenant_id,
                         local_video_path=dest, transcript=transcript,

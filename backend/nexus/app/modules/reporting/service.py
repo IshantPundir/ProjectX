@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.config import ai_config
-from app.modules.interview_runtime.evidence import EvidenceStance
+from app.modules.interview_runtime.evidence import EvidenceStance, Speaker, TranscriptTurn
 from app.modules.reporting.models import SessionReport
 from app.modules.reporting.schemas import (
     QuestionOut,
@@ -47,6 +47,26 @@ from app.modules.reporting.scoring.rollup import pick_dedicated_question, roll_u
 from app.modules.reporting.scoring.status import badge_for_question
 
 logger = structlog.get_logger()
+
+
+def asked_at_ms_by_question(transcript: list[TranscriptTurn]) -> dict[str, int]:
+    """Map each bank question_id → the session-relative ms at which it was first ASKED.
+
+    The "asked" moment is the EARLIEST agent turn tagged with that question_id
+    (`span.start_ms`). Candidate turns are ignored (the candidate doesn't ask the
+    question), and agent turns without a question_id (bridges, meta-asides) are
+    ignored. If the same question is voiced across several agent turns, the
+    earliest start_ms wins. Pure — no IO/LLM.
+    """
+    out: dict[str, int] = {}
+    for turn in transcript:
+        if turn.speaker != Speaker.agent or turn.question_id is None:
+            continue
+        start_ms = turn.span.start_ms
+        existing = out.get(turn.question_id)
+        if existing is None or start_ms < existing:
+            out[turn.question_id] = start_ms
+    return out
 
 _COMM_POINTS = {"weak": 30, "adequate": 70, "strong": 100}
 
@@ -265,6 +285,11 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id,
                     return n.quote
         return ""
 
+    # When each bank question was first asked (session-relative ms), derived from the
+    # earliest agent transcript turn tagged with that question_id. Powers the report
+    # capsules' seek/highlight into the recording.
+    asked_at_by_qid = asked_at_ms_by_question(evidence.transcript)
+
     q_out: list[QuestionOut] = []
     for i, qr in enumerate(evidence.questions):
         sig = qr.primary_signal
@@ -288,8 +313,9 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id,
         q_out.append(QuestionOut(
             seq=i + 1, question_id=qr.question_id, title=text[:60],
             status_badge=badge, status_tone=tone, question_text=text,
-            candidate_quote=quote, asked_at_ms=None,
+            candidate_quote=quote, asked_at_ms=asked_at_by_qid.get(qr.question_id),
             level=(g.level if g else "not_reached"),
+            closure=closure,
             difficulty=qdict.get("difficulty"),
             listen_for_hits=(g.listen_for_hits if g else []),
             red_flags_tripped=(g.red_flags_tripped if g else []),

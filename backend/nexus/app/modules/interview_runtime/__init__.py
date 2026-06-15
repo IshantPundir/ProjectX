@@ -44,9 +44,8 @@ from app.modules.interview_runtime.service import (
     record_session_result,
 )
 from app.modules.interview_runtime.transcript_timing import (
-    question_asked_at_ms,
+    asked_at_ms_by_question_evidence,
     relative_words,
-    turn_bounds,
 )
 
 __all__ = [
@@ -72,12 +71,11 @@ __all__ = [
     "SteeringObservation",
     "TranscriptEntry",
     "WordTiming",
+    "asked_at_ms_by_question_evidence",
     "build_session_config",
     "project_signal_metadata",
-    "question_asked_at_ms",
     "record_engine_heartbeat",
     "record_session_evidence",
     "record_session_result",
     "relative_words",
-    "turn_bounds",
 ]

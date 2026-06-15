@@ -62,6 +62,27 @@ describe('ReviewTheater', () => {
     expect(screen.queryByLabelText(/Interview session recording/i)).not.toBeInTheDocument()
   })
 
+  it('posters the <video> with the mid-interview question frame when one qualifies', () => {
+    // duration 242s → midpoint 121_000ms; q2 (120_000) is nearest among the
+    // questions that carry BOTH a timing and a thumbnail.
+    const withThumbs = {
+      ...report,
+      questions: [
+        { ...report.questions[0], question_id: 'q1', asked_at_ms: 10_000, thumbnail_url: 'thumb-q1' },
+        { ...report.questions[0], question_id: 'q2', asked_at_ms: 120_000, thumbnail_url: 'thumb-q2' },
+      ],
+    } as unknown as ReportRead
+    render(<ReviewTheater open report={withThumbs} candidateName="Aarav" subtitle="" onClose={() => {}} />)
+    const video = screen.getByLabelText(/Interview session recording/i)
+    expect(video.getAttribute('poster')).toBe('thumb-q2')
+  })
+
+  it('omits the poster when no question carries a thumbnail', () => {
+    render(<ReviewTheater open report={report} candidateName="Aarav" subtitle="" onClose={() => {}} />)
+    const video = screen.getByLabelText(/Interview session recording/i)
+    expect(video.hasAttribute('poster')).toBe(false)
+  })
+
   it('pre-selects the flag when opened with initialFlagStartMs', async () => {
     render(
       <ReviewTheater open report={report} candidateName="Aarav" subtitle=""

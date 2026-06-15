@@ -75,6 +75,7 @@ from app.modules.interview_runtime.evidence import (
     ThreadClosure,
     TimeSpan,
     TranscriptTurn,
+    Word,
 )
 from app.modules.interview_runtime.schemas import QuestionConfig, SessionConfig
 
@@ -474,7 +475,6 @@ class SessionDriver:
         turn: AssembledTurn,
         turn_ref: str,
         pre_turn_gap_ms: int = 0,
-        words: list | None = None,
     ) -> bool:
         """Process one committed candidate turn.
 
@@ -519,7 +519,12 @@ class SessionDriver:
                 text=utterance,
                 span=span,
                 pre_turn_gap_ms=pre_turn_gap_ms,
-                words=words or [],
+                # AssembledTurn.words are turn-relative WordTiming (incl. STT
+                # confidence); the evidence transcript keeps only text + bounds.
+                words=[
+                    Word(text=w.text, start_ms=w.start_ms, end_ms=w.end_ms)
+                    for w in turn.words
+                ],
                 question_id=self._active_q.id,
             )
         )
@@ -586,18 +591,6 @@ class SessionDriver:
             self._transcript.pop()
             _log.info("engine.driver.turn_aborted_merge_back", turn_ref=turn_ref)
             return False
-
-        # F3 DIAGNOSTIC (temporary): pair the committed utterance with what the
-        # bridge mirrored, to detect a one-turn STT lag (bridge echoing the prior
-        # answer). Remove before prod (raw transcript snippet = dev-only).
-        _log.info(
-            "engine.driver.turn_trace",
-            turn_ref=turn_ref,
-            on_question=q_id,
-            committed_utterance=(utterance or "")[:100],
-            bridge_said=(capturing.captured[0] if capturing.captured else "")[:80],
-            act=decision.directive.act.value,
-        )
 
         # 4. Record agent turns for what was spoken (bridge text + real line)
         # run_turn speaks: bridge first, then the real line — both via capturing voice.

@@ -26,6 +26,7 @@ import asyncio
 import json
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import structlog
@@ -38,6 +39,7 @@ from livekit.agents import (
     StopResponse,
     TurnHandlingOptions,
     room_io,
+    stt as _lk_stt,
 )
 from livekit.plugins import silero as _silero_vad  # noqa: F401  — register for download-files
 from livekit.plugins import (
@@ -71,11 +73,24 @@ from app.modules.interview_runtime import (
     build_session_config,
     record_engine_heartbeat,
 )
+from app.modules.interview_runtime.transcript_timing import RawWord
 from app.modules.session import classify_engine_exception, transition_to_error
 
 log = structlog.get_logger("interview_engine")
 
 _KEYTERM_CAP = 50
+
+
+def make_session_clock(t0_monotonic: float) -> Callable[[], float]:
+    """Return a clock that reads seconds elapsed since session start.
+
+    The ``TurnAssembler`` stamps candidate turn spans as ``int(clock() * 1000)``.
+    Handed the raw ``time.monotonic`` it produced absolute monotonic values
+    (~1.231e9 ms ≈ 14 days), so spans were nonsensical relative to the
+    session-relative AGENT lines. Anchoring to ``t0_monotonic`` (captured at
+    session start) makes every span session-relative ms — comparable to the
+    AGENT timeline and usable by the report/reel timing maps (RC-4)."""
+    return lambda: time.monotonic() - t0_monotonic
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +121,46 @@ server.setup_fnc = prewarm
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _as_float(value: object) -> float:
+    """Coerce a possibly-NotGiven STT timing/confidence value to a plain float.
+
+    livekit-agents 1.5.17 ``TimedString.start_time`` / ``.end_time`` / the
+    alternative ``.confidence`` are ``NotGivenOr[float]`` — a NotGiven sentinel
+    (not a float) when the provider omits the value. ``RawWord`` requires floats,
+    so anything non-numeric falls back to ``0.0``.
+    """
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def words_from_final_transcript(ev) -> list[RawWord]:
+    """Extract per-word ``RawWord`` tuples from a final-transcript ``SpeechEvent``.
+
+    Reads the first alternative (``ev.alternatives[0]`` — a ``SpeechData``): its
+    ``.words`` (``list[TimedString] | None``) and ``.confidence``. Each
+    ``TimedString`` is a ``str`` subclass, so ``str(word)`` is the text and
+    ``.start_time`` / ``.end_time`` are stream-clock seconds. The alternative's
+    ``.confidence`` is applied to every word (Deepgram reports per-alternative,
+    not per-word, confidence). Returns the ``RawWord`` shape consumed by
+    ``interview_runtime.transcript_timing.relative_words``:
+    ``(text, start_s, end_s, confidence)``. None/empty-safe → ``[]``.
+    """
+    alternatives = getattr(ev, "alternatives", None) or []
+    if not alternatives:
+        return []
+    alt = alternatives[0]
+    words = getattr(alt, "words", None) or []
+    confidence = _as_float(getattr(alt, "confidence", 0.0))
+    return [
+        (
+            str(word),
+            _as_float(getattr(word, "start_time", 0.0)),
+            _as_float(getattr(word, "end_time", 0.0)),
+            confidence,
+        )
+        for word in words
+    ]
 
 
 def assemble_v2_keyterms(*, candidate_first_name: str, bank_keyterms: list[str]) -> list[str]:
@@ -158,13 +213,41 @@ class _EngineAgent(Agent):
     def __init__(self, *, assembler: TurnAssembler, **kwargs) -> None:
         super().__init__(**kwargs)
         self._assembler = assembler
+        # Current turn's per-word STT timings, stashed by ``stt_node`` —
+        # accumulated across the turn's FINAL_TRANSCRIPT events (reset when
+        # ``on_user_turn_completed`` consumes them) to attach word timing to the
+        # transcript. Deepgram emits multiple finals per turn (one per utterance
+        # segment), so this MUST extend, not overwrite, across segments.
+        self._pending_words: list[RawWord] = []
+
+    async def stt_node(self, audio, model_settings):  # type: ignore[override]
+        """Pass-through STT tap that stashes the latest final transcript's word timings.
+
+        Delegates to the default STT node (``Agent.default.stt_node``) and yields
+        EVERY event unchanged — it must not alter STT or turn-detection behavior.
+        For each FINAL_TRANSCRIPT it ACCUMULATES the per-word timings onto
+        ``self._pending_words`` (accumulated across the turn's FINAL_TRANSCRIPT
+        events; reset when ``on_user_turn_completed`` consumes them) so the next
+        ``on_user_turn_completed`` (Task 3) can emit them on the transcript /
+        hand them to the assembler. Deepgram emits multiple finals per turn (one
+        per utterance segment); overwriting here would keep only the last
+        segment's few words.
+        """
+        async for event in Agent.default.stt_node(self, audio, model_settings):
+            if event.type == _lk_stt.SpeechEventType.FINAL_TRANSCRIPT:
+                self._pending_words.extend(words_from_final_transcript(event))
+            yield event
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:  # type: ignore[override]
         """Feed the committed fragment to the assembler; suppress the built-in reply."""
         text = (getattr(new_message, "text_content", "") or "").strip()
+        # Read + clear the per-turn STT word stash (set by stt_node, Task 2) so
+        # the next turn starts fresh; pass it to the assembler for word-timing.
+        words = self._pending_words
+        self._pending_words = []
         if text:
-            self._assembler.submit_fragment(text)
-        log.info("engine.turn.fragment", transcript_len=len(text))
+            self._assembler.submit_fragment(text, words=words)
+        log.info("engine.turn.fragment", transcript_len=len(text), word_count=len(words))
         raise StopResponse()
 
 
@@ -206,6 +289,7 @@ async def _drive(
     *,
     tenant_id: uuid.UUID,
     correlation_id: str,
+    started_at_wall: datetime,
 ) -> None:
     """Gen-3 three-tier drive loop (Path A+ — native turn detection).
 
@@ -227,14 +311,10 @@ async def _drive(
 
     Thin glue: all orchestration logic lives in driver.py (SessionDriver).
     """
-    from datetime import UTC, datetime
-
     from app.database import get_bypass_session
     from app.modules.interview_engine.driver import build_session_driver
     from app.modules.interview_runtime import record_session_evidence
     from app.modules.interview_runtime.evidence import CompletionReason
-
-    started_at = datetime.now(UTC)
 
     # ── Build the persist callable ───────────────────────────────────────────
     async def _persist(evidence):  # type: ignore[no-untyped-def]
@@ -255,7 +335,12 @@ async def _drive(
         config,
         voice=_InterruptAwareVoice(session),
         persist=_persist,
-        started_at=started_at,
+        # Co-anchored with the assembler's monotonic clock to the SAME session
+        # origin instant (captured together in run() at the assembler-build site).
+        # The driver clocks AGENT spans (+ SessionEvidence.meta.started_at) off this
+        # wall anchor; the assembler clocks CANDIDATE spans off its co-captured
+        # monotonic anchor — so both speakers live on ONE shared timeline (RC-4).
+        started_at=started_at_wall,
         is_superseded=assembler.is_superseded,
         on_committed=assembler.confirm_committed,
     )
@@ -481,6 +566,19 @@ async def run(
                 log.warning("engine.heartbeat_failed", exc_info=True)
             await asyncio.sleep(settings.engine_heartbeat_interval_seconds)
 
+    # ── Single session origin (RC-4) ─────────────────────────────────────────
+    # Capture the wall + monotonic anchors TOGETHER at one instant (here, after
+    # wait_for_participant — the natural session-start point now that the candidate
+    # has joined). The monotonic anchor (t0_monotonic) is t=0 for the assembler's
+    # session clock (CANDIDATE turn spans); the wall anchor (started_at_wall) is
+    # t=0 for the SessionDriver (AGENT spans + SessionEvidence.meta.started_at).
+    # Co-capturing means both name the SAME instant, so candidate and agent spans
+    # share ONE origin in SessionEvidence (pre_turn_gap_ms + the cross-speaker
+    # timeline are only meaningful if the origins match). The top-of-run monotonic
+    # `started_at` above is left untouched — it only drives the duration_s log.
+    started_at_wall = datetime.now(UTC)
+    t0_monotonic = time.monotonic()
+
     # Build the per-session turn source BEFORE starting the session so the
     # assembler (and via it, _drive's consume task) can receive committed turns
     # from the first fragment.
@@ -493,7 +591,10 @@ async def run(
     # loop re-runs on the merged answer rather than a partial one.
     assembler = TurnAssembler(
         sink=turn_source,
-        clock=time.monotonic,
+        # Anchor to the co-captured session origin (t0_monotonic) so candidate
+        # turn spans are session-relative ms on the SAME timeline as the AGENT
+        # spans the driver clocks off started_at_wall (one shared origin — RC-4).
+        clock=make_session_clock(t0_monotonic),
         timer=AsyncioTimerScheduler(),
         grace_s=ai_config.engine_assembly_grace_s,
         max_duration_s=ai_config.engine_assembly_max_duration_s,
@@ -538,6 +639,7 @@ async def run(
             session, turn_source, assembler, config, ctx,
             tenant_id=tenant_id,
             correlation_id=correlation_id,
+            started_at_wall=started_at_wall,
         )
     finally:
         heartbeat_task.cancel()
