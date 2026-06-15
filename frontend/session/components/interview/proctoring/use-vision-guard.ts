@@ -8,6 +8,7 @@ import { createFaceLandmarker, blendshape } from './vision/face-landmarker'
 import { createFaceDetector, summarizeDetections, type FaceCountSummary } from './vision/face-detector'
 import { matrixToHeadPose } from './vision/head-pose'
 import { classifyGazeZone, blinkScore, isBlinking, signalQuality, poseToGazePoint } from './vision/gaze'
+import { ReadingAccumulator } from './vision/reading'
 import type { VisionSignals } from './vision/types'
 import { NUDGE_SUSTAIN_MS, type VisionNudgeKind } from './nudge-kinds'
 
@@ -59,6 +60,7 @@ export function useVisionGuard({ armed, onViolation }: UseVisionGuardArgs): Visi
     let faceSummary: FaceCountSummary = { faceCount: 0, topConfidence: 0 }
     const since: Partial<Record<VisionNudgeKind, number>> = {}
     const fired = new Set<VisionNudgeKind>()
+    const reader = new ReadingAccumulator()
 
     const maybeFire = (kind: VisionNudgeKind, active: boolean, now: number) => {
       if (!active) {
@@ -126,7 +128,12 @@ export function useVisionGuard({ armed, onViolation }: UseVisionGuardArgs): Visi
 
       maybeFire('multiple_faces', faceCount >= 2, now)
       maybeFire('face_not_visible', faceCount === 0, now)
-      maybeFire('looking_away_sustained', zone !== null && zone !== 'center', now)
+      // Strengthen gaze: a single sustained off-center glance OR a scanning
+      // rhythm (reading an off-screen surface) — the latter catches a second
+      // screen even when window focus never changes.
+      reader.push(zone ?? 'center', now)
+      const offCenter = zone !== null && zone !== 'center'
+      maybeFire('looking_away_sustained', offCenter || reader.isReading(), now)
 
       raf = requestAnimationFrame(tick)
     }

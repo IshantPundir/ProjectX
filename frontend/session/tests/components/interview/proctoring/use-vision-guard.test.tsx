@@ -28,8 +28,9 @@ import { useVisionGuard } from '@/components/interview/proctoring/use-vision-gua
 const IDENT = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 const c = Math.cos(Math.PI / 6)
 const s = Math.sin(Math.PI / 6)
-// Ry(+30deg) -> yaw +30 -> 'right' (off-screen)
+// Ry(+30deg) -> yaw +30 -> 'right' (off-screen); Ry(-30deg) -> yaw -30 -> 'left' (off-screen)
 const RIGHT = [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]
+const LEFT = [c, 0, s, 0, 0, 1, 0, 0, -s, 0, c, 0, 0, 0, 0, 1]
 
 function lmFrame(matrices: number[][]) {
   return {
@@ -120,5 +121,19 @@ describe('useVisionGuard', () => {
     expect(detDetect.mock.calls.length).toBeLessThan(lmDetect.mock.calls.length)
     expect(detDetect.mock.calls.length).toBeLessThanOrEqual(8)
     expect(detDetect.mock.calls.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('fires looking_away_sustained from the reading pattern (no single 1s glance)', async () => {
+    // Short off-screen glances left/right with centre returns — no single glance
+    // is sustained 1s, but the scanning rhythm is. Proves the ReadingAccumulator path.
+    const seq = [RIGHT, RIGHT, IDENT, LEFT, LEFT, IDENT]
+    let k = 0
+    lmDetect.mockImplementation(() => lmFrame([seq[k++ % seq.length]]))
+    detDetect.mockReturnValue(detFrame(1))
+    const onViolation = vi.fn()
+    renderHook(() => useVisionGuard({ armed: true, onViolation }))
+    await act(async () => { await Promise.resolve() })
+    await act(async () => { vi.advanceTimersByTime(6000) })
+    expect(onViolation).toHaveBeenCalledWith('looking_away_sustained')
   })
 })
