@@ -96,18 +96,25 @@ def _recording_offset_ms(
 
 
 def _build_transcript(raw: list | None) -> list[TranscriptSegment]:
-    """Map the persisted transcript JSONB into player-friendly segments.
+    """Map the gen-3 SessionEvidence transcript into player-friendly segments.
 
-    The engine stores entries as {role, text, timestamp_ms, question_id}.
-    Malformed/partial entries are skipped rather than failing the response.
+    The engine writes its transcript to ``sessions.session_evidence_json["transcript"]``
+    (the gen-2 ``sessions.transcript`` column is empty in gen-3). Each entry is a
+    dict of shape ``{speaker, text, span:{start_ms,end_ms}, turn_ref, question_id,
+    words, pre_turn_gap_ms}``. We need only ``speaker`` → role, ``text``, and
+    ``span.start_ms`` → t_ms (session-relative; the playback ``offset_ms`` maps it
+    onto the video clock). Malformed/partial entries are skipped rather than
+    failing the response.
     """
     segments: list[TranscriptSegment] = []
     for entry in raw or []:
         if not isinstance(entry, dict):
             continue
-        role = entry.get("role")
+        role = entry.get("speaker")
         text = entry.get("text")
-        t_ms = entry.get("timestamp_ms")
+        t_ms = (entry.get("span") or {}).get("start_ms") if isinstance(
+            entry.get("span"), dict
+        ) else None
         if role is None or text is None or t_ms is None:
             continue
         segments.append(TranscriptSegment(role=str(role), text=str(text), t_ms=int(t_ms)))
@@ -292,7 +299,7 @@ async def get_session_recording_playback(
     await _reconcile(db, sess)
     await _maybe_enqueue_vision(db, sess)
 
-    transcript = _build_transcript(sess.transcript)
+    transcript = _build_transcript((sess.session_evidence_json or {}).get("transcript"))
 
     if sess.recording_status == "ready" and sess.recording_s3_key:
         ttl = settings.recording_signed_url_ttl_seconds

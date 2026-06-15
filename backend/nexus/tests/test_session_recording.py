@@ -73,14 +73,19 @@ async def test_ready_recording_returns_signed_url_and_transcript(db, fake_storag
         db,
         recording_status="ready",
         key="recordings/t/s.mp4",
-        transcript=[
-            {"role": "agent", "text": "Hi", "timestamp_ms": 0, "question_id": None},
-            {"role": "candidate", "text": "Hello", "timestamp_ms": 1500},
-        ],
         recording_started_at=rec_start,
-        # Engine session started 1.140s after the recording clock.
+        # Engine session started 1.140s after the recording clock. The transcript
+        # lives in the gen-3 SessionEvidence (sessions.transcript is empty in gen-3).
         session_evidence_json={
-            "meta": {"started_at": (rec_start + timedelta(milliseconds=1140)).isoformat()}
+            "meta": {"started_at": (rec_start + timedelta(milliseconds=1140)).isoformat()},
+            "transcript": [
+                {"speaker": "agent", "text": "Hi", "span": {"start_ms": 0, "end_ms": 900}},
+                {
+                    "speaker": "candidate",
+                    "text": "Hello",
+                    "span": {"start_ms": 1500, "end_ms": 2800},
+                },
+            ],
         },
     )
 
@@ -133,6 +138,45 @@ def test_offset_ms_unparseable_started_at_returns_zero():
     assert recording_mod._recording_offset_ms(bad, rec_start) == 0
     # Non-dict meta must not raise either.
     assert recording_mod._recording_offset_ms({"meta": "oops"}, rec_start) == 0
+
+
+# --- _build_transcript over gen-3 SessionEvidence transcript ---------------
+
+def test_build_transcript_maps_gen3_evidence_entries():
+    raw = [
+        {"speaker": "agent", "text": "Hi", "span": {"start_ms": 0, "end_ms": 900}},
+        {
+            "speaker": "candidate",
+            "text": "Hello there",
+            "span": {"start_ms": 1500, "end_ms": 3200},
+            "turn_ref": "t1",
+            "question_id": "q1",
+        },
+    ]
+    out = recording_mod._build_transcript(raw)
+    assert [(s.role, s.text, s.t_ms) for s in out] == [
+        ("agent", "Hi", 0),
+        ("candidate", "Hello there", 1500),
+    ]
+
+
+def test_build_transcript_skips_malformed_and_partial_entries():
+    raw = [
+        "not-a-dict",
+        {"text": "no speaker", "span": {"start_ms": 0}},
+        {"speaker": "agent", "span": {"start_ms": 0}},  # missing text
+        {"speaker": "agent", "text": "no span"},  # missing span
+        {"speaker": "agent", "text": "span missing start", "span": {"end_ms": 5}},
+        {"speaker": "agent", "text": "span not a dict", "span": "oops"},
+        {"speaker": "agent", "text": "good", "span": {"start_ms": 42}},
+    ]
+    out = recording_mod._build_transcript(raw)
+    assert [(s.role, s.text, s.t_ms) for s in out] == [("agent", "good", 42)]
+
+
+def test_build_transcript_empty_or_none_yields_empty_list():
+    assert recording_mod._build_transcript(None) == []
+    assert recording_mod._build_transcript([]) == []
 
 
 async def test_recording_in_progress_reconciles_to_ready(db, fake_storage, monkeypatch):

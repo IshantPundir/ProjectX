@@ -65,16 +65,19 @@ def test_enriched_transcript_survives_jsonb_round_trip():
 
 
 def test_recording_build_transcript_ignores_word_fields():
-    # The report player reads only role/text/timestamp_ms; the new word fields
-    # must be silently ignored (no schema break) by the existing builder.
+    # The report player reads only speaker/text/span.start_ms from the gen-3
+    # SessionEvidence transcript; the word-level fields (words, turn_ref,
+    # question_id) must be silently ignored (no schema break) by the builder.
     from app.modules.session.recording import _build_transcript
 
     raw = [{
-        "role": "candidate", "text": "six years", "timestamp_ms": 42000,
-        "question_id": "q1", "start_ms": 41100, "end_ms": 42000,
+        "speaker": "candidate", "text": "six years",
+        "span": {"start_ms": 1234, "end_ms": 42000},
+        "turn_ref": "t-3", "question_id": "q1",
         "words": [{"text": "six", "start_ms": 0, "end_ms": 320, "confidence": 0.99}],
     }]
     segs = _build_transcript(raw)
     assert len(segs) == 1
+    assert segs[0].role == "candidate"
     assert segs[0].text == "six years"
-    assert segs[0].t_ms == 42000
+    assert segs[0].t_ms == 1234
