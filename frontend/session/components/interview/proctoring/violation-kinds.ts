@@ -25,6 +25,7 @@ export const VIOLATION_LABEL: Record<ProctoringKind, string> = {
   multiple_faces: 'having more than one person on camera',
   face_not_visible: 'moving out of the camera view',
   looking_away_sustained: 'looking away from the screen',
+  multiple_displays: 'using more than one display',
 }
 
 export type ProctoringTermination = ProctoringKind | 'soft_threshold_exceeded'

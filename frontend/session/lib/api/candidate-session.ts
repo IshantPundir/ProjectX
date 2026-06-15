@@ -65,6 +65,8 @@ export type ProctoringKind =
   | 'multiple_faces'
   | 'face_not_visible'
   | 'looking_away_sustained'
+  // Second-screen: a multi-display setup detected mid-session (soft, counted).
+  | 'multiple_displays'
 
 export interface ProctoringConfig {
   enabled: boolean
