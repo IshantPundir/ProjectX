@@ -50,6 +50,11 @@ export function ProctoringGuard({
   // the pre-start fullscreen-exit gap). The VISION guard waits an extra settle
   // after the agent goes live so the candidate getting seated doesn't
   // self-trigger a "looking away" nudge.
+  //
+  // This effect gates the VISION tier only. Once settled it stays settled
+  // intentionally — a mid-interview reconnect should not replay the seat-window
+  // grace (the env guards re-derive from `connected` on each render and so
+  // re-arm/disarm naturally across a reconnect).
   useEffect(() => {
     if (visionSettled || !cfg.enabled) return
     if (state === 'listening' || state === 'thinking' || state === 'speaking') {
