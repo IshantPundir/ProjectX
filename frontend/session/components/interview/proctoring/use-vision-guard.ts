@@ -5,17 +5,21 @@ import { useLocalParticipant } from '@livekit/components-react'
 import { Track } from 'livekit-client'
 
 import { createFaceLandmarker, blendshape } from './vision/face-landmarker'
+import { createFaceDetector, summarizeDetections, type FaceCountSummary } from './vision/face-detector'
 import { matrixToHeadPose } from './vision/head-pose'
 import { classifyGazeZone, blinkScore, isBlinking, signalQuality, poseToGazePoint } from './vision/gaze'
 import type { VisionSignals } from './vision/types'
 import { NUDGE_SUSTAIN_MS, type VisionNudgeKind } from './nudge-kinds'
 
 const GAZE_TRAIL_MAX = 24 // recent gaze points kept for the dev fading trail
+const DETECT_INTERVAL_MS = 350 // ~3fps face-count sampling (presence is slow-moving)
 
 const EMPTY: VisionSignals = {
   faceCount: 0, pose: null, gazeZone: null, gazePoint: null, gazeTrail: [],
   blinking: false, earValue: null, quality: 'unscorable', fps: 0,
 }
+
+type Model = { detectForVideo: (v: HTMLVideoElement, t: number) => unknown; close: () => void } | null
 
 export interface UseVisionGuardArgs {
   armed: boolean
@@ -31,8 +35,6 @@ export interface VisionGuardState {
 
 export function useVisionGuard({ armed, onViolation }: UseVisionGuardArgs): VisionGuardState {
   const { localParticipant } = useLocalParticipant()
-  // Stable refs so the detection-loop effect doesn't restart when the LiveKit
-  // participant identity or the onViolation callback identity changes.
   const participantRef = useRef(localParticipant)
   const onViolationRef = useRef(onViolation)
   useEffect(() => {
@@ -46,15 +48,16 @@ export function useVisionGuard({ armed, onViolation }: UseVisionGuardArgs): Visi
     if (!armed) return
     let cancelled = false
     let raf = 0
-    let landmarker: { detectForVideo: (v: HTMLVideoElement, t: number) => unknown; close: () => void } | null = null
+    let landmarker: Model = null
+    let detector: Model = null
     let last = performance.now()
-    // Debounce state lives for one armed session (resets on re-arm).
     let trail: { x: number; y: number }[] = []
+    // Authoritative face COUNT comes from the throttled detector.
+    let lastDetectAt = 0
+    let faceSummary: FaceCountSummary = { faceCount: 0, topConfidence: 0 }
     const since: Partial<Record<VisionNudgeKind, number>> = {}
     const fired = new Set<VisionNudgeKind>()
 
-    // One violation per sustained occurrence: fire on the rising edge once the
-    // condition has held past its window, then re-arm only after it clears.
     const maybeFire = (kind: VisionNudgeKind, active: boolean, now: number) => {
       if (!active) {
         delete since[kind]
@@ -83,21 +86,31 @@ export function useVisionGuard({ armed, onViolation }: UseVisionGuardArgs): Visi
       const fps = 1000 / Math.max(1, now - last)
       last = now
 
-      const res = landmarker.detectForVideo(video, now) as {
+      // Landmarker every frame: head pose + blink of the PRIMARY face only.
+      const lm = landmarker.detectForVideo(video, now) as {
         faceBlendshapes?: Array<{ categories: Array<{ categoryName: string; score: number }> }>
         facialTransformationMatrixes?: Array<{ data: number[] }>
       }
-      const faceCount = res.facialTransformationMatrixes?.length ?? 0
-      const cats = res.faceBlendshapes?.[0]?.categories
-      const mtx = res.facialTransformationMatrixes?.[0]?.data
-      // HEAD-POSE-ONLY gaze: the live plane is a coarse DETERRENT (the accurate,
-      // eye-aware gaze is the server-side report model). No iris — it added
-      // fragility for accuracy we don't need live.
-      const pose = faceCount > 0 && mtx ? matrixToHeadPose(mtx) : null
+      const cats = lm.faceBlendshapes?.[0]?.categories
+      const mtx = lm.facialTransformationMatrixes?.[0]?.data
+
+      // Detector throttled: authoritative multi/zero-face COUNT.
+      if (detector && now - lastDetectAt >= DETECT_INTERVAL_MS) {
+        lastDetectAt = now
+        faceSummary = summarizeDetections(
+          detector.detectForVideo(video, now) as { detections?: Array<{ categories?: Array<{ score: number }> }> },
+        )
+      }
+      const faceCount = faceSummary.faceCount
+
+      // HEAD-POSE-ONLY gaze: live plane is a coarse DETERRENT (accurate gaze is
+      // the server model). Pose derives from the landmarker matrix, independent
+      // of the detector count.
+      const pose = mtx ? matrixToHeadPose(mtx) : null
       const ear = cats ? blinkScore(blendshape(cats, 'eyeBlinkLeft'), blendshape(cats, 'eyeBlinkRight')) : null
       const quality = signalQuality({
-        faceConfidence: faceCount > 0 ? 1 : 0,
-        brightness: 0.5, // Plan A: brightness/glare proxies refined in Plan B
+        faceConfidence: faceSummary.topConfidence,
+        brightness: 0.5, // brightness/glare proxies refined in a later plan
         eyeGlare: 0,
       })
       const zone = pose ? classifyGazeZone(pose) : null
@@ -109,7 +122,6 @@ export function useVisionGuard({ armed, onViolation }: UseVisionGuardArgs): Visi
         blinking: ear !== null && isBlinking(ear), earValue: ear, quality, fps,
       })
 
-      // Rising-edge violation events → the proctoring controller (soft, counted).
       maybeFire('multiple_faces', faceCount >= 2, now)
       maybeFire('face_not_visible', faceCount === 0, now)
       maybeFire('looking_away_sustained', zone !== null && zone !== 'center', now)
@@ -117,9 +129,10 @@ export function useVisionGuard({ armed, onViolation }: UseVisionGuardArgs): Visi
       raf = requestAnimationFrame(tick)
     }
 
-    createFaceLandmarker().then((lm) => {
-      if (cancelled) { lm.close?.(); return }
-      landmarker = lm as typeof landmarker
+    Promise.all([createFaceLandmarker(), createFaceDetector()]).then(([lm, det]) => {
+      if (cancelled) { lm.close?.(); det.close?.(); return }
+      landmarker = lm as Model
+      detector = det as Model
       void video.play()?.catch(() => {})
       raf = requestAnimationFrame(tick)
     })
@@ -129,6 +142,7 @@ export function useVisionGuard({ armed, onViolation }: UseVisionGuardArgs): Visi
       cancelAnimationFrame(raf)
       if (track) track.detach(video)
       landmarker?.close()
+      detector?.close()
       setSignals(EMPTY)
     }
   }, [armed])
