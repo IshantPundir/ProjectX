@@ -37,6 +37,8 @@ export function useVisionGuard({ armed, onViolation }: UseVisionGuardArgs): Visi
   const { localParticipant } = useLocalParticipant()
   const participantRef = useRef(localParticipant)
   const onViolationRef = useRef(onViolation)
+  // Stable refs so the detection-loop effect doesn't restart when the LiveKit
+  // participant identity or the onViolation callback identity changes.
   useEffect(() => {
     participantRef.current = localParticipant
     onViolationRef.current = onViolation
@@ -53,7 +55,7 @@ export function useVisionGuard({ armed, onViolation }: UseVisionGuardArgs): Visi
     let last = performance.now()
     let trail: { x: number; y: number }[] = []
     // Authoritative face COUNT comes from the throttled detector.
-    let lastDetectAt = 0
+    let lastDetectAt = 0 // 0 ⇒ the detector runs on the first frame
     let faceSummary: FaceCountSummary = { faceCount: 0, topConfidence: 0 }
     const since: Partial<Record<VisionNudgeKind, number>> = {}
     const fired = new Set<VisionNudgeKind>()
@@ -80,7 +82,7 @@ export function useVisionGuard({ armed, onViolation }: UseVisionGuardArgs): Visi
     if (track) track.attach(video)
 
     const tick = () => {
-      if (cancelled || !landmarker) return
+      if (cancelled || !landmarker || !detector) return
       if (video.readyState < 2) { raf = requestAnimationFrame(tick); return } // wait for a decoded frame
       const now = performance.now()
       const fps = 1000 / Math.max(1, now - last)

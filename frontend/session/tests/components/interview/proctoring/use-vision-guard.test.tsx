@@ -28,9 +28,8 @@ import { useVisionGuard } from '@/components/interview/proctoring/use-vision-gua
 const IDENT = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 const c = Math.cos(Math.PI / 6)
 const s = Math.sin(Math.PI / 6)
-// Ry(+30deg) -> yaw +30 -> 'right'; Ry(-30deg) -> yaw -30 -> 'left' (both off-screen)
+// Ry(+30deg) -> yaw +30 -> 'right' (off-screen)
 const RIGHT = [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]
-const LEFT = [c, 0, s, 0, 0, 1, 0, 0, -s, 0, c, 0, 0, 0, 0, 1]
 
 function lmFrame(matrices: number[][]) {
   return {
@@ -120,5 +119,6 @@ describe('useVisionGuard', () => {
     // landmarker runs ~every 16ms; detector ~every 350ms.
     expect(detDetect.mock.calls.length).toBeLessThan(lmDetect.mock.calls.length)
     expect(detDetect.mock.calls.length).toBeLessThanOrEqual(8)
+    expect(detDetect.mock.calls.length).toBeGreaterThanOrEqual(4)
   })
 })
