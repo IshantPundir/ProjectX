@@ -46,7 +46,7 @@ function buildInstructions(proctoringEnabled: boolean): Instruction[] {
       Icon: SingleScreenGlyph,
       title: 'Use a single screen',
       detail:
-        "Extra monitors aren't allowed during the screening and are flagged for review.",
+        "Extra monitors aren't allowed — please disconnect them or use just one screen before you start.",
     },
   ]
   if (proctoringEnabled) {
@@ -63,7 +63,7 @@ function buildInstructions(proctoringEnabled: boolean): Instruction[] {
     Icon: OneTimeLinkGlyph,
     title: 'One-time link — use it when you’re ready',
     detail:
-      "Not ready yet? You can revisit this page anytime. But once you click Start, your session token is consumed — you'll need a fresh invite from the recruiter to come back.",
+      "Not ready yet? You can revisit this page anytime. But once you click Start, this link is spent — you'll need a new invite from the recruiter to come back.",
     tone: 'caution',
   })
   return items
@@ -97,12 +97,12 @@ export function IntroStage({
   return (
     <div className="grid items-center gap-10 lg:grid-cols-[0.9fr_1.1fr]">
       {/* Illustration side */}
-      <div className="order-1 hidden justify-center lg:flex">
+      <div className="hidden justify-center lg:flex">
         <HeroScene className="w-full max-w-[360px]" />
       </div>
 
       {/* Content side */}
-      <section className="order-2 flex flex-col">
+      <section className="flex flex-col">
         {/* compact hero on mobile */}
         <HeroScene className="mx-auto mb-4 block w-40 max-w-full lg:hidden" />
 
@@ -129,7 +129,7 @@ export function IntroStage({
             aria-busy={consent.isPending}
             className="w-full sm:w-auto"
           >
-            {consent.isPending ? "Getting ready…" : "I'm ready →"}
+            {consent.isPending ? 'Getting ready…' : (<>I&apos;m ready <span aria-hidden>&#x2192;</span></>)}
           </Button>
           <p className="text-[12.5px] leading-relaxed text-px-fg-3">
             By starting, you consent to this AI-led interview and its recording.{' '}

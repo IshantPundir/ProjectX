@@ -42,4 +42,9 @@ describe('IntroStage', () => {
     await user.click(cta)
     await waitFor(() => expect(cta).toBeEnabled())
   })
+
+  it('omits the proctoring item when proctoringEnabled is false', () => {
+    renderWithProviders(<IntroStage {...baseProps} proctoringEnabled={false} />)
+    expect(screen.queryByText(/proctored screening/i)).not.toBeInTheDocument()
+  })
 })
