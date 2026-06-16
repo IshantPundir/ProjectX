@@ -113,6 +113,10 @@ export interface ReportRead {
   scoring_manifest: ScoringManifest | null
   human_decision: HumanDecision | null
   generated_at: string | null
+  /** Presigned R2 GET for the candidate reference photo (captured on the camera
+   *  step). Used as the main session/video poster. Null for sessions captured
+   *  before the feature, or when the presign fails. */
+  reference_photo_url: string | null
 }
 
 export interface HumanDecisionIn {

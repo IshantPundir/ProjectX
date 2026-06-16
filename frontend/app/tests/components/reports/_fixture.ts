@@ -107,6 +107,7 @@ export function makeReport(overrides: Partial<ReportRead> = {}): ReportRead {
       evidence_grounding_summary: null, generated_at: '2026-05-27T11:00:00Z', correlation_id: 'abcd1234',
     },
     human_decision: null, generated_at: '2026-05-27T11:00:00Z',
+    reference_photo_url: null,
     ...overrides,
   }
 }

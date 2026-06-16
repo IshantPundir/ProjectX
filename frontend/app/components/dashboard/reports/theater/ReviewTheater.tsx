@@ -82,11 +82,12 @@ export function ReviewTheater({
     () => buildQuestionMarkers(report.questions, durationMs),
     [report.questions, durationMs],
   )
-  // The opening frames are usually blurry; poster the <video> with a real
-  // mid-interview question frame instead (null → no poster attribute).
+  // Poster the <video> with the candidate's reference photo (captured on the
+  // camera step). For older sessions without one, fall back to a real
+  // mid-interview question frame; null → no poster attribute.
   const posterUrl = useMemo(
-    () => pickPosterUrl(report.questions, durationMs),
-    [report.questions, durationMs],
+    () => report.reference_photo_url ?? pickPosterUrl(report.questions, durationMs),
+    [report.reference_photo_url, report.questions, durationMs],
   )
   // all flags are clickable ticks; only the top-N carry thumbnails from the API
   const flags = useMemo(

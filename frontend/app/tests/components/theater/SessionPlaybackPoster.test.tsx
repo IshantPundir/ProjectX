@@ -45,6 +45,20 @@ describe('SessionPlayback poster', () => {
     expect(img?.getAttribute('src')).toContain('frame-q2.jpg')
   })
 
+  it('prefers the candidate reference photo over a question frame', () => {
+    recMock.value = { status: 'ready', duration_seconds: 600 }
+    const report = {
+      verdict: 'advance',
+      session_id: 'sess-1',
+      reference_photo_url: 'https://r2.example/reference.jpg',
+      questions: [
+        { asked_at_ms: 290_000, thumbnail_url: 'https://r2.example/frame-q2.jpg' },
+      ],
+    } as unknown as ReportRead
+    const { container } = render(<SessionPlayback report={report} onOpen={() => {}} />)
+    expect(container.querySelector('img')?.getAttribute('src')).toContain('reference.jpg')
+  })
+
   it('shows no poster image when the recording duration is unknown', () => {
     // Without a duration, pickPosterUrl can't pick a mid-frame → gradient fallback.
     recMock.value = { status: 'ready', duration_seconds: null }

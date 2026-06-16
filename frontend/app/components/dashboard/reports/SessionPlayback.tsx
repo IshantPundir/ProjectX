@@ -34,7 +34,9 @@ export function SessionPlayback({
   // isn't known yet, pickPosterUrl returns null → the gradient fallback shows.
   const { data: rec } = useSessionRecording(report.session_id ?? '')
   const durationMs = (rec?.duration_seconds ?? 0) * 1000
-  const poster = pickPosterUrl(report.questions, durationMs)
+  // Prefer the candidate's reference photo (captured on the camera step) as the
+  // session poster; fall back to a mid-interview question frame for older sessions.
+  const poster = report.reference_photo_url ?? pickPosterUrl(report.questions, durationMs)
   return (
     <div className={CARD} style={{ borderColor: 'var(--px-hairline)' }}>
       <button
