@@ -43,14 +43,19 @@ import {
   type FaceGateState,
 } from '@/components/interview/proctoring/use-precheck-face-gate'
 import { candidateSessionApi } from '@/lib/api/candidate-session'
+import { captureVideoFrame } from '@/lib/capture-frame'
 
 const mockGate = vi.mocked(usePreCheckFaceGate)
+const mockCapture = vi.mocked(captureVideoFrame)
 
 function gate(partial: Partial<FaceGateState>): FaceGateState {
   return { ready: false, failed: false, faceCount: 0, boxes: [], frame: null, ...partial }
 }
 
-beforeEach(() => mockGate.mockReturnValue(gate({})))
+beforeEach(() => {
+  mockGate.mockReturnValue(gate({}))
+  mockCapture.mockResolvedValue(new Blob(['x'], { type: 'image/jpeg' }))
+})
 afterEach(() => vi.restoreAllMocks())
 
 describe('ReadyStage', () => {
@@ -140,5 +145,19 @@ describe('ReadyStage', () => {
     render(<ReadyStage token="tok" onStart={vi.fn()} proctored={false} />)
     await waitFor(() => expect(screen.getByText(/permission denied/i)).toBeInTheDocument())
     expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
+  })
+
+  it('returns to idle with a retry note if the frame grab fails', async () => {
+    const onStart = vi.fn()
+    mockCapture.mockRejectedValueOnce(new Error('encode failed'))
+    mockGate.mockReturnValue(gate({ ready: true, faceCount: 1 }))
+    const user = userEvent.setup()
+    render(<ReadyStage token="tok" onStart={onStart} proctored={false} />)
+    const start = screen.getByRole('button', { name: /start interview/i })
+    await waitFor(() => expect(start).toBeEnabled())
+    await user.click(start)
+    await user.click(await screen.findByText('__complete__'))
+    await waitFor(() => expect(screen.getByText(/let.s try again/i)).toBeInTheDocument())
+    expect(onStart).not.toHaveBeenCalled()
   })
 })

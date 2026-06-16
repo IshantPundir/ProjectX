@@ -132,6 +132,10 @@ export function ReadyStage({ token, onStart, proctored = false }: Props) {
 
   // Capture must stay stable: fullscreen+visible+focused, live, and (when vision
   // works) exactly one face. If this drops mid-countdown, the capture aborts.
+  // Intentional gaps: gateCount is debounced (~400ms) so a face appearing in the
+  // final fraction of the count may not abort, and a violation during the brief
+  // post-countdown upload window isn't re-checked — the still is taken at a
+  // stable instant; this signal guards the countdown, not the upload.
   const captureStable = locked && status === 'live' && (!face.ready || gateCount === 1)
 
   const upload = useCallback(async () => {
