@@ -19,7 +19,12 @@ export function FullscreenLockGate({ children }: { children: ReactNode }) {
   const { locked, enterFullscreen } = useFullscreenLock()
   return (
     <>
-      {children}
+      {/* While the gate is up, the pre-check behind it is `inert` so keyboard
+          users can't Tab into it — the visual block is a real interaction block.
+          `display: contents` keeps the wrapper layout-neutral. */}
+      <div className="contents" inert={!locked ? true : undefined}>
+        {children}
+      </div>
       {!locked && (
         <div
           role="alertdialog"
@@ -39,7 +44,7 @@ export function FullscreenLockGate({ children }: { children: ReactNode }) {
                 return here.
               </p>
             </div>
-            <Button size="lg" onClick={enterFullscreen} className="w-full sm:w-auto">
+            <Button size="lg" autoFocus onClick={enterFullscreen} className="w-full sm:w-auto">
               Enter fullscreen to begin
             </Button>
           </div>
