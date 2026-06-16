@@ -491,9 +491,10 @@ async def _share_report_pdf_async(
             # Best-effort failure mark. Mirror score_session_report's inner-except:
             # try to persist status="failed"; if THAT write fails (e.g. the
             # transaction was already poisoned by a mid-flight DB error), roll
-            # back rather than crash. We do NOT roll back before the write —
-            # rollback reverts the transaction-scoped SET LOCAL app.current_tenant,
-            # which would RLS-block the failed-mark UPDATE under nexus_app.
+            # back rather than crash. We do NOT roll back before the write — a
+            # rollback ends the transaction and reverts the SET LOCAL session
+            # state (ROLE nexus_app + app.bypass_rls='true'), which would then
+            # RLS-block the failed-mark UPDATE.
             try:
                 share.status = "failed"
                 share.error = str(exc)[:500]
