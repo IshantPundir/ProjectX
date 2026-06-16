@@ -33,6 +33,7 @@ from app.modules.reporting.schemas import (
     ReportIndexPage,
     ReportRead,
 )
+from app.modules.reporting.serialization import report_read_from_row
 from app.modules.session import (
     SessionNotFoundError,
     get_session_recording_playback,
@@ -70,53 +71,7 @@ def _get_correlation_id(request: Request) -> str:
 
 
 def _row_to_read(row: SessionReport) -> ReportRead:
-    """Assemble a ReportRead from a SessionReport ORM row.
-
-    JSONB columns are stored as plain dicts/lists; Pydantic coerces nested
-    dicts into the nested model types via model_validate.
-
-    Column mapping (persist_report writes, _row_to_read reads):
-      dimension_scores  → scores
-      summary           → decision, quick_summary, strengths, concerns, methodology
-      question_scorecards → questions
-      signal_scorecards → signal_assessments
-    """
-    summary = row.summary or {}
-    return ReportRead.model_validate(
-        {
-            "id": str(row.id),
-            "session_id": str(row.session_id),
-            "status": row.status,
-            "engine_version": row.engine_version,
-            "version": row.version,
-            "verdict": row.verdict,
-            "verdict_reason": row.verdict_reason,
-            "overall_score": row.overall_score,
-            # Numeric → float coercion; None → 0.0 (safe default)
-            "overall_coverage": (
-                float(row.overall_coverage) if row.overall_coverage is not None else 0.0
-            ),
-            "overall_confidence": row.overall_confidence or "low",
-            "decision": summary.get("decision") or {
-                "headline": row.verdict_reason or "",
-                "why_positive": {"title": "", "body": ""},
-                "why_negative": {"title": "", "body": ""},
-            },
-            "scores": row.dimension_scores or {},
-            "quick_summary": summary.get("quick_summary", ""),
-            "strengths": summary.get("strengths", []),
-            "concerns": summary.get("concerns", []),
-            "questions": row.question_scorecards or [],
-            "methodology": summary.get("methodology") or {
-                "note": "",
-                "charity_flags": [],
-            },
-            "signal_assessments": row.signal_scorecards or [],
-            "scoring_manifest": row.scoring_manifest,
-            "human_decision": row.human_decision,
-            "generated_at": row.generated_at.isoformat() if row.generated_at else None,
-        }
-    )
+    return report_read_from_row(row)
 
 
 async def _attach_question_thumbnails(
