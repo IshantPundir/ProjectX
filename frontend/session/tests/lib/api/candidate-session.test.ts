@@ -70,3 +70,45 @@ describe('candidateSessionApi.proctoringEvent', () => {
     })
   })
 })
+
+describe('candidateSessionApi.uploadReferencePhoto', () => {
+  it('POSTs FormData to the reference-photo endpoint without a Content-Type header', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(null, { status: 204 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const blob = new Blob(['fake-image'], { type: 'image/jpeg' })
+    await candidateSessionApi.uploadReferencePhoto('tok123', blob)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toContain('/api/candidate-session/tok123/reference-photo')
+    expect(init.method).toBe('POST')
+    // Body must be a FormData instance (browser sets the multipart boundary).
+    expect(init.body).toBeInstanceOf(FormData)
+    // Content-Type must NOT be set — letting the browser add the boundary.
+    expect((init.headers as Record<string, string>)['Content-Type']).toBeUndefined()
+  })
+
+  it('throws a CandidateSessionError on a non-ok response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'too large' }), {
+        status: 413,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const blob = new Blob(['fake-image'], { type: 'image/jpeg' })
+    try {
+      await candidateSessionApi.uploadReferencePhoto('tok123', blob)
+      throw new Error('should have thrown')
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error)
+      const e = err as Error & { status: number }
+      expect(e.message).toBe('too large')
+      expect(e.status).toBe(413)
+    }
+  })
+})

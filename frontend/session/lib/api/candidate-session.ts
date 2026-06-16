@@ -122,7 +122,8 @@ async function _call<T>(
   const headers: Record<string, string> = {
     'ngrok-skip-browser-warning': '1',
   }
-  if (body) headers['Content-Type'] = 'application/json'
+  const isForm = typeof FormData !== 'undefined' && body instanceof FormData
+  if (body && !isForm) headers['Content-Type'] = 'application/json'
 
   const r = await fetch(`${API_BASE}${path}`, {
     method,
@@ -133,7 +134,8 @@ async function _call<T>(
     // stale /pre-check body and the wizard never advances.
     cache: 'no-store',
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    // FormData is sent as-is (multipart); other bodies are JSON-encoded.
+    body: body ? (isForm ? body : JSON.stringify(body)) : undefined,
   })
   if (!r.ok) {
     let parsed: Record<string, unknown> = {}
@@ -203,4 +205,18 @@ export const candidateSessionApi = {
       `/api/candidate-session/${token}/proctoring/event`,
       body,
     ),
+  /**
+   * Upload the candidate's reference still (captured on the camera step) as
+   * multipart. Does NOT consume the single-use token — the photo is stored
+   * before /start. PII: the blob is the candidate's face; never logged.
+   */
+  uploadReferencePhoto: (token: string, blob: Blob) => {
+    const form = new FormData()
+    form.append('file', blob, 'reference.jpg')
+    return _call<void>(
+      'POST',
+      `/api/candidate-session/${token}/reference-photo`,
+      form,
+    )
+  },
 }
