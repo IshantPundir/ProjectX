@@ -4,7 +4,10 @@ from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
+from app.modules.reel import ReelPlayback
 from app.modules.reporting.scoring.types import Confidence, Verdict
+from app.modules.session import RecordingPlayback
+from app.modules.vision import ProctoringAnalysisRead
 
 
 class QuestionGradeOut(BaseModel):
@@ -208,3 +211,14 @@ class ShareReportIn(BaseModel):
 class ShareReportOut(BaseModel):
     share_id: str
     status: str
+
+
+class PublicRecordingsEnvelope(BaseModel):
+    """Everything the public /recordings/<token> page needs, in one payload."""
+    candidate_name: str
+    job_title: str
+    stage_label: str
+    report: ReportRead
+    recording: RecordingPlayback
+    proctoring: ProctoringAnalysisRead
+    reel: ReelPlayback
