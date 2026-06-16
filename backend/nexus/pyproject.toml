@@ -89,6 +89,10 @@ dependencies = [
     # instructor 2.x release; stay <2.
     "instructor>=1.15,<2",
     "sse-starlette>=2.4,<3",
+
+    # Multipart form / file upload support (required by FastAPI UploadFile / File).
+    # Used for the candidate reference-photo upload endpoint.
+    "python-multipart>=0.0.9,<1",
 ]
 
 [project.optional-dependencies]

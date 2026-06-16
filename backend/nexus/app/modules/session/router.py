@@ -19,7 +19,17 @@ from __future__ import annotations
 import uuid
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -275,6 +285,55 @@ async def post_proctoring_event_endpoint(
         kind=body.kind,
         occurred_at=body.occurred_at,
         correlation_id=str(uuid.uuid4()),
+    )
+
+
+# Max accepted reference-photo upload (bytes). A 720p JPEG is ~100-300 KB; cap
+# generously but bounded.
+_MAX_REFERENCE_PHOTO_BYTES = 5 * 1024 * 1024
+
+
+@candidate_session_router.post(
+    "/reference-photo",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def post_reference_photo_endpoint(
+    request: Request,
+    token: str,  # consumed by middleware — declared so FastAPI routes correctly
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_tenant_db),
+) -> None:
+    """Store the candidate's reference still for this session.
+
+    Auth: candidate JWT in path (verified by AuthMiddleware; NOT consumed —
+    same as /proctoring/event, so the still can be (re)uploaded before /start).
+    Tenant + session come from the verified token claims. PII: bytes are never
+    logged.
+
+    Rate limit (declared; not yet enforced — see /rejoin note): 12/min per
+    token, 30/min per IP.
+    """
+    payload = request.state.candidate_token_payload
+    content_type = (file.content_type or "").lower()
+    if content_type not in ("image/jpeg", "image/png", "image/webp"):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Unsupported image type.",
+        )
+    data = await file.read(_MAX_REFERENCE_PHOTO_BYTES + 1)
+    if len(data) == 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty upload.")
+    if len(data) > _MAX_REFERENCE_PHOTO_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Image too large.",
+        )
+    await session_service.save_reference_photo(
+        db,
+        session_id=payload.session_id,
+        tenant_id=payload.tenant_id,
+        data=data,
+        content_type=content_type,
     )
 
 

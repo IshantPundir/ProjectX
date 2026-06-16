@@ -69,6 +69,9 @@ class Session(Base):
     recording_ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     recording_duration_seconds: Mapped[int | None] = mapped_column(Integer)
     recording_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    # --- Candidate reference photo (captured on the camera-test step) ---
+    reference_photo_key: Mapped[str | None] = mapped_column(Text)
+    reference_photo_captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     raw_result_json: Mapped[dict | None] = mapped_column(JSONB)
     session_evidence_json: Mapped[dict | None] = mapped_column(JSONB)
     audio_tuning_summary: Mapped[dict | None] = mapped_column(JSONB)

@@ -68,6 +68,7 @@ from app.modules.session.schemas import (
 )
 from app.modules.session.state_machine import advance_on_pre_check_load, transition
 from app.modules.tenant_settings import get_tenant_settings
+from app.storage import get_object_storage
 
 
 log = structlog.get_logger("session.service")
@@ -970,3 +971,39 @@ async def record_proctoring_event(
         violation_count=len(violations),
         soft_violation_count=soft_count,
     )
+
+
+# Accepted reference-photo content types → file extension.
+_REFERENCE_PHOTO_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+
+
+async def save_reference_photo(
+    db: AsyncSession,
+    *,
+    session_id: UUID,
+    tenant_id: UUID,
+    data: bytes,
+    content_type: str,
+) -> None:
+    """Store the candidate's reference still for a session (idempotent overwrite).
+
+    Loads the session for id + tenant_id (cross-tenant → SessionNotFoundError,
+    same opacity as the other candidate writes), uploads the image to the R2
+    recording bucket under a tenant+session-scoped key, and stamps
+    reference_photo_key + reference_photo_captured_at. PII: the bytes are never
+    logged; the object is private (presigned access only).
+    """
+    sess = (
+        await db.execute(
+            select(Session).where(Session.id == session_id, Session.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if sess is None:
+        raise SessionNotFoundError()
+
+    ext = _REFERENCE_PHOTO_EXT.get(content_type, "jpg")
+    key = f"reference-photos/{tenant_id}/{session_id}.{ext}"
+    await get_object_storage().upload_bytes(key, data, content_type=content_type)
+    sess.reference_photo_key = key
+    sess.reference_photo_captured_at = datetime.now(UTC)
+    await db.flush()
