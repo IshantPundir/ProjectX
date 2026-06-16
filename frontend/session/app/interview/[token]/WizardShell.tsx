@@ -9,6 +9,7 @@ import { CompletionScreen } from '@/components/interview/app/CompletionScreen'
 import { ProctoringEndedScreen } from '@/components/interview/app/ProctoringEndedScreen'
 import { useCandidateSession } from '@/lib/hooks/use-candidate-session'
 
+import { FullscreenLockGate } from './FullscreenLockGate'
 import { IntroStage } from './IntroStage'
 import { ReadyStage } from './ReadyStage'
 import { StageTransition } from './StageTransition'
@@ -115,29 +116,31 @@ export function WizardShell({ token }: { token: string }) {
   }
 
   return (
-    <WizardFrame
-      companyName={data.company_name}
-      jobTitle={data.job_title}
-      steps={steps}
-      currentIndex={currentIndex}
-      accent={appConfig.accent}
-    >
-      <StageTransition stageKey={stage}>
-        {stage === 'intro' && (
-          <IntroStage
-            token={token}
-            companyName={data.company_name}
-            jobTitle={data.job_title}
-            durationMinutes={data.duration_minutes}
-            consentText={data.consent_text}
-            proctoringEnabled={data.proctoring_enabled}
-          />
-        )}
-        {stage === 'verify' && <VerifyStage token={token} otpIssuedAt={data.otp_issued_at} />}
-        {stage === 'ready' && (
-          <ReadyStage onStart={() => setCamMicPassed(true)} proctored={data.proctoring_enabled} />
-        )}
-      </StageTransition>
-    </WizardFrame>
+    <FullscreenLockGate>
+      <WizardFrame
+        companyName={data.company_name}
+        jobTitle={data.job_title}
+        steps={steps}
+        currentIndex={currentIndex}
+        accent={appConfig.accent}
+      >
+        <StageTransition stageKey={stage}>
+          {stage === 'intro' && (
+            <IntroStage
+              token={token}
+              companyName={data.company_name}
+              jobTitle={data.job_title}
+              durationMinutes={data.duration_minutes}
+              consentText={data.consent_text}
+              proctoringEnabled={data.proctoring_enabled}
+            />
+          )}
+          {stage === 'verify' && <VerifyStage token={token} otpIssuedAt={data.otp_issued_at} />}
+          {stage === 'ready' && (
+            <ReadyStage onStart={() => setCamMicPassed(true)} proctored={data.proctoring_enabled} />
+          )}
+        </StageTransition>
+      </WizardFrame>
+    </FullscreenLockGate>
   )
 }
