@@ -116,6 +116,15 @@ vision = [
     "numpy>=1.26",
     "uniface[gpu]>=0.1",
 ]
+# Report-sharing PDF rendering — nexus-pdf-worker only. Headless Chromium via
+# Playwright renders the report print template (app/modules/reporting/pdf) to
+# PDF. The Playwright import is lazy (render.py) so the lean nexus image, which
+# does NOT install this group, runs the HTML/context tests without Chromium.
+# The Chromium browser binary itself is installed at image-build time via
+# `playwright install --with-deps chromium` (see Dockerfile.pdf).
+pdf = [
+    "playwright>=1.44",
+]
 # Test-only deps for running the vision_integration suite INSIDE the vision
 # image (which installs .[vision], not .[dev]). Kept out of the `vision` group
 # so the production vision worker image stays lean. Install ephemerally in a

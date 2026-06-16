@@ -62,7 +62,14 @@ services:
     volumes:
       - .:/app
       - ./engine-events:/tmp/engine-events
-    command: dramatiq app.worker --processes 2 --threads 4
+    # Explicit -Q allowlist: this lean image has no Chromium (report_share) and
+    # no onnxruntime/ffmpeg (vision/reel). app.worker imports the reporting
+    # actors to register score_session_report, which ALSO registers
+    # share_report_pdf on report_share — without this filter the lean worker
+    # would consume report_share messages and crash on the lazy Playwright
+    # import. report_share is served only by nexus-pdf-worker; vision/reel only
+    # by nexus-vision-worker. List every queue the lean worker actually owns.
+    command: dramatiq app.worker --processes 2 --threads 4 -Q default jd_extraction jd_enrichment jd_reenrichment question_bank_generation report_scoring ats_poll
 
   nexus-engine:
     # Phase 3 — engine merged into nexus. Runs the single interview engine from
@@ -161,6 +168,28 @@ services:
       #     https://github.com/yakhyo/gaze-estimation/releases/download/weights/resnet34_gaze.onnx
       - ./models:/weights:ro
     command: sh -c 'dramatiq app.vision_worker --processes ${VISION_WORKER_CONCURRENCY:-4} --threads 1 -Q vision reel'
+
+  nexus-pdf-worker:
+    # Report sharing — renders report PDFs with headless Chromium (Playwright)
+    # and emails them. Runs the report_share queue ONLY. No GPU.
+    build:
+      context: .
+      dockerfile: Dockerfile.pdf
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@host.docker.internal:54322/postgres
+      - REDIS_URL=redis://redis:6379/0
+      - PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: sh -c 'dramatiq app.pdf_worker --processes 1 --threads 2 -Q report_share'
 
   redis:
     image: redis:7-alpine
