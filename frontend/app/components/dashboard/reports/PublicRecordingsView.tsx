@@ -3,18 +3,25 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 
-import { BrandLogo, Button, Skeleton } from '@/components/px'
+import { BrandLogo, Skeleton } from '@/components/px'
 import { reportsApi } from '@/lib/api/reports'
+import { cn } from '@/lib/utils'
 import { PublicPlaybackProvider } from '@/lib/hooks/public-playback-context'
 import { ReelTheater } from './theater/ReelTheater'
 import { ReviewTheater } from './theater/ReviewTheater'
 
+type Mode = 'reel' | 'full'
+
 /**
  * Public, token-gated playback surface. Fetches the full envelope from the
- * public API (no auth), then lets an external recruiter watch the full session
- * (ReviewTheater: video + proctoring + scores + transcript + decision) and the
- * highlight reel. The recruiter REPORT page stays private — this only plays back
- * the videos a shared PDF points at.
+ * public API (no auth), then plays the videos inline. The page lands directly
+ * on the highlight reel (when one exists) and offers a top-left switch between
+ * "Highlight reel" and "Full session" (the full ReviewTheater: video +
+ * proctoring + scores + transcript + decision). When there is no reel, the
+ * switch is omitted and the page shows Full session directly.
+ *
+ * The recruiter REPORT page stays private — this only plays back the videos a
+ * shared PDF points at.
  */
 export function PublicRecordingsView({ token }: { token: string }) {
   const { data, isLoading, isError } = useQuery({
@@ -22,8 +29,9 @@ export function PublicRecordingsView({ token }: { token: string }) {
     queryFn: ({ signal }) => reportsApi.getPublicRecordings(token, { signal }),
     retry: false,
   })
-  const [theaterOpen, setTheaterOpen] = useState(false)
-  const [reelOpen, setReelOpen] = useState(false)
+  // null = "not chosen yet" → derive the default from the data once it loads
+  // (reel-first), without a flash or a stale initial value.
+  const [mode, setMode] = useState<Mode | null>(null)
 
   if (isLoading) {
     return (
@@ -47,57 +55,61 @@ export function PublicRecordingsView({ token }: { token: string }) {
   }
 
   const reelReady = data.reel.status === 'ready'
+  const activeMode: Mode = mode ?? (reelReady ? 'reel' : 'full')
   const subtitle = `${data.job_title} · ${data.stage_label}`
 
   return (
     <PublicPlaybackProvider
       value={{ recording: data.recording, proctoring: data.proctoring }}
     >
-      <div className="mx-auto max-w-2xl p-8">
-        <BrandLogo className="mb-8 h-8" />
-        <div className="rounded-2xl border bg-white p-8 shadow-sm">
-          {data.report.reference_photo_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={data.report.reference_photo_url}
-              alt={data.candidate_name}
-              className="mb-4 h-20 w-20 rounded-full object-cover"
-            />
-          ) : null}
-          <h1 className="text-xl font-semibold">{data.candidate_name}</h1>
-          <p className="text-sm text-muted-foreground">{subtitle}</p>
-
-          <div className="mt-6 flex flex-col gap-3">
-            <Button onClick={() => setTheaterOpen(true)}>
-              ▶ Watch full session
-            </Button>
-            {reelReady ? (
-              <Button variant="secondary" onClick={() => setReelOpen(true)}>
-                ✨ Watch highlight reel
-              </Button>
-            ) : null}
-          </div>
+      {/* Top-left switch — only when there's actually a reel to switch to. */}
+      {reelReady ? (
+        <div
+          role="tablist"
+          aria-label="Switch view"
+          className="fixed left-4 top-4 z-[60] flex items-center gap-1 rounded-full border bg-white/90 p-1 shadow-sm backdrop-blur"
+        >
+          {(['reel', 'full'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              role="tab"
+              aria-selected={activeMode === m}
+              onClick={() => setMode(m)}
+              className={cn(
+                'rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors',
+                activeMode === m
+                  ? 'bg-zinc-900 text-white'
+                  : 'text-zinc-600 hover:text-zinc-900',
+              )}
+            >
+              {m === 'reel' ? 'Highlight reel' : 'Full session'}
+            </button>
+          ))}
         </div>
-      </div>
+      ) : null}
 
-      <ReviewTheater
-        open={theaterOpen}
-        report={data.report}
-        candidateName={data.candidate_name}
-        subtitle={subtitle}
-        onClose={() => setTheaterOpen(false)}
-      />
       {reelReady ? (
         <ReelTheater
-          open={reelOpen}
+          open={activeMode === 'reel'}
           signedUrl={data.reel.signed_url}
           chapters={data.reel.chapters}
           durationSeconds={data.reel.duration_seconds}
           candidateName={data.candidate_name}
           subtitle={subtitle}
-          onClose={() => setReelOpen(false)}
+          showClose={false}
+          onClose={() => {}}
         />
       ) : null}
+
+      <ReviewTheater
+        open={activeMode === 'full'}
+        report={data.report}
+        candidateName={data.candidate_name}
+        subtitle={subtitle}
+        showClose={false}
+        onClose={() => {}}
+      />
     </PublicPlaybackProvider>
   )
 }

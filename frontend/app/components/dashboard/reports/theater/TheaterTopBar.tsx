@@ -11,10 +11,13 @@ export function TheaterTopBar({
   report,
   riskBand,
   onClose,
+  showClose = true,
 }: {
   report: ReportRead
   riskBand: RiskBand | null
   onClose: () => void
+  // The public recordings page hides the close ✕ — there is nowhere to close to.
+  showClose?: boolean
 }) {
   const v = verdictMeta(report.verdict)
   return (
@@ -32,15 +35,17 @@ export function TheaterTopBar({
           style={{ background: TONE_BG[v.tone], color: TONE_INK[v.tone] }}>
           {v.label}
         </span>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="grid h-6 w-6 flex-none place-items-center rounded-full border text-[12px]"
-          style={{ borderColor: 'var(--px-hairline-strong)', color: 'var(--px-fg-3)' }}
-        >
-          ✕
-        </button>
+        {showClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="grid h-6 w-6 flex-none place-items-center rounded-full border text-[12px]"
+            style={{ borderColor: 'var(--px-hairline-strong)', color: 'var(--px-fg-3)' }}
+          >
+            ✕
+          </button>
+        )}
       </div>
     </div>
   )

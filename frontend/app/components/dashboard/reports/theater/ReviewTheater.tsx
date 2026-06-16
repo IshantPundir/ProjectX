@@ -29,6 +29,7 @@ export function ReviewTheater({
   subtitle,
   initialFlagStartMs = null,
   onClose,
+  showClose = true,
 }: {
   open: boolean
   report: ReportRead
@@ -36,6 +37,8 @@ export function ReviewTheater({
   subtitle: string
   initialFlagStartMs?: number | null
   onClose: () => void
+  // The public recordings page hides the close ✕ — there is nowhere to close to.
+  showClose?: boolean
 }) {
   const sessionId = report.session_id ?? ''
   const { data: rec, isLoading: recLoading } = useSessionRecording(open ? sessionId : '')
@@ -223,7 +226,7 @@ export function ReviewTheater({
           <GlassLayer />
 
           <div className="theater-topbar-slot">
-            <TheaterTopBar report={report} riskBand={riskBand} onClose={requestClose} />
+            <TheaterTopBar report={report} riskBand={riskBand} onClose={requestClose} showClose={showClose} />
           </div>
 
           {/* left rail: candidate identity + all gauges + proctoring integrity */}
