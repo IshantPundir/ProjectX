@@ -68,6 +68,12 @@ export async function proxy(request: NextRequest) {
     return supabaseResponse;
   }
 
+  // Public recordings share page — token-gated by the backend, no Supabase
+  // session. Must bypass the auth gate (the page calls the public API directly).
+  if (path.startsWith("/recordings/")) {
+    return supabaseResponse;
+  }
+
   // Validate session
   const {
     data: { user },
