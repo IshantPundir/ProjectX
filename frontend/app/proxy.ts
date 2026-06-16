@@ -29,8 +29,6 @@ export function checkLegacyRedirect(url: URL): URL | null {
   return null
 }
 
-const PUBLIC_PATHS = new Set(["/login"]);
-
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
