@@ -352,6 +352,7 @@ def create_app() -> FastAPI:
     from app.modules.session.router import candidate_session_router, session_router
     from app.modules.analysis.router import router as analysis_router
     from app.modules.reporting.router import router as reporting_router
+    from app.modules.reporting.public_router import router as public_recordings_router
     from app.modules.reel.router import router as reel_router
     from app.modules.notifications.router import router as notifications_router
     from app.modules.auth.router import router as auth_router
@@ -372,6 +373,7 @@ def create_app() -> FastAPI:
     application.include_router(question_bank_refine_router)
     application.include_router(analysis_router)
     application.include_router(reporting_router)
+    application.include_router(public_recordings_router)
     application.include_router(reel_router)
     application.include_router(notifications_router)
     application.include_router(admin_router)
