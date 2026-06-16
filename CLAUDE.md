@@ -174,7 +174,10 @@ Mandatory on every public endpoint. Limits cap **per-IP and per-token/per-tenant
 | `/api/sessions/candidate/*/otp/request` | 3/hour | 5/day per session |
 | `/api/sessions/candidate/*/otp/verify` | 3 attempts (in code) | 60s window (in code) |
 | `/api/admin/*` | 30/min | — |
+| `/api/public/recordings/*` | 30/min | 60/hour per token |
 | All other authenticated | 600/min | 10k/min per tenant |
+
+The public recordings endpoint is the only unauthenticated read of candidate evaluation data; it is gated by a 256-bit revocable share token (HMAC-hashed at rest) and returns a uniform 404 on any invalid / expired / revoked token (no enumeration oracle).
 
 Declare the rate limit in the router when adding an endpoint, not after — un-rate-limited new endpoints block merge.
 
