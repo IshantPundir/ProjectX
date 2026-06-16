@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  @page { size: A4; margin: 14mm 0 16mm; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"Liberation Sans",Arial,sans-serif; color:#16181d; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .serif { font-family:"Liberation Serif",Georgia,serif; }
+  .hero { background:linear-gradient(120deg,#1a1b38,#33356b); color:#fff; padding:22px 30px 26px; }
+  .hbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
+  .logo { font-weight:800; font-size:15px; } .logo span { color:#a7a3f5; }
+  .hmeta { font-size:9px; letter-spacing:2px; text-transform:uppercase; color:#9b9cc4; text-align:right; line-height:1.7; }
+  .hgrid { display:flex; gap:18px; align-items:center; }
+  .mono { height:74px; width:74px; border-radius:15px; background:linear-gradient(135deg,#6f68f0,#4f46e5);
+          display:flex; align-items:center; justify-content:center; font-weight:800; font-size:28px; color:#fff;
+          border:2px solid rgba(255,255,255,.14); flex:none; overflow:hidden; }
+  .mono img { width:100%; height:100%; object-fit:cover; }
+  .hname { font-size:24px; font-weight:600; margin:2px 0 3px; }
+  .hrole { font-size:12px; color:#b9bad8; }
+  .stub { display:inline-block; margin-top:12px; border:1px solid rgba(255,255,255,.28); color:#fff;
+          font-size:11px; border-radius:8px; padding:6px 12px; text-decoration:none; }
+  .stampwrap { margin-left:auto; }
+  .band { display:flex; align-items:center; gap:24px; padding:16px 30px; border-bottom:1px solid #e9e9ee; }
+  .ovl { text-align:center; padding-right:6px; border-right:1px solid #e9e9ee; }
+  .ovl .t { font-size:9px; letter-spacing:1.2px; text-transform:uppercase; color:#6b6f7a; margin-top:3px; }
+  .dim { flex:1; } .dim .top { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; }
+  .dim .nm { font-size:10px; letter-spacing:.5px; text-transform:uppercase; color:#6b6f7a; font-weight:700; }
+  .dim .vl { font-size:16px; font-weight:700; }
+  .rail { height:6px; border-radius:6px; background:#eef0f4; overflow:hidden; }
+  .rail > i { display:block; height:100%; border-radius:6px; }
+  .sec { padding:16px 30px 0; }
+  .secnum { display:flex; align-items:center; gap:12px; margin:0 0 12px; }
+  .secnum .e { font-size:10px; letter-spacing:2.5px; text-transform:uppercase; font-weight:700; color:#6b6f7a; }
+  .secnum .ln { flex:1; height:1px; background:#e9e9ee; }
+  .body { font-size:12px; line-height:1.7; color:#3a3d45; }
+  .why { display:flex; gap:14px; }
+  .wcard { border:1px solid #e9e9ee; border-radius:12px; padding:14px 15px; position:relative; flex:1; }
+  .wcard.pos { border-left:3px solid #0e7a45; } .wcard.neg { border-left:3px solid #b4791a; }
+  .wtitle { font-weight:700; font-size:12px; margin-bottom:6px; }
+  .wbody { font-size:11px; line-height:1.6; color:#54565f; }
+  .srow { display:flex; gap:12px; padding:12px 0; border-top:1px solid #f0f0f4; break-inside:avoid; }
+  .sico { width:22px; height:22px; border-radius:7px; display:flex; align-items:center; justify-content:center;
+          font-size:12px; font-weight:800; flex:none; }
+  .sico.s { background:#e7f7ee; color:#0e7a45; } .sico.c { background:#fbf1de; color:#b4791a; }
+  .stitle { font-weight:700; font-size:12px; margin-bottom:3px; }
+  .sdetail { font-size:11px; color:#54565f; line-height:1.6; }
+  .sev { font-size:8.5px; font-weight:700; border-radius:5px; padding:2px 7px; background:#fbf1de;
+         color:#b4791a; text-transform:uppercase; letter-spacing:.6px; margin-left:8px; }
+  .qcard { border:1px solid #e9e9ee; border-radius:12px; padding:14px 16px; margin-bottom:11px; break-inside:avoid; }
+  .qhead { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+  .qnum { font-family:"Liberation Serif",Georgia,serif; color:#c9cad4; font-size:20px; font-weight:600; margin-right:10px; }
+  .qtitle { font-weight:700; font-size:12px; line-height:1.4; }
+  .chip { font-size:8.5px; font-weight:700; border-radius:6px; padding:3px 8px; letter-spacing:.5px;
+          text-transform:uppercase; white-space:nowrap; }
+  .chip-pass { background:#e7f7ee; color:#0e7a45; } .chip-diff { background:#f1f1f5; color:#7c7c88; }
+  .qquote { border-left:2px solid #e3e3ea; padding-left:13px; color:#52535d; font-size:11px;
+            font-style:italic; line-height:1.6; margin-top:10px; }
+  .qread { font-size:11px; color:#3a3d45; line-height:1.6; margin-top:8px; }
+</style></head>
+<body>
+  <svg width="0" height="0" style="position:absolute"><defs>
+    <filter id="worn" x="-12%" y="-25%" width="124%" height="150%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves="2" seed="7" result="warp"/>
+      <feDisplacementMap in="SourceGraphic" in2="warp" scale="1.5" xChannelSelector="R" yChannelSelector="G" result="wob"/>
+      <feTurbulence type="fractalNoise" baseFrequency="0.55" numOctaves="2" seed="4" result="speck"/>
+      <feColorMatrix in="speck" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -0.45 1.06" result="mask"/>
+      <feComposite in="wob" in2="mask" operator="in"/>
+    </filter>
+  </defs></svg>
+
+  <div class="hero">
+    <div class="hbar"><div class="logo">BinQle<span>.ai</span></div>
+      <div class="hmeta">Candidate Evaluation<br>{{ stage_label }} &middot; {{ generated_on }} &middot; Confidential</div></div>
+    <div class="hgrid">
+      <div class="mono">{% if reference_photo_url %}<img src="{{ reference_photo_url }}" alt="">{% else %}{{ monogram }}{% endif %}</div>
+      <div>
+        <div class="hname serif">{{ candidate_name }}</div>
+        <div class="hrole">{{ job_title }}</div>
+        <a class="stub" href="{{ full_session_url }}">&#9654; See full session recording</a>
+      </div>
+      <div class="stampwrap">
+        <svg width="178" height="90" viewBox="0 0 200 100">
+          <g filter="url(#worn)" transform="rotate(-8 100 50)" fill="none" stroke="{{ stamp.color }}">
+            <rect x="10" y="18" width="180" height="64" rx="9" stroke-width="5"/>
+            <rect x="17" y="25" width="166" height="50" rx="6" stroke-width="2.2"/>
+            <text x="100" y="59" text-anchor="middle" font-family="DejaVu Sans,Arial,sans-serif"
+                  font-weight="bold" font-size="28" letter-spacing="1.5" fill="{{ stamp.color }}"
+                  stroke="none" font-style="italic">{{ stamp.text }}</text>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <div class="band">
+    <div class="ovl">
+      {% set off = 195 - (1.948 * (overall_score or 0)) %}
+      <svg width="74" height="74" viewBox="0 0 76 76">
+        <circle cx="38" cy="38" r="31" fill="none" stroke="#eef0f4" stroke-width="7"/>
+        <circle cx="38" cy="38" r="31" fill="none" stroke="#0e7a45" stroke-width="7" stroke-linecap="round"
+                stroke-dasharray="194.8" stroke-dashoffset="{{ off }}" transform="rotate(-90 38 38)"/>
+        <text x="38" y="44" text-anchor="middle" font-size="22" font-weight="700" fill="#16181d"
+              font-family="Liberation Serif,Georgia,serif">{{ overall_score if overall_score is not none else '—' }}</text>
+      </svg>
+      <div class="t">Overall{% if overall_tier %} &middot; {{ overall_tier }}{% endif %}</div>
+    </div>
+    {% for d in dimensions %}
+    <div class="dim"><div class="top"><span class="nm">{{ d.name }}</span><span class="vl" style="color:{{ d.color }}">{{ d.score }}</span></div>
+      <div class="rail"><i style="width:{{ d.score }}%;background:{{ d.color }}"></i></div></div>
+    {% endfor %}
+  </div>
+
+  <div class="sec">
+    <div class="secnum"><span class="e">01 &mdash; Summary</span><span class="ln"></span></div>
+    <p class="body">{{ quick_summary }}</p>
+  </div>
+
+  <div class="sec">
+    <div class="secnum"><span class="e">02 &mdash; Why this verdict</span><span class="ln"></span></div>
+    <div class="why">
+      <div class="wcard pos"><div class="wtitle">{{ decision.why_positive.title }}</div>
+        <div class="wbody">{{ decision.why_positive.body }}</div></div>
+      <div class="wcard neg"><div class="wtitle">{{ decision.why_negative.title }}</div>
+        <div class="wbody">{{ decision.why_negative.body }}</div></div>
+    </div>
+  </div>
+
+  {% if strengths %}
+  <div class="sec">
+    <div class="secnum"><span class="e">03 &mdash; Strengths</span><span class="ln"></span></div>
+    {% for s in strengths %}
+    <div class="srow"><div class="sico s">&#10003;</div><div>
+      <div class="stitle">{{ s.title }}</div><div class="sdetail">{{ s.detail }}</div></div></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if concerns %}
+  <div class="sec">
+    <div class="secnum"><span class="e">04 &mdash; Concerns</span><span class="ln"></span></div>
+    {% for c in concerns %}
+    <div class="srow"><div class="sico c">!</div><div>
+      <div class="stitle">{{ c.title }}<span class="sev">{{ c.severity|replace('_',' ') }}</span></div>
+      <div class="sdetail">{{ c.detail }}</div></div></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if questions %}
+  <div class="sec">
+    <div class="secnum"><span class="e">05 &mdash; Question by question</span><span class="ln"></span></div>
+    {% for q in questions %}
+    <div class="qcard"><div class="qhead">
+      <div style="display:flex"><span class="qnum">{{ q.seq }}</span><span class="qtitle">{{ q.title }}</span></div>
+      <div style="white-space:nowrap"><span class="chip chip-pass">{{ q.status_badge|replace('_',' ') }}</span>
+        {% if q.difficulty %}<span class="chip chip-diff">{{ q.difficulty }}</span>{% endif %}</div></div>
+      {% if q.candidate_quote %}<div class="qquote">&ldquo;{{ q.candidate_quote }}&rdquo;</div>{% endif %}
+      {% if q.our_read %}<div class="qread">{{ q.our_read }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</body></html>
