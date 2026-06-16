@@ -124,6 +124,11 @@ export interface HumanDecisionIn {
   rationale: string
 }
 
+export interface ShareReportResponse {
+  share_id: string
+  status: string
+}
+
 export interface ReportIndexItem {
   session_id: string
   candidate_id: string | null
@@ -287,4 +292,16 @@ export const reportsApi = {
       `/api/reports/session/${sessionId}/proctoring`,
       { token, signal: opts?.signal },
     ),
+
+  /** POST /api/reports/session/{sessionId}/share — email the report PDF. */
+  share: (
+    token: string,
+    sessionId: string,
+    recipientEmail: string,
+  ): Promise<ShareReportResponse> =>
+    apiFetch<ShareReportResponse>(`/api/reports/session/${sessionId}/share`, {
+      token,
+      method: 'POST',
+      body: JSON.stringify({ recipient_email: recipientEmail }),
+    }),
 }
