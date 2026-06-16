@@ -1,12 +1,12 @@
 // app/interview/[token]/IntroStage.tsx
 'use client'
 
+import dynamic from 'next/dynamic'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/px'
 import { useConsent } from '@/lib/hooks/use-consent'
 import { ConsentDialog } from './ConsentDialog'
-import { HeroScene } from './illustrations/HeroScene'
 import {
   ArjunGlyph,
   QuietRoomGlyph,
@@ -15,6 +15,16 @@ import {
   OneTimeLinkGlyph,
 } from './illustrations/glyphs'
 import { InstructionList, type Instruction } from './InstructionList'
+
+// The hero is the same Aura orb the candidate meets in the live interview, so
+// the intro previews the real session. Lazy + ssr:false keeps the heavy WebGL
+// shader out of the light pre-check bundle; Aura renders a static gradient orb
+// under prefers-reduced-motion (no WebGL). One instance only — never two
+// simultaneous WebGL contexts.
+const HeroAura = dynamic(() => import('@/components/agents-ui/aura').then((m) => m.Aura), {
+  ssr: false,
+  loading: () => <span aria-hidden className="aura-mark block size-[224px]" />,
+})
 
 interface Props {
   token: string
@@ -95,17 +105,15 @@ export function IntroStage({
   }
 
   return (
-    <div className="grid items-center gap-10 lg:grid-cols-[0.9fr_1.1fr]">
-      {/* Illustration side */}
-      <div className="hidden justify-center lg:flex">
-        <HeroScene className="w-full max-w-[360px]" />
+    <div className="grid items-center gap-8 lg:grid-cols-[0.85fr_1.15fr] lg:gap-12">
+      {/* Hero — the live-session Aura orb (single WebGL instance). On mobile the
+          grid collapses and the orb sits above the content. */}
+      <div className="flex justify-center">
+        <HeroAura state="listening" size="lg" />
       </div>
 
       {/* Content side */}
       <section className="flex flex-col">
-        {/* compact hero on mobile */}
-        <HeroScene className="mx-auto mb-4 block w-40 max-w-full lg:hidden" />
-
         <p className="text-[11px] font-semibold uppercase tracking-[1.2px] text-px-fg-4">
           {companyName} &middot; Screening
         </p>

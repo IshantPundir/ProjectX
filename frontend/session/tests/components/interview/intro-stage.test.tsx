@@ -2,8 +2,12 @@ import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderWithProviders } from '../../_utils/render'
-import { IntroStage } from '@/app/interview/[token]/IntroStage'
 import { candidateSessionApi } from '@/lib/api/candidate-session'
+
+// Stub the WebGL Aura hero so jsdom doesn't load the shader.
+vi.mock('@/components/agents-ui/aura', () => ({ Aura: () => <div data-testid="hero-aura" /> }))
+
+import { IntroStage } from '@/app/interview/[token]/IntroStage'
 
 const baseProps = {
   token: 'tok',
