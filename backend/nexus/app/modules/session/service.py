@@ -1001,7 +1001,7 @@ async def save_reference_photo(
     if sess is None:
         raise SessionNotFoundError()
 
-    ext = _REFERENCE_PHOTO_EXT.get(content_type, "jpg")
+    ext = _REFERENCE_PHOTO_EXT[content_type]
     key = f"reference-photos/{tenant_id}/{session_id}.{ext}"
     await get_object_storage().upload_bytes(key, data, content_type=content_type)
     sess.reference_photo_key = key

@@ -290,3 +290,31 @@ async def test_http_empty_file_returns_400(db: AsyncSession):
 
     assert response.status_code == 400, response.text
     fake_storage.upload_bytes.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_http_oversized_file_returns_413(db: AsyncSession):
+    """Sending a body larger than 5 MiB → 413."""
+    from app.database import get_tenant_db
+
+    session, token_str, _tenant_id = await _build_http_test_artifacts(db)
+    fake_storage = _make_fake_storage()
+
+    async def _override_db():
+        yield db
+
+    app.dependency_overrides[get_tenant_db] = _override_db
+    try:
+        with _patch_bypass_session_to(db), _patch_storage(fake_storage):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as ac:
+                response = await ac.post(
+                    f"/api/candidate-session/{token_str}/reference-photo",
+                    files={"file": ("big.jpg", io.BytesIO(b"\x00" * (5 * 1024 * 1024 + 1)), "image/jpeg")},
+                )
+    finally:
+        app.dependency_overrides.pop(get_tenant_db, None)
+
+    assert response.status_code == 413, response.text
+    fake_storage.upload_bytes.assert_not_awaited()
