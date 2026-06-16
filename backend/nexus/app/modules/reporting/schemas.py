@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from app.modules.reporting.scoring.types import Confidence, Verdict
 
@@ -199,3 +199,12 @@ class ReportRead(BaseModel):
     human_decision: dict | None = None
     generated_at: str | None = None
     reference_photo_url: str | None = None  # presigned R2 GET, attached at read time
+
+
+class ShareReportIn(BaseModel):
+    recipient_email: EmailStr
+
+
+class ShareReportOut(BaseModel):
+    share_id: str
+    status: str
