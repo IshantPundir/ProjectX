@@ -57,10 +57,10 @@ export function ReadyStage({ onStart, proctored = false }: Props) {
     return subscribeDisplayChange(refresh)
   }, [proctored])
 
+  // No synchronous setState here (the first statement awaits) so the auto-start
+  // effect below doesn't trip react-hooks/set-state-in-effect. The retry handler
+  // resets the visible state itself before re-invoking.
   const start = useCallback(async () => {
-    setStatus('starting')
-    setError(null)
-    setNoiseDbfs(null)
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       streamRef.current = stream
@@ -85,8 +85,18 @@ export function ReadyStage({ onStart, proctored = false }: Props) {
     }
   }, [])
 
-  // Auto-start the camera as soon as the candidate reaches this step.
+  const retry = useCallback(() => {
+    setStatus('starting')
+    setError(null)
+    setNoiseDbfs(null)
+    void start()
+  }, [start])
+
+  // Auto-start the camera as soon as the candidate reaches this step (once).
+  const startedRef = useRef(false)
   useEffect(() => {
+    if (startedRef.current) return
+    startedRef.current = true
     void start()
   }, [start])
 
@@ -214,7 +224,7 @@ export function ReadyStage({ onStart, proctored = false }: Props) {
           <div className="px-glass-strong max-w-md rounded-2xl px-8 py-10">
             <h2 className="px-serif text-2xl font-normal text-px-fg">Camera access needed</h2>
             <p className="mt-3 text-sm leading-relaxed text-px-fg-3">{error}</p>
-            <Button variant="outline" size="lg" onClick={start} className="mt-6">
+            <Button variant="outline" size="lg" onClick={retry} className="mt-6">
               Try again
             </Button>
           </div>
