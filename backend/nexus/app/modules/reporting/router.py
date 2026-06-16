@@ -37,6 +37,7 @@ from app.modules.session import (
     SessionNotFoundError,
     get_session_recording_playback,
 )
+from app.modules.session.models import Session  # cross-module model import (models carve-out)
 from app.modules.vision import (
     get_session_proctoring_analysis,
     get_session_timeline_thumbnails,
@@ -145,6 +146,31 @@ async def _attach_question_thumbnails(
             continue
 
 
+async def _attach_reference_photo(
+    *, db: AsyncSession, report: ReportRead, session_id: Any, tenant_id: Any
+) -> None:
+    """Presign the candidate reference photo (the main session thumbnail).
+
+    Best-effort: missing key / presign failure leaves reference_photo_url None.
+    """
+    try:
+        sess = (await db.execute(
+            select(Session).where(
+                Session.id == session_id, Session.tenant_id == tenant_id)
+        )).scalar_one_or_none()
+    except Exception:  # noqa: BLE001
+        return
+    if not sess or not sess.reference_photo_key:
+        return
+    try:
+        report.reference_photo_url = await get_object_storage().presign_get_url(
+            sess.reference_photo_key,
+            ttl_seconds=settings.recording_signed_url_ttl_seconds,
+        )
+    except Exception:  # noqa: BLE001
+        return
+
+
 def _require_reports_view(user: UserContext) -> None:
     """Raise 403 if the caller lacks reports.view and is not super-admin."""
     if "reports.view" not in user.all_permissions() and not user.is_super_admin:
@@ -208,6 +234,8 @@ async def get_report_by_session(
 
     read = _row_to_read(row)
     await _attach_question_thumbnails(
+        db=db, report=read, session_id=session_id, tenant_id=tenant_id)
+    await _attach_reference_photo(
         db=db, report=read, session_id=session_id, tenant_id=tenant_id)
     return read.model_dump(mode="json")
 
@@ -382,6 +410,8 @@ async def get_report_by_id(
 
     read = _row_to_read(row)
     await _attach_question_thumbnails(
+        db=db, report=read, session_id=row.session_id, tenant_id=tenant_id)
+    await _attach_reference_photo(
         db=db, report=read, session_id=row.session_id, tenant_id=tenant_id)
     return read.model_dump(mode="json")
 

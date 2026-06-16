@@ -198,3 +198,4 @@ class ReportRead(BaseModel):
     scoring_manifest: ScoringManifest | None = None
     human_decision: dict | None = None
     generated_at: str | None = None
+    reference_photo_url: str | None = None  # presigned R2 GET, attached at read time

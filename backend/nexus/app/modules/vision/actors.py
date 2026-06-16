@@ -1,9 +1,15 @@
 # app/modules/vision/actors.py
-"""Dramatiq actor: post-session vision proctoring analysis (vision queue).
+"""Dramatiq actors: post-session vision proctoring + session thumbnail generation.
 
-Idempotent on session_id (status row). Runs on a bypass-RLS session with an
-explicit tenant_id filter on every query (RLS-only defense, mirrors
-interview_runtime.service). Persists FEATURES ONLY — never frames (spec §16).
+Idempotent on session_id (status row for proctoring). Runs on a bypass-RLS
+session with an explicit tenant_id filter on every query (RLS-only defense,
+mirrors interview_runtime.service). Persists FEATURES ONLY — never frames (§16).
+
+Two actors live here:
+  analyze_session_proctoring  — gaze analysis + flag thumbnails (vision queue)
+  generate_session_thumbnails — per-question thumbnails for the report (vision queue),
+                                decoupled from proctoring so they run for every
+                                session that has a recording.
 """
 from __future__ import annotations
 
@@ -144,38 +150,19 @@ async def _persist(
         }
 
 
-async def _persist_timeline_thumbnails(
+async def _grab_and_upsert_thumbnails(
     db, *, session_id: str, tenant_id: str, local_video_path: str,
-    transcript: list[dict], flagged_intervals: list[dict],
+    targets: list[tuple[str, str, int]],  # (kind, ref_id, t_ms)
 ) -> None:
-    """Best-effort: extract question + top-flag frames, upload to R2, upsert rows.
+    """Grab frames at the target timestamps, upload to R2, upsert rows.
 
-    grab + upload failures are swallowed here; the caller (_run) additionally
-    wraps the whole step so an unexpected DB error cannot fail the already-
-    committed gaze result. Keys are deterministic, so re-runs overwrite the
-    same R2 objects and refresh the same rows.
+    Best-effort: grab/upload failures are swallowed. Deterministic keys →
+    re-runs overwrite the same objects/rows.
     """
-    sid = uuid.UUID(session_id)
-    tid = uuid.UUID(tenant_id)
-
-    q_times = asked_at_ms_by_question_evidence(transcript)
-    targets: list[tuple[str, str, int]] = [
-        ("question", qid, t_ms) for qid, t_ms in q_times.items()
-    ]
-    # Every flagged interval (proctoring violation) earns a thumbnail, capped at
-    # a high safety max to bound pathological runs.
-    for flag in select_flag_targets(
-        flagged_intervals, max_count=vision_config.thumbnail_max_flag_count
-    ):
-        start = flag.get("start_ms")
-        if start is None:
-            continue
-        start = int(start)
-        targets.append(("flag", str(start), start))
-
     if not targets:
         return
-
+    sid = uuid.UUID(session_id)
+    tid = uuid.UUID(tenant_id)
     unique_ms = sorted({t_ms for _, _, t_ms in targets})
     try:
         frames = grab_thumbnails(
@@ -183,10 +170,9 @@ async def _persist_timeline_thumbnails(
             width=vision_config.thumbnail_width_px,
             webp_quality=vision_config.thumbnail_webp_quality,
         )
-    except Exception:  # noqa: BLE001 — thumbnails are non-critical
+    except Exception:  # noqa: BLE001
         log.warning("vision.thumbnails.grab_failed", session_id=session_id, exc_info=True)
         return
-
     prefix = settings.thumbnail_key_prefix
     storage = get_object_storage()
     for kind, ref_id, t_ms in targets:
@@ -215,6 +201,37 @@ async def _persist_timeline_thumbnails(
         else:
             existing.t_ms = t_ms
             existing.s3_key = key
+
+
+async def _persist_flag_thumbnails(
+    db, *, session_id: str, tenant_id: str, local_video_path: str,
+    flagged_intervals: list[dict],
+) -> None:
+    """Proctoring-VIOLATION frames only (kind='flag'). One per flagged interval."""
+    targets: list[tuple[str, str, int]] = []
+    for flag in select_flag_targets(
+        flagged_intervals, max_count=vision_config.thumbnail_max_flag_count
+    ):
+        start = flag.get("start_ms")
+        if start is None:
+            continue
+        start = int(start)
+        targets.append(("flag", str(start), start))
+    await _grab_and_upsert_thumbnails(
+        db, session_id=session_id, tenant_id=tenant_id,
+        local_video_path=local_video_path, targets=targets)
+
+
+async def _persist_question_thumbnails(
+    db, *, session_id: str, tenant_id: str, local_video_path: str,
+    transcript: list[dict],
+) -> None:
+    """Per-QUESTION frames only (kind='question'), at each question's asked-at ms."""
+    q_times = asked_at_ms_by_question_evidence(transcript)
+    targets = [("question", qid, t_ms) for qid, t_ms in q_times.items()]
+    await _grab_and_upsert_thumbnails(
+        db, session_id=session_id, tenant_id=tenant_id,
+        local_video_path=local_video_path, targets=targets)
 
 
 async def _run(session_id: str, tenant_id: str) -> None:
@@ -251,28 +268,17 @@ async def _run(session_id: str, tenant_id: str) -> None:
                 await _persist(db, session_id, tenant_id,
                                status=final_status, result=result, frames=frames)
                 await db.commit()
-            # Thumbnails are best-effort: the gaze result is already committed
+            # Flag thumbnails are best-effort: the gaze result is already committed
             # above, so a thumbnail failure (grab, upload, or DB) must never
             # propagate to the actor's failure handler or burn a retry.
+            # NOTE: per-question thumbnails are now handled by the separate
+            # generate_session_thumbnails actor (decoupled from proctoring).
             try:
                 async with get_bypass_session() as db:
                     await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tid}'"))
-                    sess_row = (await db.execute(
-                        select(Session).where(
-                            Session.id == uuid.UUID(session_id),
-                            Session.tenant_id == uuid.UUID(tenant_id),
-                        )
-                    )).scalar_one_or_none()
-                    # Gen-3: the transcript lives inside the append-only evidence
-                    # blob (the legacy sessions.transcript column is empty), as
-                    # turn dicts {speaker, question_id, span:{start_ms}, words}.
-                    transcript = list(
-                        ((sess_row.session_evidence_json or {}).get("transcript") or [])
-                        if sess_row else []
-                    )
-                    await _persist_timeline_thumbnails(
+                    await _persist_flag_thumbnails(
                         db, session_id=session_id, tenant_id=tenant_id,
-                        local_video_path=dest, transcript=transcript,
+                        local_video_path=dest,
                         flagged_intervals=result.flagged_intervals or [],
                     )
                     await db.commit()
@@ -294,3 +300,51 @@ async def _run(session_id: str, tenant_id: str) -> None:
 @dramatiq.actor(max_retries=2, min_backoff=5_000, max_backoff=120_000, queue_name="vision")
 async def analyze_session_proctoring(session_id: str, tenant_id: str) -> None:
     await _run(session_id, tenant_id)
+
+
+# ---------------------------------------------------------------------------
+# generate_session_thumbnails — per-question report thumbnails, decoupled from
+# proctoring. Runs for EVERY session with a ready recording; enqueued by
+# session/recording.py regardless of AUTO_ANALYZE_PROCTORING.
+# ---------------------------------------------------------------------------
+
+
+async def _run_thumbnails(session_id: str, tenant_id: str) -> None:
+    safe_tid = str(uuid.UUID(tenant_id))
+    async with get_bypass_session() as db:
+        await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tid}'"))
+        sess = (await db.execute(
+            select(Session).where(
+                Session.id == uuid.UUID(session_id),
+                Session.tenant_id == uuid.UUID(tenant_id),
+            )
+        )).scalar_one_or_none()
+        recording_key = (
+            sess.recording_s3_key
+            if sess and sess.recording_status == "ready" and sess.recording_s3_key
+            else None
+        )
+        transcript = list(
+            ((sess.session_evidence_json or {}).get("transcript") or []) if sess else []
+        )
+        await db.commit()
+
+    if not recording_key:
+        log.info("vision.thumbnails.no_recording", session_id=session_id)
+        return
+
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = os.path.join(tmp, "recording.mp4")
+        await get_object_storage().download_to_path(recording_key, dest)
+        async with get_bypass_session() as db:
+            await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tid}'"))
+            await _persist_question_thumbnails(
+                db, session_id=session_id, tenant_id=tenant_id,
+                local_video_path=dest, transcript=transcript)
+            await db.commit()
+    log.info("vision.thumbnails.done", session_id=session_id)
+
+
+@dramatiq.actor(max_retries=2, min_backoff=5_000, max_backoff=120_000, queue_name="vision")
+async def generate_session_thumbnails(session_id: str, tenant_id: str) -> None:
+    await _run_thumbnails(session_id, tenant_id)

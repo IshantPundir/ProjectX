@@ -207,6 +207,14 @@ async def _reconcile(db: AsyncSession, sess: Session) -> None:
 
 
 def _enqueue_vision_analysis(session_id: str, tenant_id: str) -> None:
+    # Per-question report thumbnails run for every recording (decoupled from
+    # proctoring): they feed the report timeline regardless of proctoring config.
+    # Imported lazily (not module top) to keep the import graph light and make
+    # monkeypatching in tests trivial.
+    from app.modules.vision import generate_session_thumbnails  # noqa: PLC0415
+
+    generate_session_thumbnails.send(session_id, tenant_id)
+
     if not settings.auto_analyze_proctoring:
         log.info(
             "session.recording.vision_analysis_disabled",
@@ -214,9 +222,7 @@ def _enqueue_vision_analysis(session_id: str, tenant_id: str) -> None:
             reason="auto_analyze_proctoring=false",
         )
         return
-    # Imported here (not module top) to keep the import graph obviously light
-    # and to make monkeypatching in tests trivial.
-    from app.modules.vision import analyze_session_proctoring
+    from app.modules.vision import analyze_session_proctoring  # noqa: PLC0415
 
     analyze_session_proctoring.send(session_id, tenant_id)
 
