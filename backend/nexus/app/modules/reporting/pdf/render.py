@@ -21,7 +21,7 @@ _FOOTER = (
     '<div style="font-size:7px;color:#9a9aa6;width:100%;padding:0 14mm;'
     'display:flex;justify-content:space-between;font-family:Arial,sans-serif">'
     '<span>BINQLE.AI &middot; AI VIDEO INTERVIEW PLATFORM</span>'
-    '<span class="pageNumber"></span>/<span class="totalPages"></span></div>'
+    '<span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>'
 )
 _HEADER = '<div></div>'  # empty header (hero handles page-1 branding)
 
