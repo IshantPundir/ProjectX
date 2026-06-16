@@ -9,7 +9,7 @@ import { CompletionScreen } from '@/components/interview/app/CompletionScreen'
 import { ProctoringEndedScreen } from '@/components/interview/app/ProctoringEndedScreen'
 import { useCandidateSession } from '@/lib/hooks/use-candidate-session'
 
-import { FullscreenLockGate } from './FullscreenLockGate'
+import { PreCheckLockGate } from './PreCheckLockGate'
 import { IntroStage } from './IntroStage'
 import { ReadyStage } from './ReadyStage'
 import { StageTransition } from './StageTransition'
@@ -120,14 +120,14 @@ export function WizardShell({ token }: { token: string }) {
   // WizardFrame chrome + StageTransition — still inside the fullscreen lock.
   if (stage === 'ready') {
     return (
-      <FullscreenLockGate>
+      <PreCheckLockGate>
         <ReadyStage onStart={() => setCamMicPassed(true)} proctored={data.proctoring_enabled} />
-      </FullscreenLockGate>
+      </PreCheckLockGate>
     )
   }
 
   return (
-    <FullscreenLockGate>
+    <PreCheckLockGate>
       <WizardFrame
         companyName={data.company_name}
         jobTitle={data.job_title}
@@ -149,6 +149,6 @@ export function WizardShell({ token }: { token: string }) {
           {stage === 'verify' && <VerifyStage token={token} otpIssuedAt={data.otp_issued_at} />}
         </StageTransition>
       </WizardFrame>
-    </FullscreenLockGate>
+    </PreCheckLockGate>
   )
 }
