@@ -439,6 +439,57 @@ async def share_report(
 
 
 # ---------------------------------------------------------------------------
+# POST /api/reports/session/{session_id}/shares/{share_id}/revoke
+#
+# Revoke a public recordings share link. Sets revoked_at → the public endpoint
+# (GET /api/public/recordings/{token}) stops resolving the token immediately.
+# Backend-only for now: there is no recruiter UI; callable via API.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/session/{session_id}/shares/{share_id}/revoke",
+    summary="Revoke a public recordings share link",
+)
+async def revoke_share(
+    session_id: uuid_mod.UUID,
+    share_id: uuid_mod.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> Any:
+    """Set revoked_at on a share row → its public link stops working immediately.
+    RBAC: reports.view or super-admin (same set that can create the share)."""
+    _require_reports_view(user)
+    tenant_id = user.user.tenant_id
+
+    share = (await db.execute(
+        select(ReportShare).where(
+            ReportShare.id == share_id,
+            ReportShare.session_id == session_id,
+            ReportShare.tenant_id == tenant_id)
+    )).scalar_one_or_none()
+    if share is None:
+        raise HTTPException(status_code=404, detail="Share not found")
+
+    if share.revoked_at is None:
+        share.revoked_at = datetime.now(UTC)
+        await db.flush()
+        await log_event(
+            db,
+            tenant_id=tenant_id,
+            actor_id=user.user.id,
+            actor_email=user.user.email,
+            action="session_report.share_revoked",
+            resource="session_report",
+            resource_id=share.report_id,
+            payload={"share_id": str(share.id),
+                     "correlation_id": _get_correlation_id(request)},
+        )
+    return {"share_id": str(share.id), "revoked": True}
+
+
+# ---------------------------------------------------------------------------
 # POST /api/reports/session/{session_id}/proctoring/retry
 # ---------------------------------------------------------------------------
 
