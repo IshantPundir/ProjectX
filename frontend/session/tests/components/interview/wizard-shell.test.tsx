@@ -7,6 +7,10 @@ import { candidateSessionApi, type PreCheckResponse } from '@/lib/api/candidate-
 vi.mock('@/components/agents-ui/aura', () => ({ Aura: () => <div data-testid="aura" /> }))
 // Keep the heavy live App out of these pre-check tests.
 vi.mock('@/components/interview/app/app', () => ({ App: () => <div data-testid="live-app" /> }))
+// Stub the MediaPipe face gate (no WebGL/WASM in jsdom).
+vi.mock('@/components/interview/proctoring/use-precheck-face-gate', () => ({
+  usePreCheckFaceGate: () => ({ ready: false, failed: false, faceCount: 0, boxes: [], frame: null }),
+}))
 
 const base: PreCheckResponse = {
   session_id: 's1',
@@ -45,7 +49,8 @@ describe('WizardShell stage derivation', () => {
   it('renders ReadyStage when consented + otp satisfied', async () => {
     mockPreCheck({ ...base, state: 'consented', otp_required: false })
     renderWithProviders(<WizardShell token="tok" />)
-    expect(await screen.findByText(/let.s check your setup/i)).toBeInTheDocument()
+    expect(await screen.findByText(/camera check/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /start interview/i })).toBeInTheDocument()
   })
 
   it('mounts the live App (rejoin) for an active session', async () => {

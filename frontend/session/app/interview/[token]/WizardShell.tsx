@@ -115,6 +115,17 @@ export function WizardShell({ token }: { token: string }) {
     return <App appConfig={appConfig} token={token} preCheck={data} mode="start" autoStart />
   }
 
+  // The camera step is its own immersive, full-bleed view (a transform-animated
+  // ancestor would break the full-screen video), so it renders outside the
+  // WizardFrame chrome + StageTransition — still inside the fullscreen lock.
+  if (stage === 'ready') {
+    return (
+      <FullscreenLockGate>
+        <ReadyStage onStart={() => setCamMicPassed(true)} proctored={data.proctoring_enabled} />
+      </FullscreenLockGate>
+    )
+  }
+
   return (
     <FullscreenLockGate>
       <WizardFrame
@@ -136,9 +147,6 @@ export function WizardShell({ token }: { token: string }) {
             />
           )}
           {stage === 'verify' && <VerifyStage token={token} otpIssuedAt={data.otp_issued_at} />}
-          {stage === 'ready' && (
-            <ReadyStage onStart={() => setCamMicPassed(true)} proctored={data.proctoring_enabled} />
-          )}
         </StageTransition>
       </WizardFrame>
     </FullscreenLockGate>
