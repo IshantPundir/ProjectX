@@ -75,6 +75,8 @@ _TENANT_SCOPED_TABLES: tuple[str, ...] = (
     "session_timeline_thumbnails",
     # Candidate Reel — AI-directed highlight reel (migration 0053).
     "session_reels",
+    # Report sharing — emailed PDF shares (migration 0061).
+    "report_shares",
 )
 
 

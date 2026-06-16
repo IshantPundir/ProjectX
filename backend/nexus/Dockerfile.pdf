@@ -1,0 +1,33 @@
+# Dockerfile.pdf — image for nexus-pdf-worker only.
+# Renders report PDFs with headless Chromium (Playwright). No GPU.
+
+FROM python:3.13-slim AS deps
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir ".[pdf]"
+
+FROM python:3.13-slim AS runner
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libpq5 fonts-liberation fonts-dejavu fonts-dejavu-extra \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=deps /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=deps /usr/local/bin /usr/local/bin
+
+# Install Chromium + its OS deps into a path OUTSIDE /app (dev bind-mounts .:/app
+# and would otherwise shadow it). Done as root before dropping to the nexus user.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
+RUN mkdir -p /opt/pw-browsers \
+    && playwright install --with-deps chromium \
+    && chmod -R a+rx /opt/pw-browsers
+
+RUN groupadd --system --gid 1001 nexus && \
+    useradd --system --uid 1001 --gid nexus nexus
+
+COPY . .
+USER nexus
+
+CMD dramatiq app.pdf_worker --processes 1 --threads 2 -Q report_share

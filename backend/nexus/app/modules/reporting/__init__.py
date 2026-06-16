@@ -1,9 +1,6 @@
-"""reporting module — post-session report compilation and score aggregation.
+"""reporting module — post-session report compilation and score aggregation."""
 
-Public API surface for cross-module consumers.
-"""
+from app.modules.reporting.actors import score_session_report, share_report_pdf
+from app.modules.reporting.models import ReportShare, SessionReport
 
-from app.modules.reporting.actors import score_session_report
-from app.modules.reporting.models import SessionReport
-
-__all__ = ["SessionReport", "score_session_report"]
+__all__ = ["SessionReport", "ReportShare", "score_session_report", "share_report_pdf"]

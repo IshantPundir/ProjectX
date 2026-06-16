@@ -1,12 +1,16 @@
 'use client'
 
+import * as React from 'react'
 import Link from 'next/link'
+import { Share2 } from 'lucide-react'
 
 import { Button } from '@/components/px'
 import type { Verdict } from '@/lib/api/reports'
+import { ShareReportDialog } from './ShareReportDialog'
 import { VerdictChip } from './VerdictBand'
 
 interface Props {
+  sessionId: string
   candidateName: string
   candidateId: string
   title: string
@@ -16,7 +20,8 @@ interface Props {
   onRegenerate: () => void
 }
 
-export function ReportTopBar({ candidateName, candidateId, title, subtitle, verdict, canRegenerate, onRegenerate }: Props) {
+export function ReportTopBar({ sessionId, candidateName, candidateId, title, subtitle, verdict, canRegenerate, onRegenerate }: Props) {
+  const [shareOpen, setShareOpen] = React.useState(false)
   return (
     <div className="mb-4 flex items-center gap-3">
       <Link href={`/candidates/${candidateId}?tab=sessions`} className="text-[12px] hover:underline" style={{ color: 'var(--px-fg-3)' }}>
@@ -29,9 +34,13 @@ export function ReportTopBar({ candidateName, candidateId, title, subtitle, verd
         <p className="text-[11.5px]" style={{ color: 'var(--px-fg-4)' }}>{subtitle}</p>
       </div>
       <VerdictChip verdict={verdict} />
+      <Button type="button" variant="outline" size="sm" onClick={() => setShareOpen(true)}>
+        <Share2 size={14} className="mr-1.5" /> Share
+      </Button>
       {canRegenerate && (
         <Button type="button" variant="outline" size="sm" onClick={onRegenerate}>Regenerate</Button>
       )}
+      <ShareReportDialog sessionId={sessionId} open={shareOpen} onOpenChange={setShareOpen} />
     </div>
   )
 }

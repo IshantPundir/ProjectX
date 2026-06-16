@@ -25,14 +25,17 @@ from app.config import settings
 from app.database import get_tenant_db
 from app.modules.audit import log_event
 from app.modules.auth import UserContext, get_current_user_roles
-from app.modules.reporting.actors import score_session_report
-from app.modules.reporting.models import SessionReport
+from app.modules.reporting.actors import score_session_report, share_report_pdf
+from app.modules.reporting.models import ReportShare, SessionReport
 from app.modules.reporting.schemas import (
     HumanDecisionIn,
     ReportIndexItem,
     ReportIndexPage,
     ReportRead,
+    ShareReportIn,
+    ShareReportOut,
 )
+from app.modules.reporting.serialization import report_read_from_row
 from app.modules.session import (
     SessionNotFoundError,
     get_session_recording_playback,
@@ -70,53 +73,7 @@ def _get_correlation_id(request: Request) -> str:
 
 
 def _row_to_read(row: SessionReport) -> ReportRead:
-    """Assemble a ReportRead from a SessionReport ORM row.
-
-    JSONB columns are stored as plain dicts/lists; Pydantic coerces nested
-    dicts into the nested model types via model_validate.
-
-    Column mapping (persist_report writes, _row_to_read reads):
-      dimension_scores  → scores
-      summary           → decision, quick_summary, strengths, concerns, methodology
-      question_scorecards → questions
-      signal_scorecards → signal_assessments
-    """
-    summary = row.summary or {}
-    return ReportRead.model_validate(
-        {
-            "id": str(row.id),
-            "session_id": str(row.session_id),
-            "status": row.status,
-            "engine_version": row.engine_version,
-            "version": row.version,
-            "verdict": row.verdict,
-            "verdict_reason": row.verdict_reason,
-            "overall_score": row.overall_score,
-            # Numeric → float coercion; None → 0.0 (safe default)
-            "overall_coverage": (
-                float(row.overall_coverage) if row.overall_coverage is not None else 0.0
-            ),
-            "overall_confidence": row.overall_confidence or "low",
-            "decision": summary.get("decision") or {
-                "headline": row.verdict_reason or "",
-                "why_positive": {"title": "", "body": ""},
-                "why_negative": {"title": "", "body": ""},
-            },
-            "scores": row.dimension_scores or {},
-            "quick_summary": summary.get("quick_summary", ""),
-            "strengths": summary.get("strengths", []),
-            "concerns": summary.get("concerns", []),
-            "questions": row.question_scorecards or [],
-            "methodology": summary.get("methodology") or {
-                "note": "",
-                "charity_flags": [],
-            },
-            "signal_assessments": row.signal_scorecards or [],
-            "scoring_manifest": row.scoring_manifest,
-            "human_decision": row.human_decision,
-            "generated_at": row.generated_at.isoformat() if row.generated_at else None,
-        }
-    )
+    return report_read_from_row(row)
 
 
 async def _attach_question_thumbnails(
@@ -458,6 +415,81 @@ async def regenerate_report(
     )
 
     return {"status": "accepted", "session_id": str(session_id)}
+
+
+# ---------------------------------------------------------------------------
+# POST /api/reports/session/{session_id}/share
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/session/{session_id}/share",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Email this report as a PDF to an external recipient",
+)
+async def share_report(
+    session_id: uuid_mod.UUID,
+    body: ShareReportIn,
+    request: Request,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> Any:
+    """Create a report_shares row, enqueue the PDF render+email actor, return 202.
+
+    RBAC: reports.view or super-admin (same set that can view the report).
+    Preconditions: the report exists and is ``ready`` (else 409). Note: this
+    codebase enforces rate limits via global middleware only — no per-route
+    decorator exists; the intended 'report share' class (10/min per-IP +
+    per-tenant daily cap) is documented in the design spec.
+    """
+    _require_reports_view(user)
+
+    tenant_id: uuid_mod.UUID = user.user.tenant_id
+    correlation_id = _get_correlation_id(request)
+
+    report_row = (await db.execute(
+        select(SessionReport).where(
+            SessionReport.session_id == session_id,
+            SessionReport.tenant_id == tenant_id,
+        )
+    )).scalar_one_or_none()
+    if report_row is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if report_row.status != "ready":
+        raise HTTPException(status_code=409, detail="Report is not ready to share")
+
+    share = ReportShare(
+        tenant_id=tenant_id,
+        session_id=session_id,
+        report_id=report_row.id,
+        recipient_email=str(body.recipient_email),
+        status="pending",
+        requested_by=user.user.id,
+    )
+    db.add(share)
+    await db.flush()  # populate share.id
+
+    await log_event(
+        db,
+        tenant_id=tenant_id,
+        actor_id=user.user.id,
+        actor_email=user.user.email,
+        action="session_report.shared",
+        resource="session_report",
+        resource_id=report_row.id,
+        payload={"share_id": str(share.id), "correlation_id": correlation_id},
+    )
+
+    share_report_pdf.send(str(share.id), str(tenant_id), correlation_id)
+
+    _log.info(
+        "reporting.share.enqueued",
+        session_id=str(session_id),
+        share_id=str(share.id),
+        tenant_id=str(tenant_id),
+        correlation_id=correlation_id,
+    )
+    return ShareReportOut(share_id=str(share.id), status="pending").model_dump()
 
 
 # ---------------------------------------------------------------------------

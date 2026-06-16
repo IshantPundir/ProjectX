@@ -20,10 +20,15 @@ import dramatiq
 import structlog
 from sqlalchemy import desc, select, text
 
+from app.config import settings
 from app.database import get_bypass_session
 from app.modules.interview_runtime.evidence import SessionEvidence
-from app.modules.reporting.models import SessionReport
+from app.modules.notifications import render_template, send_email
+from app.modules.reporting.models import ReportShare, SessionReport
+from app.modules.reporting.pdf import build_pdf_context, render_report_pdf
+from app.modules.reporting.serialization import report_read_from_row
 from app.modules.reporting.service import build_report, persist_report
+from app.storage import get_object_storage
 
 logger = structlog.get_logger("reporting.actor")
 
@@ -349,3 +354,169 @@ async def score_session_report(
         correlation_id,
         force,
     )
+
+
+# ---------------------------------------------------------------------------
+# Report-share PDF actor — render + upload + email
+# ---------------------------------------------------------------------------
+
+
+def _safe_filename(name: str) -> str:
+    cleaned = "".join(c if c.isalnum() or c in " -_" else "" for c in name).strip()
+    return (cleaned or "candidate").replace(" ", "-")
+
+
+def _mask_email(email: str) -> str:
+    local, _, domain = email.partition("@")
+    head = (local[:1] + "***") if local else "***"
+    return f"{head}@{domain}" if domain else "***"
+
+
+async def _share_report_pdf_async(
+    share_id: UUID, tenant_id: UUID, correlation_id: str,
+) -> None:
+    log = logger.bind(share_id=str(share_id), tenant_id=str(tenant_id),
+                      correlation_id=correlation_id)
+    safe_tenant_id = str(tenant_id)
+
+    async with get_bypass_session() as db:
+        await db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'"))
+
+        share = (await db.execute(
+            select(ReportShare).where(
+                ReportShare.id == share_id, ReportShare.tenant_id == tenant_id)
+        )).scalar_one_or_none()
+        if share is None:
+            log.warning("reporting.share.row_not_found")
+            return
+        if share.status == "sent":
+            log.info("reporting.share.skip_already_sent")
+            return
+
+        try:
+            report_row = (await db.execute(
+                select(SessionReport).where(
+                    SessionReport.id == share.report_id,
+                    SessionReport.tenant_id == tenant_id)
+            )).scalar_one_or_none()
+            if report_row is None or report_row.status != "ready":
+                raise ValueError("report not ready")
+
+            report = report_read_from_row(report_row)
+
+            from app.modules.candidates.models import Candidate, CandidateJobAssignment
+            from app.modules.jd.models import JobPosting
+            from app.modules.pipelines.models import JobPipelineStage
+            from app.modules.session.models import Session as SessionRow
+
+            sess = (await db.execute(
+                select(SessionRow).where(SessionRow.id == share.session_id,
+                                         SessionRow.tenant_id == tenant_id)
+            )).scalar_one_or_none()
+            assignment = (await db.execute(
+                select(CandidateJobAssignment).where(
+                    CandidateJobAssignment.id == sess.assignment_id,
+                    CandidateJobAssignment.tenant_id == tenant_id)
+            )).scalar_one_or_none() if sess else None
+            candidate = (await db.execute(
+                select(Candidate).where(Candidate.id == assignment.candidate_id,
+                                        Candidate.tenant_id == tenant_id)
+            )).scalar_one_or_none() if assignment else None
+            job = (await db.execute(
+                select(JobPosting).where(JobPosting.id == assignment.job_posting_id,
+                                         JobPosting.tenant_id == tenant_id)
+            )).scalar_one_or_none() if assignment else None
+            stage = (await db.execute(
+                select(JobPipelineStage).where(JobPipelineStage.id == sess.stage_id,
+                                               JobPipelineStage.tenant_id == tenant_id)
+            )).scalar_one_or_none() if sess else None
+
+            candidate_name = (candidate.name if candidate else None) or "Candidate"
+            job_title = (job.title if job else None) or "Role"
+            stage_label = (stage.name if stage else None) or "Interview"
+
+            reference_photo_url = None
+            if sess and getattr(sess, "reference_photo_key", None):
+                with contextlib.suppress(Exception):
+                    reference_photo_url = await get_object_storage().presign_get_url(
+                        sess.reference_photo_key,
+                        ttl_seconds=settings.recording_signed_url_ttl_seconds,
+                    )
+
+            generated_on = (
+                report_row.generated_at.strftime("%b %d, %Y")
+                if report_row.generated_at else datetime.now(UTC).strftime("%b %d, %Y")
+            )
+            full_session_url = f"{settings.frontend_base_url}/shared-session/coming-soon"
+
+            share.status = "rendering"
+            await db.flush()
+
+            ctx = build_pdf_context(
+                report,
+                candidate_name=candidate_name,
+                job_title=job_title,
+                stage_label=stage_label,
+                generated_on=generated_on,
+                reference_photo_url=reference_photo_url,
+                full_session_url=full_session_url,
+            )
+            pdf_bytes = await render_report_pdf(ctx)
+
+            key = f"report-shares/{tenant_id}/{share.id}.pdf"
+            await get_object_storage().upload_bytes(
+                key, pdf_bytes, content_type="application/pdf")
+            share.pdf_r2_key = key
+
+            html = render_template(
+                "report_share.html",
+                candidate_name=candidate_name,
+                job_title=job_title,
+                shared_by="Your recruiting team",
+            )
+            filename = f"BinQle-Evaluation-{_safe_filename(candidate_name)}.pdf"
+            await send_email(
+                to=share.recipient_email,
+                subject=f"Candidate evaluation — {candidate_name} ({job_title})",
+                html=html,
+                attachments=[(filename, pdf_bytes, "application/pdf")],
+            )
+
+            share.status = "sent"
+            share.sent_at = datetime.now(UTC)
+            await db.commit()
+            log.info("reporting.share.sent", recipient=_mask_email(share.recipient_email))
+
+        except Exception as exc:
+            # Best-effort failure mark. Mirror score_session_report's inner-except:
+            # try to persist status="failed"; if THAT write fails (e.g. the
+            # transaction was already poisoned by a mid-flight DB error), roll
+            # back rather than crash. We do NOT roll back before the write — a
+            # rollback ends the transaction and reverts the SET LOCAL session
+            # state (ROLE nexus_app + app.bypass_rls='true'), which would then
+            # RLS-block the failed-mark UPDATE.
+            try:
+                share.status = "failed"
+                share.error = str(exc)[:500]
+                await db.commit()
+            except Exception as inner_exc:  # noqa: BLE001
+                log.warning("reporting.share.failed_row_write_error",
+                            error=type(inner_exc).__name__)
+                with contextlib.suppress(Exception):
+                    await db.rollback()
+            log.error("reporting.share.failed", error_type=type(exc).__name__,
+                      error_message=str(exc)[:500])
+            raise
+
+
+@dramatiq.actor(
+    max_retries=2,
+    min_backoff=5_000,
+    max_backoff=120_000,
+    queue_name="report_share",
+)
+async def share_report_pdf(
+    share_id: str, tenant_id: str, correlation_id: str,
+) -> None:
+    """Render a report PDF and email it as an attachment. Runs on nexus-pdf-worker."""
+    await _share_report_pdf_async(UUID(share_id), UUID(tenant_id), correlation_id)
