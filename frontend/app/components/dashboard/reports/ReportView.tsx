@@ -19,6 +19,7 @@ import { WhyContrast } from './WhyContrast'
 
 interface Props {
   report: ReportRead
+  sessionId: string
   candidateName: string
   candidateId: string
   title?: string
@@ -30,7 +31,7 @@ interface Props {
 }
 
 export function ReportView({
-  report, candidateName, candidateId, title = 'Interview', subtitle = '',
+  report, sessionId, candidateName, candidateId, title = 'Interview', subtitle = '',
   canRegenerate, onRegenerate, onDecision, isSubmitting,
 }: Props) {
   const [theaterOpen, setTheaterOpen] = useState(false)
@@ -43,6 +44,7 @@ export function ReportView({
   return (
     <div className="mx-auto max-w-[1400px] px-6 pb-10 pt-5">
       <ReportTopBar
+        sessionId={sessionId}
         candidateName={candidateName} candidateId={candidateId}
         title={title} subtitle={subtitle} verdict={report.verdict}
         canRegenerate={canRegenerate} onRegenerate={onRegenerate}

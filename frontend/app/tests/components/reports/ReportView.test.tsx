@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReportView } from '@/components/dashboard/reports/ReportView'
 import { makeReport } from './_fixture'
 
@@ -16,10 +17,15 @@ vi.mock('@/lib/hooks/use-session-proctoring', () => ({
 const noop = vi.fn()
 
 function renderView(report = makeReport()) {
+  // ReportView's top bar renders ShareReportDialog (useShareReport →
+  // useMutation), so a QueryClient is required.
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <ReportView report={report} candidateName="Asha" candidateId="c1"
-      title="Jr. FDE" subtitle="AI Screening" canRegenerate={false}
-      onRegenerate={noop} onDecision={noop} isSubmitting={false} />,
+    <QueryClientProvider client={client}>
+      <ReportView report={report} sessionId="s1" candidateName="Asha" candidateId="c1"
+        title="Jr. FDE" subtitle="AI Screening" canRegenerate={false}
+        onRegenerate={noop} onDecision={noop} isSubmitting={false} />
+    </QueryClientProvider>,
   )
 }
 

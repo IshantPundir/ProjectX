@@ -64,6 +64,7 @@ export default function ReportPage() {
       return (
         <ReportView
           report={state.report}
+          sessionId={sessionId}
           candidateName={candidateName}
           candidateId={candidateId}
           title={title}
