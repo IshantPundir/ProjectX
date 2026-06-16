@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/px'
+import { requestAppFullscreen } from '@/hooks/use-fullscreen-lock'
 import { useConsent } from '@/lib/hooks/use-consent'
 import { ConsentDialog } from './ConsentDialog'
 import {
@@ -98,6 +99,9 @@ export function IntroStage({
   const instructions = buildInstructions(proctoringEnabled)
 
   const onReady = () => {
+    // Use this click's user-activation to enter fullscreen (browsers require a
+    // gesture), then record consent — both fire on the single "I'm ready" tap.
+    requestAppFullscreen()
     consent.mutate(
       { consented: true, user_agent: navigator.userAgent },
       { onError: (err) => toast.error(err.message) },

@@ -51,4 +51,17 @@ describe('IntroStage', () => {
     renderWithProviders(<IntroStage {...baseProps} proctoringEnabled={false} />)
     expect(screen.queryByText(/proctored screening/i)).not.toBeInTheDocument()
   })
+
+  it('enters fullscreen on the "I\'m ready" click (same gesture as consent)', async () => {
+    const user = userEvent.setup()
+    const req = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(document.documentElement, 'requestFullscreen', {
+      configurable: true,
+      value: req,
+    })
+    vi.spyOn(candidateSessionApi, 'consent').mockResolvedValue(undefined)
+    renderWithProviders(<IntroStage {...baseProps} />)
+    await user.click(screen.getByRole('button', { name: /i'm ready/i }))
+    expect(req).toHaveBeenCalledTimes(1)
+  })
 })

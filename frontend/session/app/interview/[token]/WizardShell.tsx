@@ -127,7 +127,9 @@ export function WizardShell({ token }: { token: string }) {
   }
 
   return (
-    <PreCheckLockGate>
+    // Intro is readable without fullscreen (its "I'm ready" CTA enters fullscreen
+    // in the same click); verify enforces fullscreen.
+    <PreCheckLockGate enforceFullscreen={stage !== 'intro'}>
       <WizardFrame
         companyName={data.company_name}
         jobTitle={data.job_title}

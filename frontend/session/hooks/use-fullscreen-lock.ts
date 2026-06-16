@@ -39,6 +39,18 @@ function computeLocked(): boolean {
  * minimizing, or switching tabs flips `locked` to false. SSR/jsdom safe (starts
  * false -- the gate shows until proven fullscreen/unsupported).
  */
+
+/**
+ * Request app fullscreen. MUST be called synchronously inside a user-gesture
+ * handler (a click/tap) or the browser rejects it. Used by both the lock gate's
+ * button and the intro's "I'm ready" CTA (so that single click also goes
+ * fullscreen). No-op + safe where the API is unavailable.
+ */
+export function requestAppFullscreen(): void {
+  if (typeof document === 'undefined') return
+  void document.documentElement.requestFullscreen?.().catch(() => {})
+}
+
 export function useFullscreenLock(): FullscreenLock {
   const [locked, setLocked] = useState(false)
 
@@ -57,9 +69,7 @@ export function useFullscreenLock(): FullscreenLock {
     }
   }, [])
 
-  const enterFullscreen = useCallback(() => {
-    void document.documentElement.requestFullscreen?.().catch(() => {})
-  }, [])
+  const enterFullscreen = useCallback(() => requestAppFullscreen(), [])
 
   return { locked, enterFullscreen }
 }

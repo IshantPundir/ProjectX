@@ -13,12 +13,23 @@ import { FullscreenLockGate } from './FullscreenLockGate'
  * candidate complies. The devtools overlay is a sibling of (not inside) the
  * fullscreen gate so it shows regardless of fullscreen state, and sits at a
  * higher z-index.
+ *
+ * `enforceFullscreen` is false on the intro step — the candidate reads it
+ * without being blocked, and the intro's "I'm ready" CTA enters fullscreen as
+ * part of that same click. The verify/ready steps enforce fullscreen (re-prompt
+ * on exit). Devtools detection applies regardless.
  */
-export function PreCheckLockGate({ children }: { children: ReactNode }) {
+export function PreCheckLockGate({
+  children,
+  enforceFullscreen = true,
+}: {
+  children: ReactNode
+  enforceFullscreen?: boolean
+}) {
   const devtoolsOpen = useDevtoolsLockout(true)
   return (
     <>
-      <FullscreenLockGate>{children}</FullscreenLockGate>
+      {enforceFullscreen ? <FullscreenLockGate>{children}</FullscreenLockGate> : children}
       {devtoolsOpen && <DevtoolsBlockedOverlay />}
     </>
   )
