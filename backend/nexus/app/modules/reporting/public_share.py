@@ -25,7 +25,10 @@ from app.modules.reporting.models import ReportShare, SessionReport
 from app.modules.reporting.schemas import PublicRecordingsEnvelope
 from app.modules.reporting.serialization import report_read_from_row
 from app.modules.reporting.share_tokens import hash_share_token
-from app.modules.session import get_session_recording_playback
+from app.modules.session import (
+    SessionNotFoundError,
+    get_session_recording_playback,
+)
 from app.modules.vision import get_session_proctoring_analysis
 
 _log = structlog.get_logger("reporting.public_share")
@@ -72,8 +75,13 @@ async def build_public_envelope(
     await attach_reference_photo(
         db=db, report=report, session_id=session_id, tenant_id=tenant_id)
 
-    recording = await get_session_recording_playback(
-        db, session_id=session_id, tenant_id=tenant_id, reconcile=False)
+    try:
+        recording = await get_session_recording_playback(
+            db, session_id=session_id, tenant_id=tenant_id, reconcile=False)
+    except SessionNotFoundError:
+        # The session row is gone (e.g. hard-deleted after the share was
+        # minted). Treated as 404 by the endpoint — no orphan playback.
+        return None
     proctoring = await get_session_proctoring_analysis(
         db, session_id=session_id, tenant_id=tenant_id)
 

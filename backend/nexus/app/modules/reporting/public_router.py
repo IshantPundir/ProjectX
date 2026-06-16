@@ -45,11 +45,16 @@ async def get_public_recordings(
     if envelope is None:
         raise HTTPException(status_code=404, detail="Not found")
 
-    # View tracking — incrementing an int + timestamp on a row we just read.
-    # Persisted by the get_bypass_db transaction on clean exit.
-    share.view_count = (share.view_count or 0) + 1
-    share.last_viewed_at = datetime.now(UTC)
-    await db.flush()
+    # View tracking — best-effort: incrementing an int + timestamp on a row we
+    # just read. Persisted by the get_bypass_db transaction on clean exit. A
+    # flush failure here must never turn a successful playback fetch into a 500.
+    try:
+        share.view_count = (share.view_count or 0) + 1
+        share.last_viewed_at = datetime.now(UTC)
+        await db.flush()
+    except Exception:  # noqa: BLE001
+        _log.warning("reporting.public_recordings.view_bump_failed",
+                     share_id=str(share.id))
 
     _log.info("reporting.public_recordings.served",
               share_id=str(share.id), session_id=str(share.session_id))
