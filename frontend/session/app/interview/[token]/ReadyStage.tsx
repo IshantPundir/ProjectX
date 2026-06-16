@@ -7,43 +7,51 @@ import { BrandMark } from '@/components/interview/BrandMark'
 import { isMultiDisplay, subscribeDisplayChange } from '@/lib/proctoring/displays'
 import { usePreCheckFaceGate } from '@/components/interview/proctoring/use-precheck-face-gate'
 import { mapBoxToContainer } from '@/components/interview/proctoring/vision/face-box'
+import { useFullscreenLock } from '@/hooks/use-fullscreen-lock'
+import { candidateSessionApi } from '@/lib/api/candidate-session'
+import { captureVideoFrame } from '@/lib/capture-frame'
+import { CaptureCountdown } from './CaptureCountdown'
 import { PreCheckFaceWarning } from './PreCheckFaceWarning'
 import { sampleNoiseFloorDbfs } from './sampleNoiseFloorDbfs'
 
 interface Props {
-  /** Called when the candidate clicks Start interview. */
+  /** Candidate JWT (path token) -- used to upload the reference photo. */
+  token: string
+  /** Called once the reference photo is captured + uploaded and we may start. */
   onStart: () => void
   /** When true, surface the single-display warning (non-blocking). */
   proctored?: boolean
 }
 
 type Status = 'starting' | 'live' | 'denied'
+type CapturePhase = 'idle' | 'counting' | 'uploading' | 'failed'
 
-// dBFS threshold for a "noisy" room (post browser-NS). We warn, never block.
 const NOISE_WARN_DBFS = -30
-// Smooth Start enable/disable against per-frame detection flicker.
 const GATE_DEBOUNCE_MS = 400
 
 /**
- * Immersive, full-bleed camera + mic check. The preview fills the screen; the
- * MediaPipe FaceDetector runs live, marks the candidate's face, and gates the
- * Start button on exactly ONE face. More than one face shows the session-style
- * warning and disables Start until the candidate is alone. Camera + model start
- * automatically. If the model can't load, Start falls back to device-only gating
- * (never a lockout). Devices are released on unmount so LiveKit can re-acquire.
+ * Immersive, full-bleed camera + mic check with live face detection. Clicking
+ * "Start interview" runs a 3-2-1 countdown, captures a high-quality still, and
+ * uploads it (blocking -- retry on failure) before the session starts. The
+ * countdown aborts if proctoring is violated (face count != 1, fullscreen exit,
+ * minimize, tab switch, focus loss). Camera + model start automatically; devices
+ * are released on unmount so LiveKit can re-acquire.
  */
-export function ReadyStage({ onStart, proctored = false }: Props) {
+export function ReadyStage({ token, onStart, proctored = false }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const blobRef = useRef<Blob | null>(null)
   const [status, setStatus] = useState<Status>('starting')
   const [error, setError] = useState<string | null>(null)
   const [noiseDbfs, setNoiseDbfs] = useState<number | null>(null)
   const [multiDisplay, setMultiDisplay] = useState<boolean | null>(null)
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 })
+  const [phase, setPhase] = useState<CapturePhase>('idle')
+  const [abortNote, setAbortNote] = useState(false)
 
+  const { locked } = useFullscreenLock()
   const face = usePreCheckFaceGate(videoRef, status === 'live')
 
-  // Debounced gate count so Start doesn't flicker with per-frame detection noise.
   const [gateCount, setGateCount] = useState(0)
   useEffect(() => {
     const t = window.setTimeout(() => setGateCount(face.faceCount), GATE_DEBOUNCE_MS)
@@ -58,15 +66,13 @@ export function ReadyStage({ onStart, proctored = false }: Props) {
   }, [proctored])
 
   // No synchronous setState here (the first statement awaits) so the auto-start
-  // effect below doesn't trip react-hooks/set-state-in-effect. The retry handler
-  // resets the visible state itself before re-invoking.
+  // effect below doesn't trip react-hooks/set-state-in-effect.
   const start = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       streamRef.current = stream
       if (videoRef.current) videoRef.current.srcObject = stream
       setStatus('live')
-      // Best-effort noise sample — informational only, does not gate Start.
       sampleNoiseFloorDbfs(stream)
         .then(setNoiseDbfs)
         .catch(() => {})
@@ -92,7 +98,6 @@ export function ReadyStage({ onStart, proctored = false }: Props) {
     void start()
   }, [start])
 
-  // Auto-start the camera as soon as the candidate reaches this step (once).
   const startedRef = useRef(false)
   useEffect(() => {
     if (startedRef.current) return
@@ -100,7 +105,6 @@ export function ReadyStage({ onStart, proctored = false }: Props) {
     void start()
   }, [start])
 
-  // Track the displayed video size so face boxes map correctly under object-cover.
   useEffect(() => {
     const el = videoRef.current
     if (!el) return
@@ -112,7 +116,6 @@ export function ReadyStage({ onStart, proctored = false }: Props) {
     return () => ro.disconnect()
   }, [status])
 
-  // Release devices on unmount so the live session can re-acquire the camera.
   useEffect(() => {
     return () => {
       streamRef.current?.getTracks().forEach((t) => t.stop())
@@ -125,15 +128,59 @@ export function ReadyStage({ onStart, proctored = false }: Props) {
   const visionPending = status === 'live' && !face.ready && !face.failed
   const multipleFaces = face.ready && gateCount >= 2
   const noFace = face.ready && gateCount === 0
-  // No lockout: if the model failed/timed out, fall back to device-only gating.
   const canStart = status === 'live' && (face.failed || (face.ready && gateCount === 1))
+
+  // Capture must stay stable: fullscreen+visible+focused, live, and (when vision
+  // works) exactly one face. If this drops mid-countdown, the capture aborts.
+  const captureStable = locked && status === 'live' && (!face.ready || gateCount === 1)
+
+  const upload = useCallback(async () => {
+    const blob = blobRef.current
+    if (!blob) {
+      setPhase('failed')
+      return
+    }
+    setPhase('uploading')
+    try {
+      await candidateSessionApi.uploadReferencePhoto(token, blob)
+      onStart()
+    } catch {
+      setPhase('failed')
+    }
+  }, [token, onStart])
+
+  const onCountdownComplete = useCallback(async () => {
+    const video = videoRef.current
+    if (!video) {
+      setPhase('idle')
+      setAbortNote(true)
+      return
+    }
+    try {
+      blobRef.current = await captureVideoFrame(video)
+      await upload()
+    } catch {
+      setPhase('idle')
+      setAbortNote(true)
+    }
+  }, [upload])
+
+  const onCountdownAbort = useCallback(() => {
+    setPhase('idle')
+    setAbortNote(true)
+  }, [])
+
+  const beginCapture = useCallback(() => {
+    setAbortNote(false)
+    setPhase('counting')
+  }, [])
 
   let hint = ''
   if (status === 'starting') hint = 'Starting your camera…'
   else if (visionPending) hint = 'Loading the proctoring model…'
   else if (noFace) hint = 'Position your face in the frame to continue.'
   else if (multipleFaces) hint = 'Only you should be on camera.'
-  else if (canStart) hint = 'You’re all set.'
+  else if (canStart) hint = "You're all set."
 
   const boxTone = multipleFaces ? 'caution' : 'ok'
 
@@ -147,7 +194,6 @@ export function ReadyStage({ onStart, proctored = false }: Props) {
         className="absolute inset-0 h-full w-full object-cover [transform:scaleX(-1)]"
       />
 
-      {/* Live face marker(s) */}
       {face.ready &&
         face.frame &&
         size.w > 0 &&
@@ -171,13 +217,12 @@ export function ReadyStage({ onStart, proctored = false }: Props) {
           )
         })}
 
-      {/* Top bar — brand + live status */}
       <div className="absolute inset-x-0 top-0 flex items-center justify-between gap-3 p-5">
         <div className="flex items-center gap-2 rounded-full bg-black/45 px-3 py-1.5 backdrop-blur">
           <BrandMark variant="mark" className="h-5 w-5" />
           <span className="text-[12px] font-medium text-white/90">Camera check</span>
         </div>
-        {hint && status !== 'denied' && (
+        {hint && status !== 'denied' && phase === 'idle' && (
           <div
             role="status"
             aria-live="polite"
@@ -188,37 +233,73 @@ export function ReadyStage({ onStart, proctored = false }: Props) {
         )}
       </div>
 
-      {/* Bottom bar — secondary warnings + Start */}
       <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 p-6">
-        {(noisy || displayWarn) && (
+        {abortNote && phase === 'idle' && (
+          <p className="rounded-full bg-black/55 px-4 py-1.5 text-[12.5px] font-medium text-px-caution backdrop-blur">
+            {"Let's try again — stay alone, in frame, and in fullscreen."}
+          </p>
+        )}
+        {(noisy || displayWarn) && phase === 'idle' && (
           <div className="flex flex-col items-center gap-1 text-center">
             {noisy && (
               <p className="rounded-full bg-black/50 px-3 py-1 text-[12px] font-medium text-white/85 backdrop-blur">
-                It sounds noisy — a quieter spot is better.
+                {"It sounds noisy — a quieter spot is better."}
               </p>
             )}
             {displayWarn && (
               <p className="rounded-full bg-black/50 px-3 py-1 text-[12px] font-medium text-white/85 backdrop-blur">
-                More than one display detected — a single screen is recommended.
+                {"More than one display detected — a single screen is recommended."}
               </p>
             )}
           </div>
         )}
         <Button
           size="lg"
-          onClick={onStart}
-          disabled={!canStart}
-          aria-disabled={!canStart}
+          onClick={beginCapture}
+          disabled={!canStart || phase !== 'idle'}
+          aria-disabled={!canStart || phase !== 'idle'}
           className="w-full max-w-sm"
         >
           Start interview
         </Button>
       </div>
 
-      {/* Multiple-faces warning (session-style) */}
-      {multipleFaces && <PreCheckFaceWarning />}
+      {multipleFaces && phase === 'idle' && <PreCheckFaceWarning />}
 
-      {/* Permission denied */}
+      {phase === 'counting' && (
+        <CaptureCountdown
+          unstable={!captureStable}
+          onComplete={onCountdownComplete}
+          onAbort={onCountdownAbort}
+        />
+      )}
+
+      {phase === 'uploading' && (
+        <div className="absolute inset-0 z-[25] grid place-items-center bg-black/55 backdrop-blur-md">
+          <p
+            role="status"
+            aria-live="polite"
+            className="rounded-full bg-black/45 px-5 py-2 text-[14px] font-medium text-white/90 backdrop-blur"
+          >
+            Saving your photo…
+          </p>
+        </div>
+      )}
+
+      {phase === 'failed' && (
+        <div className="absolute inset-0 z-[30] grid place-items-center bg-black/80 p-6 text-center backdrop-blur-xl">
+          <div className="px-glass-strong max-w-md rounded-2xl px-8 py-10">
+            <h2 className="px-serif text-2xl font-normal text-px-fg">{"Couldn't save your photo"}</h2>
+            <p className="mt-3 text-sm leading-relaxed text-px-fg-3">
+              We need a clear photo before your interview can start. Please try again.
+            </p>
+            <Button size="lg" onClick={upload} className="mt-6">
+              Try again
+            </Button>
+          </div>
+        </div>
+      )}
+
       {status === 'denied' && (
         <div className="absolute inset-0 z-[30] grid place-items-center bg-black/85 p-6 text-center backdrop-blur-xl">
           <div className="px-glass-strong max-w-md rounded-2xl px-8 py-10">

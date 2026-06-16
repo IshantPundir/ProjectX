@@ -121,7 +121,7 @@ export function WizardShell({ token }: { token: string }) {
   if (stage === 'ready') {
     return (
       <PreCheckLockGate>
-        <ReadyStage onStart={() => setCamMicPassed(true)} proctored={data.proctoring_enabled} />
+        <ReadyStage token={token} onStart={() => setCamMicPassed(true)} proctored={data.proctoring_enabled} />
       </PreCheckLockGate>
     )
   }
