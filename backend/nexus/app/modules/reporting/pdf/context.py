@@ -103,8 +103,6 @@ def build_pdf_context(
         "overall_color": (
             _bar_color(report.overall_score) if report.overall_score is not None else "#6b6f7a"
         ),
-        "overall_confidence": report.overall_confidence,
-        "overall_coverage_pct": round((report.overall_coverage or 0.0) * 100),
         "dimensions": assessed_dimensions(scores_as_dict),
         "decision": report.decision.model_dump(),
         "quick_summary": report.quick_summary,

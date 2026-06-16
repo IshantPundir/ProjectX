@@ -33,6 +33,19 @@ def test_assessed_dimensions_drops_unassessed():
     names = [d["name"] for d in dims]
     assert names == ["Technical", "Communication"]  # overall + behavioral excluded
     assert dims[0]["score"] == 89
+    assert dims[0]["tier"] == "Strong"               # tier carried for the gauge label
+
+
+def test_assessed_dimensions_color_bands():
+    scores = {
+        "technical": {"score": 89},      # >=80 → green
+        "communication": {"score": 70},  # 60..79 → amber
+        "behavioral": {"score": 10},     # <60 → red
+    }
+    by_name = {d["name"]: d["color"] for d in assessed_dimensions(scores)}
+    assert by_name["Technical"] == "#137a45"
+    assert by_name["Communication"] == "#b4791a"
+    assert by_name["Behavioral"] == "#d23b34"
 
 
 from app.modules.reporting.pdf.context import build_pdf_context
@@ -77,3 +90,7 @@ def test_build_pdf_context_shape():
     assert [d["name"] for d in ctx["dimensions"]] == ["Technical", "Communication"]
     assert ctx["reference_photo_url"] is None
     assert len(ctx["questions"]) == 1
+    assert ctx["overall_color"] == "#137a45"   # 90 → green band, drives the gauge arc
+    # Dead fields removed from the context (template never consumed them).
+    assert "overall_confidence" not in ctx
+    assert "overall_coverage_pct" not in ctx
