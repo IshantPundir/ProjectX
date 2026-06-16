@@ -120,3 +120,12 @@ class ReportShare(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=sql_text("NOW()")
     )
+
+    # --- Public recordings share link (capability URL) ---
+    share_token_hash: Mapped[str | None] = mapped_column(Text)
+    share_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    view_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=sql_text("0")
+    )
