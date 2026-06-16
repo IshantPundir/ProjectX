@@ -52,10 +52,10 @@ def monogram_initials(name: str | None) -> str:
 
 
 def assessed_dimensions(scores: dict) -> list[dict]:
-    """Return [{name, score, color}] for dimensions that were actually scored.
+    """Return [{name, score, color, tier}] for dimensions that were scored.
 
     A dimension with score=None (e.g. Behavioral on a technical-only screen) is
-    omitted entirely — never shown as 0 or as a placeholder bar.
+    omitted entirely — never shown as 0 or as a placeholder gauge.
     """
     out: list[dict] = []
     for key, label in _DIM_ORDER:
@@ -63,7 +63,12 @@ def assessed_dimensions(scores: dict) -> list[dict]:
         score = dim.get("score")
         if score is None:
             continue
-        out.append({"name": label, "score": int(score), "color": _bar_color(int(score))})
+        out.append({
+            "name": label,
+            "score": int(score),
+            "color": _bar_color(int(score)),
+            "tier": dim.get("tier_label") or "",
+        })
     return out
 
 
@@ -95,6 +100,9 @@ def build_pdf_context(
         "stamp": verdict_stamp(report.verdict),
         "overall_score": report.overall_score,
         "overall_tier": overall_d.get("tier_label") or "",
+        "overall_color": (
+            _bar_color(report.overall_score) if report.overall_score is not None else "#6b6f7a"
+        ),
         "overall_confidence": report.overall_confidence,
         "overall_coverage_pct": round((report.overall_coverage or 0.0) * 100),
         "dimensions": assessed_dimensions(scores_as_dict),
