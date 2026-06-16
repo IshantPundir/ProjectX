@@ -98,6 +98,29 @@ class Settings(BaseSettings):
             )
         return v
 
+    # Public recordings share — keys the HMAC hash of the opaque share token
+    # embedded in the report PDF link (/recordings/<token>). Treat as a DB
+    # credential. REQUIRED in non-test environments. Rotating it invalidates
+    # all outstanding share links (they can be re-shared).
+    recording_share_hmac_secret: str = ""
+
+    # Lifetime of a public recordings share link. The link lives in a PDF that
+    # may sit in an inbox indefinitely, so this is long; revocation is the kill
+    # switch, not expiry.
+    recording_share_ttl_days: int = 365
+
+    @field_validator("recording_share_hmac_secret")
+    @classmethod
+    def _share_secret_required(cls, v: str, info) -> str:
+        env = info.data.get("environment", "development")
+        if not v and env != "test":
+            raise ValueError(
+                "RECORDING_SHARE_HMAC_SECRET is required (generate with: "
+                "`openssl rand -hex 32`). It keys the HMAC hash of public "
+                "recordings share tokens. Set ENVIRONMENT=test to skip in tests."
+            )
+        return v
+
     # ATS integration — encrypts per-tenant credentials and OAuth tokens at rest.
     # First key in the list encrypts; all keys are tried for decrypt (MultiFernet).
     # Rotation = prepend a new key, backfill ciphertexts, drop the old key.
