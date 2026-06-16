@@ -20,6 +20,9 @@ from app.modules.notifications.schemas import SMSMessage
 
 logger = structlog.get_logger()
 
+# (filename, raw bytes, content_type) — e.g. ("report.pdf", b"...", "application/pdf")
+Attachment = tuple[str, bytes, str]
+
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 _jinja_env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
 
@@ -40,7 +43,10 @@ def render_template(template_name: str, **kwargs: object) -> str:
 
 class EmailProvider(Protocol):
     """Provider-agnostic email interface."""
-    async def send(self, *, to: str, subject: str, html: str) -> None: ...
+    async def send(
+        self, *, to: str, subject: str, html: str,
+        attachments: "list[Attachment] | None" = None,
+    ) -> None: ...
 
 
 class DryRunProvider:
@@ -50,7 +56,10 @@ class DryRunProvider:
     them as first-class log fields so engineers don't have to scan the full
     HTML in the terminal to pull the URL / code for manual testing.
     """
-    async def send(self, *, to: str, subject: str, html: str) -> None:
+    async def send(
+        self, *, to: str, subject: str, html: str,
+        attachments: "list[Attachment] | None" = None,
+    ) -> None:
         invite_url = None
         if match := _INVITE_URL_RE.search(html):
             invite_url = match.group("url")
@@ -65,6 +74,7 @@ class DryRunProvider:
             invite_url=invite_url,
             otp_code=otp_code,
             html_length=len(html),
+            attachments=[(name, len(data)) for name, data, _ct in (attachments or [])],
         )
 
 
@@ -76,11 +86,23 @@ class ResendProvider:
         self._from = settings.email_from
         self._resend = resend
 
-    async def send(self, *, to: str, subject: str, html: str) -> None:
-        await asyncio.to_thread(
-            self._resend.Emails.send,
-            {"from": self._from, "to": to, "subject": subject, "html": html},
-        )
+    async def send(
+        self, *, to: str, subject: str, html: str,
+        attachments: "list[Attachment] | None" = None,
+    ) -> None:
+        import base64
+
+        payload: dict = {"from": self._from, "to": to, "subject": subject, "html": html}
+        if attachments:
+            payload["attachments"] = [
+                {
+                    "filename": name,
+                    "content": base64.b64encode(data).decode("ascii"),
+                    "content_type": ct,
+                }
+                for name, data, ct in attachments
+            ]
+        await asyncio.to_thread(self._resend.Emails.send, payload)
 
 
 def _create_provider() -> EmailProvider:
@@ -92,11 +114,17 @@ def _create_provider() -> EmailProvider:
 _provider: EmailProvider = _create_provider()
 
 
-async def send_email(*, to: str, subject: str, html: str) -> None:
+async def send_email(
+    *, to: str, subject: str, html: str,
+    attachments: "list[Attachment] | None" = None,
+) -> None:
     """Send an email. Business logic calls this — never import a provider directly."""
     try:
-        await _provider.send(to=to, subject=subject, html=html)
-        logger.info("email.sent", to=to, subject=subject)
+        await _provider.send(to=to, subject=subject, html=html, attachments=attachments)
+        logger.info(
+            "email.sent", to=to, subject=subject,
+            attachment_count=len(attachments) if attachments else 0,
+        )
     except Exception as exc:
         logger.error("email.failed", to=to, subject=subject, error=str(exc))
         raise
