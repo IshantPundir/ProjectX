@@ -107,9 +107,12 @@ export function IntroStage({
   return (
     <div className="grid items-center gap-8 lg:grid-cols-[0.85fr_1.15fr] lg:gap-12">
       {/* Hero — the live-session Aura orb (single WebGL instance). On mobile the
-          grid collapses and the orb sits above the content. */}
+          grid collapses and the orb sits above the content. Scaled up a touch
+          for presence (more on desktop). */}
       <div className="flex justify-center">
-        <HeroAura state="listening" size="lg" />
+        <div className="scale-110 lg:scale-125">
+          <HeroAura state="listening" size="lg" />
+        </div>
       </div>
 
       {/* Content side */}
