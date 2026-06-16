@@ -32,11 +32,11 @@ async def test_attaches_presigned_url_by_question_id(monkeypatch):
 
     fake_storage = type("S", (), {"presign_get_url": AsyncMock(return_value="https://signed/q1")})()
 
-    import app.modules.reporting.router as rt
+    import app.modules.reporting.assets as rt
     monkeypatch.setattr(rt, "get_session_timeline_thumbnails", fake_get_thumbs)
     monkeypatch.setattr(rt, "get_object_storage", lambda: fake_storage)
 
-    await rt._attach_question_thumbnails(db=None, report=report, session_id="s", tenant_id="t")
+    await rt.attach_question_thumbnails(db=None, report=report, session_id="s", tenant_id="t")
     assert report.questions[0].thumbnail_url == "https://signed/q1"
 
 
@@ -47,7 +47,7 @@ async def test_no_thumbnail_leaves_url_none(monkeypatch):
     async def fake_get_thumbs(db, *, session_id, tenant_id):
         return []
 
-    import app.modules.reporting.router as rt
+    import app.modules.reporting.assets as rt
     monkeypatch.setattr(rt, "get_session_timeline_thumbnails", fake_get_thumbs)
-    await rt._attach_question_thumbnails(db=None, report=report, session_id="s", tenant_id="t")
+    await rt.attach_question_thumbnails(db=None, report=report, session_id="s", tenant_id="t")
     assert report.questions[0].thumbnail_url is None

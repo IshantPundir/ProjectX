@@ -13,7 +13,7 @@ via ``unittest.mock.patch``.
 from __future__ import annotations
 
 import contextlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import dramatiq
@@ -28,6 +28,7 @@ from app.modules.reporting.models import ReportShare, SessionReport
 from app.modules.reporting.pdf import build_pdf_context, render_report_pdf
 from app.modules.reporting.serialization import report_read_from_row
 from app.modules.reporting.service import build_report, persist_report
+from app.modules.reporting.share_tokens import generate_share_token, hash_share_token
 from app.storage import get_object_storage
 
 logger = structlog.get_logger("reporting.actor")
@@ -447,7 +448,15 @@ async def _share_report_pdf_async(
                 report_row.generated_at.strftime("%b %d, %Y")
                 if report_row.generated_at else datetime.now(UTC).strftime("%b %d, %Y")
             )
-            full_session_url = f"{settings.frontend_base_url}/shared-session/coming-soon"
+            # Mint the opaque capability token for the public recordings page.
+            # The plaintext lives ONLY in this PDF link; we persist its keyed
+            # HMAC hash + expiry on the share row (durably saved by the commit
+            # at the end of this actor).
+            share_token = generate_share_token()
+            share.share_token_hash = hash_share_token(share_token)
+            share.share_expires_at = datetime.now(UTC) + timedelta(
+                days=settings.recording_share_ttl_days)
+            full_session_url = f"{settings.frontend_base_url}/recordings/{share_token}"
 
             share.status = "rendering"
             await db.flush()

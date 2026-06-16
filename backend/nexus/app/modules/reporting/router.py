@@ -21,11 +21,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.database import get_tenant_db
 from app.modules.audit import log_event
 from app.modules.auth import UserContext, get_current_user_roles
 from app.modules.reporting.actors import score_session_report, share_report_pdf
+from app.modules.reporting.assets import (
+    attach_question_thumbnails,
+    attach_reference_photo,
+)
 from app.modules.reporting.models import ReportShare, SessionReport
 from app.modules.reporting.schemas import (
     HumanDecisionIn,
@@ -40,12 +43,7 @@ from app.modules.session import (
     SessionNotFoundError,
     get_session_recording_playback,
 )
-from app.modules.session.models import Session  # cross-module model import (models carve-out)
-from app.modules.vision import (
-    get_session_proctoring_analysis,
-    get_session_timeline_thumbnails,
-)
-from app.storage import get_object_storage
+from app.modules.vision import get_session_proctoring_analysis
 
 router = APIRouter(prefix="/api/reports", tags=["reporting"])
 
@@ -74,58 +72,6 @@ def _get_correlation_id(request: Request) -> str:
 
 def _row_to_read(row: SessionReport) -> ReportRead:
     return report_read_from_row(row)
-
-
-async def _attach_question_thumbnails(
-    *, db: AsyncSession, report: ReportRead, session_id: Any, tenant_id: Any
-) -> None:
-    """Presign per-question timeline thumbnails and attach by question_id.
-    Best-effort: a lookup/presign failure leaves thumbnail_url as None."""
-    if not report.questions:
-        return
-    try:
-        thumbs = await get_session_timeline_thumbnails(
-            db, session_id=session_id, tenant_id=tenant_id)
-    except Exception:  # noqa: BLE001
-        return
-    by_qid = {t.ref_id: t.s3_key for t in thumbs if t.kind == "question"}
-    if not by_qid:
-        return
-    storage = get_object_storage()
-    ttl = settings.recording_signed_url_ttl_seconds
-    for q in report.questions:
-        key = by_qid.get(q.question_id)
-        if not key:
-            continue
-        try:
-            q.thumbnail_url = await storage.presign_get_url(key, ttl_seconds=ttl)
-        except Exception:  # noqa: BLE001
-            continue
-
-
-async def _attach_reference_photo(
-    *, db: AsyncSession, report: ReportRead, session_id: Any, tenant_id: Any
-) -> None:
-    """Presign the candidate reference photo (the main session thumbnail).
-
-    Best-effort: missing key / presign failure leaves reference_photo_url None.
-    """
-    try:
-        sess = (await db.execute(
-            select(Session).where(
-                Session.id == session_id, Session.tenant_id == tenant_id)
-        )).scalar_one_or_none()
-    except Exception:  # noqa: BLE001
-        return
-    if not sess or not sess.reference_photo_key:
-        return
-    try:
-        report.reference_photo_url = await get_object_storage().presign_get_url(
-            sess.reference_photo_key,
-            ttl_seconds=settings.recording_signed_url_ttl_seconds,
-        )
-    except Exception:  # noqa: BLE001
-        return
 
 
 def _require_reports_view(user: UserContext) -> None:
@@ -190,9 +136,9 @@ async def get_report_by_session(
         )
 
     read = _row_to_read(row)
-    await _attach_question_thumbnails(
+    await attach_question_thumbnails(
         db=db, report=read, session_id=session_id, tenant_id=tenant_id)
-    await _attach_reference_photo(
+    await attach_reference_photo(
         db=db, report=read, session_id=session_id, tenant_id=tenant_id)
     return read.model_dump(mode="json")
 
@@ -366,9 +312,9 @@ async def get_report_by_id(
         raise HTTPException(status_code=404, detail="Report not found")
 
     read = _row_to_read(row)
-    await _attach_question_thumbnails(
+    await attach_question_thumbnails(
         db=db, report=read, session_id=row.session_id, tenant_id=tenant_id)
-    await _attach_reference_photo(
+    await attach_reference_photo(
         db=db, report=read, session_id=row.session_id, tenant_id=tenant_id)
     return read.model_dump(mode="json")
 
@@ -490,6 +436,57 @@ async def share_report(
         correlation_id=correlation_id,
     )
     return ShareReportOut(share_id=str(share.id), status="pending").model_dump()
+
+
+# ---------------------------------------------------------------------------
+# POST /api/reports/session/{session_id}/shares/{share_id}/revoke
+#
+# Revoke a public recordings share link. Sets revoked_at → the public endpoint
+# (GET /api/public/recordings/{token}) stops resolving the token immediately.
+# Backend-only for now: there is no recruiter UI; callable via API.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/session/{session_id}/shares/{share_id}/revoke",
+    summary="Revoke a public recordings share link",
+)
+async def revoke_share(
+    session_id: uuid_mod.UUID,
+    share_id: uuid_mod.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_tenant_db),
+    user: UserContext = Depends(get_current_user_roles),
+) -> Any:
+    """Set revoked_at on a share row → its public link stops working immediately.
+    RBAC: reports.view or super-admin (same set that can create the share)."""
+    _require_reports_view(user)
+    tenant_id = user.user.tenant_id
+
+    share = (await db.execute(
+        select(ReportShare).where(
+            ReportShare.id == share_id,
+            ReportShare.session_id == session_id,
+            ReportShare.tenant_id == tenant_id)
+    )).scalar_one_or_none()
+    if share is None:
+        raise HTTPException(status_code=404, detail="Share not found")
+
+    if share.revoked_at is None:
+        share.revoked_at = datetime.now(UTC)
+        await db.flush()
+        await log_event(
+            db,
+            tenant_id=tenant_id,
+            actor_id=user.user.id,
+            actor_email=user.user.email,
+            action="session_report.share_revoked",
+            resource="session_report",
+            resource_id=share.report_id,
+            payload={"share_id": str(share.id),
+                     "correlation_id": _get_correlation_id(request)},
+        )
+    return {"share_id": str(share.id), "revoked": True}
 
 
 # ---------------------------------------------------------------------------

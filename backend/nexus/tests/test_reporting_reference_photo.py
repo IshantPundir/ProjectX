@@ -76,11 +76,11 @@ async def test_reference_photo_url_presigned_when_key_set(monkeypatch):
         {"presign_get_url": AsyncMock(return_value="https://r2.example.com/ref-signed")},
     )()
 
-    import app.modules.reporting.router as rt
+    import app.modules.reporting.assets as rt
 
     monkeypatch.setattr(rt, "get_object_storage", lambda: fake_storage)
 
-    await rt._attach_reference_photo(
+    await rt.attach_reference_photo(
         db=_FakeDB(sess),
         report=report,
         session_id=sess.id,
@@ -105,11 +105,11 @@ async def test_reference_photo_url_none_when_no_key(monkeypatch):
         "S", (), {"presign_get_url": AsyncMock(return_value="SHOULD_NOT_BE_CALLED")}
     )()
 
-    import app.modules.reporting.router as rt
+    import app.modules.reporting.assets as rt
 
     monkeypatch.setattr(rt, "get_object_storage", lambda: fake_storage)
 
-    await rt._attach_reference_photo(
+    await rt.attach_reference_photo(
         db=_FakeDB(sess),
         report=report,
         session_id=sess.id,
@@ -133,12 +133,12 @@ async def test_reference_photo_url_none_when_session_missing(monkeypatch):
         "S", (), {"presign_get_url": AsyncMock(return_value="SHOULD_NOT_BE_CALLED")}
     )()
 
-    import app.modules.reporting.router as rt
+    import app.modules.reporting.assets as rt
 
     monkeypatch.setattr(rt, "get_object_storage", lambda: fake_storage)
 
     # DB returns None — session not found for this tenant
-    await rt._attach_reference_photo(
+    await rt.attach_reference_photo(
         db=_FakeDB(None),
         report=report,
         session_id=uuid.uuid4(),
@@ -164,12 +164,12 @@ async def test_reference_photo_url_none_on_presign_failure(monkeypatch):
 
     fake_storage = type("S", (), {"presign_get_url": _boom})()
 
-    import app.modules.reporting.router as rt
+    import app.modules.reporting.assets as rt
 
     monkeypatch.setattr(rt, "get_object_storage", lambda: fake_storage)
 
     # Must NOT raise
-    await rt._attach_reference_photo(
+    await rt.attach_reference_photo(
         db=_FakeDB(sess),
         report=report,
         session_id=sess.id,
@@ -196,12 +196,12 @@ async def test_reference_photo_url_none_on_db_failure(monkeypatch):
         "S", (), {"presign_get_url": AsyncMock(return_value="SHOULD_NOT_BE_CALLED")}
     )()
 
-    import app.modules.reporting.router as rt
+    import app.modules.reporting.assets as rt
 
     monkeypatch.setattr(rt, "get_object_storage", lambda: fake_storage)
 
     # Must NOT raise
-    await rt._attach_reference_photo(
+    await rt.attach_reference_photo(
         db=_BoomDB(),
         report=report,
         session_id=uuid.uuid4(),

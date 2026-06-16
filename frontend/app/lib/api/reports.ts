@@ -1,4 +1,5 @@
 import { ApiError, apiFetch } from './client'
+import type { ReelPlayback } from './reels'
 
 // --- Enums (mirror app/modules/reporting/scoring/types.py) ---
 export type Verdict = 'advance' | 'borderline' | 'reject'        // enum unchanged; UI-relabeled
@@ -212,6 +213,17 @@ export interface ProctoringAnalysis {
   unscorable_pct: number | null
 }
 
+/** Mirror of reporting/schemas.py::PublicRecordingsEnvelope. */
+export interface PublicRecordingsEnvelope {
+  candidate_name: string
+  job_title: string
+  stage_label: string
+  report: ReportRead
+  recording: RecordingPlayback
+  proctoring: ProctoringAnalysis
+  reel: ReelPlayback
+}
+
 export const reportsApi = {
   /**
    * GET /api/reports/session/{sessionId}.
@@ -304,4 +316,18 @@ export const reportsApi = {
       method: 'POST',
       body: JSON.stringify({ recipient_email: recipientEmail }),
     }),
+
+  /**
+   * GET /api/public/recordings/{token} — PUBLIC, no auth. Resolves the opaque
+   * share-link token to the full playback envelope. 404 (expired/revoked/
+   * unknown) throws ApiError. No `token` option → no Authorization header.
+   */
+  getPublicRecordings: (
+    token: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<PublicRecordingsEnvelope> =>
+    apiFetch<PublicRecordingsEnvelope>(
+      `/api/public/recordings/${token}`,
+      { signal: opts?.signal },
+    ),
 }

@@ -29,8 +29,6 @@ export function checkLegacyRedirect(url: URL): URL | null {
   return null
 }
 
-const PUBLIC_PATHS = new Set(["/login"]);
-
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
@@ -65,6 +63,12 @@ export async function proxy(request: NextRequest) {
   // Invite pages are always public (no auth needed)
   if (path.startsWith("/invite")) {
     await supabase.auth.getUser();
+    return supabaseResponse;
+  }
+
+  // Public recordings share page — token-gated by the backend, no Supabase
+  // session. Must bypass the auth gate (the page calls the public API directly).
+  if (path.startsWith("/recordings/")) {
     return supabaseResponse;
   }
 

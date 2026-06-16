@@ -31,6 +31,7 @@ _PUBLIC_PREFIXES: tuple[str, ...] = (
     "/api/auth/verify-invite",  # Public — invite token verification
     "/api/auth/accept-invite",  # Public — raw invite token proves possession
     "/api/auth/login",  # Public — credential exchange for session tokens
+    "/api/public/recordings/",  # Public — opaque share token verified in-handler
 )
 
 

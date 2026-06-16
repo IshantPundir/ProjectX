@@ -32,6 +32,7 @@ export function ReelTheater({
   candidateName,
   subtitle,
   onClose,
+  showClose = true,
 }: {
   open: boolean
   signedUrl: string | null
@@ -40,6 +41,8 @@ export function ReelTheater({
   candidateName: string
   subtitle: string
   onClose: () => void
+  // The public recordings page hides the close ✕ — there is nowhere to close to.
+  showClose?: boolean
 }) {
   // The <video> lives in the dialog portal (mounts a tick late, remounts on
   // reopen); track the live NODE in state so the controller re-binds each time.
@@ -171,15 +174,17 @@ export function ReelTheater({
                   >
                     ★ Highlight reel
                   </span>
-                  <button
-                    type="button"
-                    onClick={requestClose}
-                    aria-label="Close"
-                    className="grid h-6 w-6 flex-none place-items-center rounded-full border text-[12px]"
-                    style={{ borderColor: 'var(--px-hairline-strong)', color: 'var(--px-fg-3)' }}
-                  >
-                    ✕
-                  </button>
+                  {showClose && (
+                    <button
+                      type="button"
+                      onClick={requestClose}
+                      aria-label="Close"
+                      className="grid h-6 w-6 flex-none place-items-center rounded-full border text-[12px]"
+                      style={{ borderColor: 'var(--px-hairline-strong)', color: 'var(--px-fg-3)' }}
+                    >
+                      ✕
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
