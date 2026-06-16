@@ -284,12 +284,17 @@ async def _maybe_enqueue_vision(db: AsyncSession, sess: Session) -> None:
 
 
 async def get_session_recording_playback(
-    db: AsyncSession, *, session_id: UUID, tenant_id: UUID
+    db: AsyncSession, *, session_id: UUID, tenant_id: UUID, reconcile: bool = True
 ) -> RecordingPlayback:
     """Return playback info for a session's recording (tenant-scoped).
 
     Raises SessionNotFoundError if the session does not exist for this tenant
     (cross-tenant access returns 0 rows → 404 at the endpoint).
+
+    When ``reconcile`` is False the read is side-effect-free: it neither polls
+    LiveKit egress nor enqueues vision analysis. The public recordings share
+    path uses this — sharing always happens post-session, so the recording is
+    already final and the public endpoint must not trigger background work.
     """
     sess = (
         await db.execute(
@@ -302,8 +307,9 @@ async def get_session_recording_playback(
     if sess is None:
         raise SessionNotFoundError()
 
-    await _reconcile(db, sess)
-    await _maybe_enqueue_vision(db, sess)
+    if reconcile:
+        await _reconcile(db, sess)
+        await _maybe_enqueue_vision(db, sess)
 
     transcript = _build_transcript((sess.session_evidence_json or {}).get("transcript"))
 
