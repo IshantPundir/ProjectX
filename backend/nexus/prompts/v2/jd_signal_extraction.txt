@@ -19,7 +19,9 @@ Separate the two:
   - SUBSTANCE — WHAT the signal is (the skill, tool, requirement, or responsibility). This
     must be faithful to the JD. Restate it; never invent it. Do not add specifics,
     sub-skills, tools, scope, scale, or seniority the JD does not state — not even inside
-    parentheses, not even when they are "typical" for the role.
+    parentheses, not even when they are "typical" for the role. Express the substance as a
+    crisp competency label (see Phrasing) — faithful to the JD's substance, not necessarily
+    its wording.
   - CLASSIFICATION — how you label the signal (type, purpose, priority, weight, knockout,
     stage, and the role's seniority_level). This is your analytical judgment, inferred from
     the JD's structure. Inference here is expected and correct.
@@ -58,6 +60,20 @@ to add specifics.
 Do NOT over-combine genuinely distinct competencies; do NOT fragment one competency into
 many near-duplicates.
 
+# Phrasing — name the competency, don't copy the sentence
+
+A signal's value is a crisp LABEL for the skill or requirement being assessed — a noun
+phrase, not a copied JD sentence. Distil each responsibility or must-have line into the
+competency it tests.
+  - "Manage and configure <tool> for <purpose>" → "<tool> administration & configuration".
+  - A line like "Handle incident, change, and knowledge management processes" → a label such
+    as "Incident, change & knowledge management (ITSM)".
+Faithfulness governs SUBSTANCE, not wording or length: compressing a sentence into its
+competency is REQUIRED; adding a tool, specific, or scope the JD never stated is still
+forbidden. Each signal is ONE distinct unit of assessment — do not emit two signals that
+restate the same competency, and do not leave a vague catch-all that merely renames the whole
+role.
+
 # Experience signals — never re-scope the JD's figure
 
 If the JD states a GENERAL experience figure not tied to a specific skill (e.g. "3–5 years"
@@ -89,13 +105,22 @@ The duration is pre-screened; the competency is what we test.
 
 # Weight & knockout — map to the JD's OWN structure
 
-  - weight 3 (critical): in the title, the "Must-Have" list, or flagged "must/essential".
-  - weight 2 (important): a clear single requirement.
+  - weight 3 (critical): EVERY item in the JD's explicit Must-Have / Required-skills list,
+    anything in the title, and anything flagged "must/essential". If the JD lists it as a
+    must-have, it is weight 3 — do NOT down-weight it to 2.
+  - weight 2 (important): a clear requirement that is NOT in the must-have list (e.g. a core
+    responsibility drawn from the body of the JD).
   - weight 1 (baseline): nice-to-have / good-to-have / implied.
   - knockout = true ONLY for a genuine non-negotiable gate (a hard "minimum X", a legally
     required license/clearance). Prefer putting knockout on the ELIGIBILITY signal (years,
     license), not on a skill — skills are assessed by depth, not a yes/no gate. Max 5
     knockouts.
+
+PRESERVE EVERY MUST-HAVE. Every item named in the JD's Must-Have / Required list must survive
+as a signal — either its own signal, or an individually NAMED element of a consolidated
+signal — and must carry weight 3. Consolidation may group related must-haves, but it must
+never drop a must-have's name or lower its weight. (You may still consolidate a must-have with
+related responsibilities; the resulting signal is weight 3 and names the must-have.)
 
 # Stage (unchanged — for routing; keep assigning it)
 
@@ -104,9 +129,10 @@ The duration is pre-screened; the competency is what we test.
 
 # Provenance — the honest channel for anything not literally stated
 
-  - source = "ai_extracted": the substance is STATED in the JD. EVERY word of the value must
-    be grounded in the JD text — if you would add any specific the JD does not contain, it is
-    NOT ai_extracted. inference_basis MUST be null.
+  - source = "ai_extracted": the substance is STATED in the JD — the skill, tool, or
+    requirement appears there. You may phrase it as a crisp label rather than copy the JD's
+    exact words, but you may NOT add any specific, tool, or scope the JD does not contain.
+    inference_basis MUST be null.
   - source = "ai_inferred": the substance is genuinely IMPLIED, not stated. Use SPARINGLY.
     inference_basis MUST be a short explanation. Infer only from: the role title + seniority,
     or technology adjacency to a skill the JD ALREADY states. The company profile is for
@@ -125,8 +151,12 @@ The duration is pre-screened; the competency is what we test.
 
 # Before you output
 
-  - Every ai_extracted signal's value traces, word for word, to the JD. No invented
-    specifics, parentheticals, tools, or scope.
+  - Every ai_extracted signal's SUBSTANCE is stated in the JD (the skill/tool/requirement
+    appears there), with no invented specifics, parentheticals, tools, or scope — though you
+    may phrase it as a crisp label rather than the JD's exact words.
+  - Every item in the JD's Must-Have list appears, NAMED, at weight 3.
+  - Each value is a crisp competency label, not a copied responsibility sentence; no two
+    signals restate the same competency.
   - No general experience band was re-scoped onto a specific skill.
   - Every ai_inferred signal has a basis and adds no years/certs/scope/seniority.
   - The list is FEW and high-density, not padded.
