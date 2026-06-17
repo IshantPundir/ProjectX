@@ -95,6 +95,22 @@ def check_bank_invariants(
             True,
         ))
 
+    # Distinctness: no two technical_scenario questions may share a primary_signal (a wasted
+    # scored slot + a duplicate question). The deep-dive is exempt here — its sharing is
+    # governed by the hybrid overflow rule below.
+    scenario_primaries = [
+        q.primary_signal for q in questions if q.question_kind == "technical_scenario"
+    ]
+    dup_primaries = sorted({p for p in scenario_primaries if scenario_primaries.count(p) > 1})
+    if dup_primaries:
+        out.append(Violation(
+            "duplicate_scenario_primary",
+            f"More than one technical_scenario shares these primary_signals: {dup_primaries}. "
+            "Each scenario must own a DISTINCT skill. Rewrite the duplicate(s) onto a skill not "
+            "yet covered (prefer a secondary-only skill from the coverage plan), or drop it.",
+            True,
+        ))
+
     # Scored-coverage check: every must-cover skill the planner assigned a scored slot must
     # be SOME question's primary_signal. Not hard_repairable — code can't author a scenario,
     # so a miss drives the targeted critic re-pass.
@@ -110,7 +126,54 @@ def check_bank_invariants(
                     f"primary_signal is exactly '{sig}'.",
                     False,
                 ))
+        # Hybrid deep-dive coverage: when overflow must-have skills exist that no scenario
+        # scored, the single project_deepdive must score ONE of them (breadth). With no
+        # uncovered overflow, the deep-dive is unconstrained (project-agnostic).
+        if plan.secondary_only:
+            _scenario_primary_set = {
+                q.primary_signal for q in questions
+                if q.question_kind == "technical_scenario"
+            }
+            uncovered_overflow = [
+                s for s in plan.secondary_only if s not in _scenario_primary_set
+            ]
+            deepdives = [q for q in questions if q.question_kind == "project_deepdive"]
+            if (
+                uncovered_overflow
+                and deepdives
+                and deepdives[0].primary_signal not in set(uncovered_overflow)
+            ):
+                out.append(Violation(
+                    "deepdive_primary_uncovered_overflow",
+                    f"Overflow must-have skills are unscored ({uncovered_overflow}); the single "
+                    "project_deepdive must take ONE of them as its primary_signal so it is "
+                    f"scored. Set the deep-dive's primary_signal to one of: {uncovered_overflow}.",
+                    False,
+                ))
     return out
+
+
+def _dedupe_scenario_primaries(
+    questions: list[GeneratedQuestion],
+) -> list[GeneratedQuestion]:
+    """Keep at most one technical_scenario per primary_signal (mandatory first, then earliest
+    position wins). Non-scenario kinds are never dropped here — the deep-dive may legitimately
+    share a primary in a skill-poor bank. Pure."""
+    seen: set[str] = set()
+    drop: set[int] = set()
+    order = sorted(
+        range(len(questions)),
+        key=lambda i: (not questions[i].is_mandatory, questions[i].position),
+    )
+    for i in order:
+        q = questions[i]
+        if q.question_kind != "technical_scenario":
+            continue
+        if q.primary_signal in seen:
+            drop.add(i)
+        else:
+            seen.add(q.primary_signal)
+    return [q for i, q in enumerate(questions) if i not in drop]
 
 
 def _cap_kind(
@@ -198,6 +261,7 @@ def hard_repair(
     qs = [q for q in questions if q.question_kind not in _FORBIDDEN_KINDS]
     qs = _cap_kind(qs, "project_deepdive", _MAX_PROJECT_DEEPDIVE)
     qs = _cap_kind(qs, "behavioral", _MAX_BEHAVIORAL)
+    qs = _dedupe_scenario_primaries(qs)
     qs = _trim_to_budget(qs, stage_duration_minutes, required_primaries or set(), require_deepdive)
     for i, q in enumerate(qs):
         q.position = i
