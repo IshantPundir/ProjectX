@@ -164,3 +164,47 @@ def test_generated_question_rejects_old_kind():
             rubric=QuestionRubric(excellent="a" * 20, meets_bar="b" * 20, below_bar="c" * 20),
             evaluation_hint="e" * 10, question_kind="technical_depth",  # old → rejected
         )
+
+
+def _build_length_test_question(text: str) -> GeneratedQuestion:
+    """Construct a fully-valid GeneratedQuestion with the given lead text."""
+    return GeneratedQuestion(
+        position=0,
+        text=text,
+        primary_signal="Microsoft Intune administration & configuration",
+        signal_values=["Microsoft Intune administration & configuration"],
+        estimated_minutes=4.0,
+        is_mandatory=False,
+        follow_ups=[
+            {
+                "dimension": "rollout_specifics",
+                "intent": "Verify concrete rollout decisions",
+                "seed_probe": "Which enrollment method did you pick, and why that one?",
+                "listen_for": ["enrollment method", "tradeoff named"],
+            }
+        ],
+        positive_evidence=[
+            "Names a specific enrollment/compliance mechanism",
+            "Describes a concrete failure they diagnosed",
+            "Owns a decision with a stated tradeoff",
+        ],
+        red_flags=["Stays abstract with no specifics", "Says 'we' with no recoverable 'I'"],
+        rubric=QuestionRubric(
+            excellent="Names specific Intune mechanisms and a real tradeoff they owned.",
+            meets_bar="Mentions one concrete mechanism and a structured approach.",
+            below_bar="Vague, tutorial-level, no specifics.",
+        ),
+        evaluation_hint="Strong answer names concrete mechanisms and a verified outcome.",
+        question_kind="technical_scenario",
+    )
+
+
+def test_generated_question_text_accepts_up_to_320_chars():
+    text = "A" * 320
+    q = _build_length_test_question(text)
+    assert len(q.text) == 320
+
+
+def test_generated_question_text_rejects_over_320_chars():
+    with pytest.raises(ValidationError):
+        _build_length_test_question("A" * 321)
