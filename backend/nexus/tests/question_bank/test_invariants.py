@@ -142,24 +142,59 @@ def test_hard_repair_coverage_aware_never_drops_sole_required_primary():
 
 
 def test_hard_repair_drops_optional_primary_first():
+    # Three distinct primaries (no duplicates → deduper is a no-op), 3 × 8min = 24min > 20min.
+    # Pass 1 of _trim_to_budget drops "opt" (not a required_primary) before any "must" question.
     qs = [_q("technical_scenario", mins=8.0, pos=0, signals=("must",)),
           _q("technical_scenario", mins=8.0, pos=1, signals=("opt",)),
-          _q("technical_scenario", mins=8.0, pos=2, signals=("must",))]
-    # "opt" is not a required_primary -> Pass 1 drops it before any "must" question.
+          _q("technical_scenario", mins=8.0, pos=2, signals=("must2",))]
     out = hard_repair(qs, stage_type="ai_screening", stage_duration_minutes=20,
-                      required_primaries={"must"})
+                      required_primaries={"must", "must2"})
     assert all(q.primary_signal != "opt" for q in out)
 
 
 def test_hard_repair_drops_redundant_required_primary_in_pass2():
-    # No non-required-primary questions remain; Pass 1 finds nothing.
-    # Pass 2 drops the redundant second cover of "must".
+    # Two technical_scenario questions share primary_signal "must".
+    # _dedupe_scenario_primaries (runs before trim) collapses them to one, so the bank
+    # arrives at _trim_to_budget already within budget — this test now exercises the
+    # DEDUPER path, not trim Pass-2.  The outcome is the same (one survivor), but the
+    # path is deduplication, not the redundant-required-primary pass in _trim_to_budget.
     qs = [_q("technical_scenario", mins=8.0, pos=0, signals=("must",)),
           _q("technical_scenario", mins=8.0, pos=1, signals=("must",))]
     out = hard_repair(qs, stage_type="ai_screening", stage_duration_minutes=12,
                       required_primaries={"must"})
     assert len(out) == 1
     assert out[0].primary_signal == "must"
+
+
+def test_trim_pass2_drops_redundant_cover_not_preempted_by_deduper():
+    # Exercises _trim_to_budget Pass-2 directly.
+    #
+    # Setup: scenario(A, 8min) + scenario(B, 8min) + deepdive(A, 8min) = 24min > 20min budget.
+    # required_primaries = {"A", "B"}.
+    #
+    # Why the deduper can NOT pre-empt:
+    #   _dedupe_scenario_primaries only collapses two SAME-primary technical_scenario questions.
+    #   Here "A" is covered by a technical_scenario AND a project_deepdive — the deduper never
+    #   touches project_deepdive, so all three questions survive into _trim_to_budget.
+    #
+    # Why Pass-1 finds nothing:
+    #   Pass-1 drops non-mandatory questions whose primary_signal is NOT in required_primaries.
+    #   Every question's primary ("A" or "B") is in required_primaries → Pass-1 skips all of them.
+    #
+    # Why Pass-2 fires:
+    #   Pass-2 drops non-mandatory questions that are NOT the sole cover of their required_primary.
+    #   "A" has two covers (scenario + deepdive) → either is droppable.  "B" has one cover →
+    #   protected.  Pass-2 (reversed scan, end-first) finds the deepdive(A) at the last position
+    #   and drops it, leaving scenario(A) + scenario(B) = 16min ≤ 20min.
+    qs = [_q("technical_scenario", mins=8.0, pos=0, signals=("A",)),
+          _q("technical_scenario", mins=8.0, pos=1, signals=("B",)),
+          _q("project_deepdive",   mins=8.0, pos=2, signals=("A",))]
+    out = hard_repair(qs, stage_type="ai_screening", stage_duration_minutes=20,
+                      required_primaries={"A", "B"})
+    assert sum(float(q.estimated_minutes) for q in out) <= 20  # fits budget
+    assert any(q.primary_signal == "A" for q in out)           # "A" cover survived
+    assert any(q.primary_signal == "B" for q in out)           # sole "B" cover protected
+    assert len(out) == 2                                        # exactly one question dropped
 
 
 # ---------------------------------------------------------------------------
@@ -223,3 +258,68 @@ def test_hard_repair_does_not_force_protect_deepdive_when_not_required():
     out = hard_repair(qs, stage_type="ai_screening", stage_duration_minutes=20,
                       required_primaries={"A"}, require_deepdive=False)
     assert sum(float(q.estimated_minutes) for q in out) <= 20  # still fits; no crash
+
+
+# ---------------------------------------------------------------------------
+# Distinctness invariants: duplicate scenario primaries + deep-dive overflow
+# ---------------------------------------------------------------------------
+
+def test_duplicate_scenario_primary_flagged():
+    qs = [_q("technical_scenario", signals=("API integration",), pos=0),
+          _q("technical_scenario", signals=("API integration",), pos=1)]
+    vs = check_bank_invariants(qs, stage_type="ai_screening",
+                               stage_duration_minutes=20, plan=None)
+    assert any(v.code == "duplicate_scenario_primary" and v.hard_repairable for v in vs)
+
+
+def test_distinct_scenario_primaries_no_violation():
+    qs = [_q("technical_scenario", signals=("API integration",), pos=0),
+          _q("technical_scenario", signals=("DB modeling",), pos=1)]
+    vs = check_bank_invariants(qs, stage_type="ai_screening",
+                               stage_duration_minutes=20, plan=None)
+    assert not any(v.code == "duplicate_scenario_primary" for v in vs)
+
+
+def test_hard_repair_dedupes_duplicate_scenarios():
+    qs = [_q("technical_scenario", signals=("API integration",), pos=0),
+          _q("technical_scenario", signals=("API integration",), pos=1),
+          _q("technical_scenario", signals=("DB modeling",), pos=2)]
+    repaired = hard_repair(qs, stage_type="ai_screening", stage_duration_minutes=20)
+    prims = [q.primary_signal for q in repaired if q.question_kind == "technical_scenario"]
+    assert prims.count("API integration") == 1
+    assert "DB modeling" in prims
+    assert [q.position for q in repaired] == list(range(len(repaired)))  # repacked 0..N-1
+
+
+def test_deepdive_must_cover_uncovered_overflow():
+    qs = [_q("technical_scenario", signals=("integration",), pos=0),
+          _q("project_deepdive", signals=("integration",), pos=1)]
+    plan = CoveragePlan(slot_budget=1, must_cover_count=3,
+                        required_primaries=["integration"],
+                        secondary_only=["language", "database"])
+    vs = check_bank_invariants(qs, stage_type="ai_screening",
+                               stage_duration_minutes=20, plan=plan)
+    cov = [v for v in vs if v.code == "deepdive_primary_uncovered_overflow"]
+    assert cov and cov[0].hard_repairable is False
+    assert "language" in cov[0].description or "database" in cov[0].description
+
+
+def test_deepdive_covering_overflow_no_violation():
+    qs = [_q("technical_scenario", signals=("integration",), pos=0),
+          _q("project_deepdive", signals=("language",), pos=1)]
+    plan = CoveragePlan(slot_budget=1, must_cover_count=3,
+                        required_primaries=["integration"],
+                        secondary_only=["language", "database"])
+    vs = check_bank_invariants(qs, stage_type="ai_screening",
+                               stage_duration_minutes=20, plan=plan)
+    assert not any(v.code == "deepdive_primary_uncovered_overflow" for v in vs)
+
+
+def test_no_overflow_deepdive_unconstrained():
+    qs = [_q("technical_scenario", signals=("integration",), pos=0),
+          _q("project_deepdive", signals=("integration",), pos=1)]
+    plan = CoveragePlan(slot_budget=6, must_cover_count=1,
+                        required_primaries=["integration"])  # secondary_only defaults to []
+    vs = check_bank_invariants(qs, stage_type="ai_screening",
+                               stage_duration_minutes=20, plan=plan)
+    assert not any(v.code == "deepdive_primary_uncovered_overflow" for v in vs)

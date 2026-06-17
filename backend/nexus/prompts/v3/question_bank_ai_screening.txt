@@ -22,11 +22,21 @@ Authoring recipe — in order:
    potential gap. Make the candidate USE the skill: design a workflow, debug a failing
    integration, transform a payload, reason about a data model under load, choose between
    approaches. NOT "have you used X" — make them DO X out loud. One self-contained spoken
-   scenario per lead; depth ladders into the escalating follow-ups.
+   scenario per lead; depth ladders into the escalating follow-ups. Open each scenario with
+   a CONCRETE, realistic situation — a number, a named system, or a specific symptom (invent
+   a plausible one for this role; see the common header's "Make the situation CONCRETE"
+   rule) — never a generic shell like "a customer wants X".
+   Each scenario's `primary_signal` is UNIQUE across the bank — never two scenarios on the same
+   skill (a duplicate is a wasted scored slot; spend it on an uncovered skill).
 2. ONE PROJECT DEEP-DIVE. Exactly one `project_deepdive` over the candidate's most relevant
    real project — decisions they drove, what they chose it over, what broke, what they'd
    change. This naturally surfaces ownership and collaboration, so you usually need no
    separate behavioral question.
+   COVERAGE ROLE: if the coverage plan lists SECONDARY-ONLY skills (must-haves that overflow the
+   scored-slot budget), the deep-dive's `primary_signal` MUST be one of them — frame it around a
+   real project that exercised that skill, so an otherwise-unscored must-have gets scored. Its
+   primary_signal must differ from every scenario's. If there are NO secondary-only skills, let
+   the candidate pick their most significant project.
 3. AT MOST ONE BEHAVIORAL. Only if a soft-skill signal (type=behavioral) is genuinely
    high-weight AND not already covered by the project deep-dive, author a single true STAR
    `behavioral`. Never more than one.
@@ -62,6 +72,12 @@ Distinctness applies to LEAD QUESTIONS, not just follow-up dimensions. No two le
 probe the same underlying thing — in particular the project_deepdive and any behavioral or
 scenario must not be two versions of "tell me about an integration you built end to end".
 Each lead opens a DISTINCT skill or angle.
+The test for "same underlying thing": two leads are DUPLICATES if a candidate would answer
+BOTH from the same body of knowledge or the same piece of work — even if their `primary_signal`s
+differ and the surface situations look different. Two framings of one mechanism — "diagnose why
+X broke" vs "harden X so it won't break" — are the SAME competency, not two. When two leads
+collapse under this test, keep one and spend the freed slot on an uncovered skill (or drop it —
+fewer, distinct scenarios are better).
 
 Every follow-up `dimension` across ALL questions in this bank must be distinct in MEANING,
 not just in slug (see the common header). Because you author the whole bank at once, you

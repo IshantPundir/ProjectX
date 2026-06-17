@@ -34,12 +34,38 @@ The lead `text` is read VERBATIM. It must clear three bars:
    wastes the candidate's first turn on a clarification instead of an answer. Commit to a
    concrete situation in the lead; let the follow-ups vary the angle.
 
-3. Sayable. About 200 characters, one or two short sentences a person says in one breath
-   (hard cap 240). Spell numbers in words ("five years", not "5 yrs") — TTS speaks it.
-   Conversational register: how a sharp human screener actually phrases it out loud.
-   Warm and conversational, never an interrogation — a casual register surfaces
-   inconsistencies better than a grilling, and the "what did YOU personally do" probe
-   (which matters more where 'we'-framing is cultural) must still sound friendly.
+3. Sayable, in up to TWO short sentences — one sets a CONCRETE situation, then one asks
+   the SINGLE question (see "Make the situation CONCRETE" below). Target ~250 characters,
+   hard cap 320: two sentences a person can say and a listener can hold on first hearing.
+   Spell numbers in words ("three thousand", not "3,000") — TTS speaks it. Conversational
+   register: how a sharp human screener actually phrases it out loud. Warm and
+   conversational, never an interrogation — a casual register surfaces inconsistencies
+   better than a grilling, and the "what did YOU personally do" probe (which matters more
+   where 'we'-framing is cultural) must still sound friendly.
+
+# Make the situation CONCRETE — specifics, not a generic shell
+
+A scenario screens for real skill only when it drops the candidate into a SPECIFIC,
+realistic situation. Every scenario lead must carry at least one concrete anchor: a number
+(a fleet size, a volume, a latency, a count), a named system or tool the role uses, a
+specific SYMPTOM ("intermittent failures although the logs show success"), or a real
+tension/stake ("releases are slipping"). Generic shells with no specifics — "a customer
+wants X", "a company wants X", "in an integration, how would you…" — are a REJECT: they
+read as a textbook prompt, and a candidate with only book knowledge answers them as well
+as a real practitioner.
+
+You MAY invent these specifics. The JD rarely states a fleet size or a failure symptom, so
+author a plausible, realistic one for this role — that invention is exactly what makes the
+question vivid and hard to fake. The one hard rule: invent the SITUATION, never the
+CRITERION. The skill being tested and scored is the pinned `primary_signal`; any invented
+tool or system must be one this role would plausibly use, and the rubric must grade the
+real skill — never whether the candidate recognises your made-up scenario.
+
+Prefer situations only someone who has DONE the work can navigate: a concrete failure to
+diagnose (symptom → hypothesis → what they would verify), a real tradeoff the situation
+forces, or a decision they had to own. Down-weight abstract "how would you design X from
+scratch" leads — those reward fluent theory. Knowing the rules of a thing is not the same
+as having done it; write the question only a doer can answer well.
 
 # Signals (the role's criteria — bind every question to them)
 
@@ -132,8 +158,9 @@ four fields:
   - `dimension` — a short, stable lower_snake_case slug naming the angle (e.g.
     `rollback_strategy`, `scale_numbers`). This is the machine key the engine dedups on.
   - `intent` — one phrase on WHAT this probe verifies and why it matters (not what to ask).
-  - `seed_probe` — a single-ask spoken question the interviewer says aloud, under the same
-    spoken constraints as `text` (one ask, ≤240 chars, conversational).
+  - `seed_probe` — a single-ask spoken question the interviewer says aloud: ONE tight ask,
+    ≤240 chars, conversational (the lead's two-sentence allowance does NOT extend to
+    probes — a probe is one clean question).
   - `listen_for` — 1–4 CONCRETE observables a strong answer to THIS dimension names: real
     tool names, steps, tradeoffs, numbers, decision criteria. Never vague qualities like
     "clear explanation" or "good depth". This field must be NON-EMPTY.

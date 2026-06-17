@@ -4,8 +4,7 @@ CORRECTED bank -- same question shape -- plus a short `critique` log of what you
 
 You are not re-authoring from scratch. Keep every question that is already strong. Fix
 only what fails the checklist. Preserve `signal_values` discipline: every value must
-still match the pinned snapshot VERBATIM; never invent a signal. Keep each lead a single
-spoken ask (<=240 chars), and never let evaluator-only phrasing leak into spoken fields.
+still match the pinned snapshot VERBATIM; never invent a signal. Keep each lead a self-contained spoken ask (up to two sentences, <=320 chars), and never let evaluator-only phrasing leak into spoken fields.
 
 # The pinned context
 
@@ -25,15 +24,32 @@ red_flags, kind, difficulty).
 3. PROJECT DEEP-DIVE. Exactly one, with an escalating ladder (decision -> alternative -> what
    broke -> what they'd change). Add or repair it.
 4. LEAD-LEVEL DISTINCTNESS. No two LEAD questions probe the same underlying thing (not just
-   follow-up dimensions). Merge or replace near-duplicate leads (e.g. a behavioral and the
-   project_deepdive both about "an integration you built end to end").
+   follow-up dimensions). The test: two leads are duplicates if a candidate would answer BOTH
+   from the same knowledge or the same piece of work -- even if their primary_signals differ
+   and the situations look different (e.g. "diagnose why X broke" vs "harden X so it won't
+   break" are the same competency). Merge or replace near-duplicate leads (including a
+   behavioral and the project_deepdive both about "an integration you built end to end") and
+   spend the freed slot on an uncovered skill.
 5. ESCALATION + SPECIFICS -- every seed_probe demands a falsifiable specific; >=1 orthogonal rung.
 6. ANCHOR SHARPNESS -- every rubric band names observable spoken behavior.
 7. BLUFFER TRIPWIRES -- red_flags are content tells, not delivery cues.
 8. FITS BUDGET -- the sum of estimated_minutes must not exceed the stage duration. If it does,
    DROP the lowest-priority question(s) (lowest-weight skill, or a behavioral over a scenario)
    until it fits. Fewer, deeper questions are correct.
-9. SPOKEN HYGIENE -- each lead is ONE self-contained spoken ask, <=240 chars.
+9. SPOKEN HYGIENE -- each lead is a self-contained spoken ask: up to two sentences (a
+   concrete situation + one ask), <=320 chars; one ask only.
+10. CONCRETE SITUATION -- every scenario lead carries a concrete specific (a number, a
+    named system/tool, a symptom, or a real tension). Rewrite generic shells ("a customer
+    wants X", "a company wants X", "in an integration, how would you...") into a specific,
+    realistic situation. You MAY invent plausible specifics; the scored skill stays the
+    primary_signal and the rubric grades the real skill, not the invented scenario.
+11. DISTINCT SCENARIO PRIMARIES -- no two technical_scenario questions share a primary_signal.
+    Rewrite a duplicate scenario onto an uncovered skill (prefer a secondary-only skill from the
+    plan), or drop it.
+12. DEEP-DIVE COVERS OVERFLOW -- when the plan lists secondary-only skills not covered by any
+    scenario, the single project_deepdive's primary_signal must be ONE of them (so the
+    otherwise-unscored must-have is scored), and must differ from every scenario's primary. When
+    there are none, the deep-dive may be the candidate's own most significant project.
 
 # Output
 

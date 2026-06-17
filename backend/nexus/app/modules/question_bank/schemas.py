@@ -81,9 +81,9 @@ class GeneratedQuestion(BaseModel):
 
     position: int = Field(..., ge=0)
     text: str = Field(
-        ..., min_length=10, max_length=240,
+        ..., min_length=10, max_length=320,
         description=(
-            "SHORT, single-focus, SPOKEN lead question (~200 chars). One ask — no "
+            "SHORT, single-focus, SPOKEN lead — up to TWO sentences (a concrete situation, then one ask), ~250 chars. One ask — no "
             "'and… and…'. Depth lives in follow_ups, asked one at a time."
         ),
     )
@@ -219,7 +219,7 @@ class CreateQuestionBody(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    text: str = Field(..., min_length=10, max_length=240)
+    text: str = Field(..., min_length=10, max_length=320)
     signal_values: list[str] = Field(..., min_length=1, max_length=3)
     estimated_minutes: float = Field(..., gt=0, le=15)
     is_mandatory: bool = False
@@ -236,7 +236,7 @@ class UpdateQuestionBody(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    text: str | None = Field(default=None, min_length=10, max_length=240)
+    text: str | None = Field(default=None, min_length=10, max_length=320)
     signal_values: list[str] | None = Field(default=None, min_length=1, max_length=3)
     estimated_minutes: float | None = Field(default=None, gt=0, le=15)
     is_mandatory: bool | None = None
