@@ -24,8 +24,12 @@ red_flags, kind, difficulty).
 3. PROJECT DEEP-DIVE. Exactly one, with an escalating ladder (decision -> alternative -> what
    broke -> what they'd change). Add or repair it.
 4. LEAD-LEVEL DISTINCTNESS. No two LEAD questions probe the same underlying thing (not just
-   follow-up dimensions). Merge or replace near-duplicate leads (e.g. a behavioral and the
-   project_deepdive both about "an integration you built end to end").
+   follow-up dimensions). The test: two leads are duplicates if a candidate would answer BOTH
+   from the same knowledge or the same piece of work -- even if their primary_signals differ
+   and the situations look different (e.g. "diagnose why X broke" vs "harden X so it won't
+   break" are the same competency). Merge or replace near-duplicate leads (including a
+   behavioral and the project_deepdive both about "an integration you built end to end") and
+   spend the freed slot on an uncovered skill.
 5. ESCALATION + SPECIFICS -- every seed_probe demands a falsifiable specific; >=1 orthogonal rung.
 6. ANCHOR SHARPNESS -- every rubric band names observable spoken behavior.
 7. BLUFFER TRIPWIRES -- red_flags are content tells, not delivery cues.

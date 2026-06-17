@@ -65,6 +65,12 @@ Distinctness applies to LEAD QUESTIONS, not just follow-up dimensions. No two le
 probe the same underlying thing — in particular the project_deepdive and any behavioral or
 scenario must not be two versions of "tell me about an integration you built end to end".
 Each lead opens a DISTINCT skill or angle.
+The test for "same underlying thing": two leads are DUPLICATES if a candidate would answer
+BOTH from the same body of knowledge or the same piece of work — even if their `primary_signal`s
+differ and the surface situations look different. Two framings of one mechanism — "diagnose why
+X broke" vs "harden X so it won't break" — are the SAME competency, not two. When two leads
+collapse under this test, keep one and spend the freed slot on an uncovered skill (or drop it —
+fewer, distinct scenarios are better).
 
 Every follow-up `dimension` across ALL questions in this bank must be distinct in MEANING,
 not just in slug (see the common header). Because you author the whole bank at once, you

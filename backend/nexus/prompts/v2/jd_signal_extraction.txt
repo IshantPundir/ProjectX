@@ -60,6 +60,27 @@ to add specifics.
 Do NOT over-combine genuinely distinct competencies; do NOT fragment one competency into
 many near-duplicates.
 
+# Merge same-competency requirements — even across separate JD lines
+
+CONSOLIDATE (above) groups sub-skills the JD lists together. This rule is stronger: it merges
+requirements that are the SAME competency even when the JD states them as SEPARATE lines or
+separate must-haves and words them differently.
+
+The test: two requirements are the SAME competency — emit ONE signal whose value NAMES each —
+if a candidate would demonstrate both with the SAME knowledge or the SAME piece of work.
+Different wording, or appearing as two different JD bullets, does NOT make them distinct.
+  - e.g. two lines that name one mechanism from different angles — "monitor X" and "enforce X"
+    — are one competency; merge to a single signal that names both, even if both are must-haves.
+Keep two requirements SEPARATE only when a candidate would need genuinely different knowledge
+or different work to show each (do not over-merge truly distinct skills).
+
+A pure UMBRELLA / category term — one that is just the sum of the specific skills already
+present, a broad domain label with no distinct skill of its own — is NOT its own signal. Fold
+it into the specific skills it umbrellas; never emit it as a separate catch-all.
+
+This reconciles with PRESERVE EVERY MUST-HAVE (below): a merged signal NAMES each must-have it
+covers and carries weight 3, so no must-have is lost — the signal set is simply de-duplicated.
+
 # Phrasing — name the competency, don't copy the sentence
 
 A signal's value is a crisp LABEL for the skill or requirement being assessed — a noun
