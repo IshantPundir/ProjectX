@@ -284,8 +284,9 @@ the gen-3 engine actually reads:
 | `engine_brain_prompt_version` / `engine_mouth_prompt_version` | Which `prompts/vN/engine/` tree to read (`v4`). |
 | `engine_brain_prompt_cache_key` / `engine_mouth_prompt_cache_key` | OpenAI prompt-cache keys. |
 | `engine_bridge_timeout_s` | Hard cap on the bridge call → canned `"Mm, okay…"` fallback. |
-| `engine_endpointing_mode` / `engine_endpointing_min_delay_s` / `engine_endpointing_max_delay_s` | Dynamic endpointing — how long the turn detector holds open for think-pauses. |
-| `engine_turn_detector_unlikely_threshold` | The turn detector's `unlikely_threshold` (default `None` = model default). |
+| `engine_endpointing_mode` / `engine_endpointing_min_delay_s` (1.8s) / `engine_endpointing_max_delay_s` (7.0s) | Dynamic endpointing — how long the turn detector holds open for think-pauses. `max_delay` is the patience ceiling applied when the detector reads the turn as unfinished; `min_delay` is the floor on confident-complete turns. |
+| `engine_vad_min_silence_s` (0.8s) | Silero VAD end-of-speech silence window (default 0.55) — the foundational gate beneath endpointing. Raise to ignore brief disfluent pauses. |
+| `engine_turn_detector_unlikely_threshold` | The turn detector's `unlikely_threshold` (default `None` = model default; a LOW value DISABLES patience). |
 | `engine_stall_reposes_before_advance` | Consecutive non-answer turns before the brain gets a `⚠️ STALLED` hint. |
 | `engine_heartbeat_interval_seconds` | Liveness pulse cadence for the reaper. |
 | `engine_agent_name` | The LiveKit fleet routing label / mouth persona fallback. |

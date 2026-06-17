@@ -313,8 +313,18 @@ def build_interruption_options() -> dict[str, object]:
 
 
 def build_vad() -> object:
-    """Construct the Silero VAD. Blocking ONNX model load — call from prewarm()."""
+    """Construct the Silero VAD. Blocking ONNX model load — call from prewarm().
+
+    `min_silence_duration` (`AIConfig.engine_vad_min_silence_s`, default 0.8s vs
+    Silero's own 0.55s) is the end-of-speech silence window: speech is declared
+    "ended" only after this much continuous silence, which is what triggers the
+    turn detector + endpointing. Raising it makes the agent more patient with the
+    brief disfluent pauses common in non-native / thinking speech — a short
+    mid-sentence pause no longer counts as "stopped speaking". This is the
+    foundational gate beneath endpointing min/max_delay (config.py turn-handling).
+    """
     from livekit.plugins import silero
 
-    logger.info("ai.realtime.vad.built", provider="silero")
-    return silero.VAD.load()
+    min_silence = ai_config.engine_vad_min_silence_s
+    logger.info("ai.realtime.vad.built", provider="silero", min_silence_duration=min_silence)
+    return silero.VAD.load(min_silence_duration=min_silence)

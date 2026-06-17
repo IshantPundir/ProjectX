@@ -703,13 +703,25 @@ class Settings(BaseSettings):
     # true-negative i.e. "will continue" accuracy 87–96%). Override only with data.
     engine_turn_detector_unlikely_threshold: float | None = None
     engine_endpointing_mode: Literal["fixed", "dynamic"] = "dynamic"   # "dynamic" | "fixed"
-    # min_delay raised 0.8 → 1.5: a ~1s think-pause no longer commits as a turn.
-    # In VAD mode this behaves as max(VAD silence, min_delay).
-    engine_endpointing_min_delay_s: float = 1.5     # lower bound after end-of-speech
-    # max_delay 6.0 → 4.0: caps worst-case wait on a turn the detector reads as
-    # unfinished (with the detector restored, complete answers commit near min_delay,
-    # so the ceiling only buys patience for genuine mid-answer pauses).
-    engine_endpointing_max_delay_s: float = 4.0     # upper bound (unfinished turns only)
+    # min_delay 1.5 → 1.8 (2026-06-17 patience pass): a modest floor bump. The
+    # turn-detector model already buys patience for think-pauses by jumping to
+    # max_delay when it reads the turn as unfinished, so min_delay only governs
+    # turns the model is CONFIDENT are complete — raising it taxes every clean turn
+    # for latency, so it's kept tight; the small bump is a hedge against the
+    # model's confident-but-wrong "done" calls (en-IN STT → English path, ~87%
+    # true-negative). In VAD mode this behaves as max(VAD silence, min_delay).
+    engine_endpointing_min_delay_s: float = 1.8     # lower bound after end-of-speech
+    # max_delay 4.0 → 7.0 (2026-06-17 patience pass): THE patience lever. This is
+    # the wait the detector applies ONLY when it reads the turn as unfinished (a
+    # genuine mid-thought pause — Indian candidates who pause to think). It does
+    # NOT slow clean turns: a confident-complete answer commits near min_delay.
+    # In dynamic mode this is the upper bound the EMA adapts within.
+    engine_endpointing_max_delay_s: float = 7.0     # upper bound (unfinished turns only)
+    # Silero VAD end-of-speech silence window (default 0.55s). Raised to 0.8s so a
+    # brief disfluent pause never even registers as end-of-speech — the
+    # foundational gate that decides when the turn detector runs. Passed to
+    # silero.VAD.load(min_silence_duration=...) in app/ai/realtime.build_vad.
+    engine_vad_min_silence_s: float = 0.8
     engine_probe_cap_per_thread: int = 2
     """Max probes fired on one question thread before the engine force-advances (deterministic
     anti-grind). 1-2 probes/question typical; the brain may advance earlier on primary_signal."""
@@ -720,7 +732,10 @@ class Settings(BaseSettings):
     # flushes one merged turn, using VAD user_state_changed as the "resumed"
     # signal so it adds near-zero latency on clean turns.
     engine_assembly_enabled: bool = True          # kill switch (pass-through when False)
-    engine_assembly_grace_s: float = 0.5          # wait after a fragment (no VAD resume) before flushing
+    # grace_s 0.5 → 0.7 (2026-06-17 patience pass): a continuation landing just
+    # after a fragment commits gets merged in rather than the brain reacting to a
+    # partial answer. Stacks on every turn, so kept modest.
+    engine_assembly_grace_s: float = 0.7          # wait after a fragment (no VAD resume) before flushing
     engine_assembly_max_duration_s: float = 45.0  # safety force-flush ceiling for one assembled turn
 
     # Per-call cap on the Mouth BRIDGE LLM (the immediate gist/lead-in beat). On

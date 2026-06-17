@@ -36,6 +36,18 @@ class TestBuildVad:
         load.assert_called_once()
         assert "livekit.plugins.silero" in sys.modules
 
+    def test_passes_configured_min_silence_duration(self) -> None:
+        """build_vad raises Silero's end-of-speech silence window to the configured
+        engine_vad_min_silence_s (patience for think-pauses) instead of the 0.55s
+        default — the foundational gate that decides when the turn detector runs."""
+        with (
+            patch("livekit.plugins.silero.VAD.load", return_value=MagicMock()) as load,
+            patch("app.ai.realtime.ai_config") as mock_config,
+        ):
+            mock_config.engine_vad_min_silence_s = 0.8
+            build_vad()
+        load.assert_called_once_with(min_silence_duration=0.8)
+
 
 class TestBuildSttPlugin:
     def test_sarvam_provider_loads_sarvam_plugin(self, monkeypatch) -> None:

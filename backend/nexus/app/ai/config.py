@@ -234,6 +234,11 @@ class AIConfig:
         return self._settings.engine_endpointing_max_delay_s
 
     @property
+    def engine_vad_min_silence_s(self) -> float:
+        """Silero VAD end-of-speech silence window (see build_vad)."""
+        return self._settings.engine_vad_min_silence_s
+
+    @property
     def engine_probe_cap_per_thread(self) -> int:
         return self._settings.engine_probe_cap_per_thread
 

@@ -93,12 +93,17 @@ def test_settings_default_to_deepgram_stt_sarvam_tts():
 
 
 def test_turn_assembly_settings_defaults():
-    """Turn-assembly knobs exist with the design-spec defaults."""
+    """Turn-assembly knobs exist with the design-spec defaults.
+
+    grace_s raised 0.5 → 0.7 (2026-06-17 patience pass) so a continuation that
+    lands just after a fragment commits merges in rather than the brain reacting
+    to a partial answer.
+    """
     from app.config import Settings
 
     fields = Settings.model_fields
     assert fields["engine_assembly_enabled"].default is True
-    assert fields["engine_assembly_grace_s"].default == 0.5
+    assert fields["engine_assembly_grace_s"].default == 0.7
     assert fields["engine_assembly_max_duration_s"].default == 45.0
 
 
@@ -106,6 +111,38 @@ def test_aiconfig_exposes_turn_assembly(monkeypatch):
     from app.ai.config import ai_config
 
     assert ai_config.engine_assembly_enabled is True
-    assert ai_config.engine_assembly_grace_s == 0.5
+    assert ai_config.engine_assembly_grace_s == 0.7
     assert ai_config.engine_assembly_max_duration_s == 45.0
+
+
+def test_endpointing_patience_defaults():
+    """Endpointing + VAD-silence defaults reflect the 2026-06-17 patience pass.
+
+    For Indian candidates who pause to think mid-answer:
+      * min_delay 1.5 → 1.8 — modest floor bump (the turn-detector model handles
+        think-pauses via max_delay, so min_delay only taxes confident-complete
+        turns; kept tight on purpose).
+      * max_delay 4.0 → 7.0 — THE patience lever: the wait when the detector reads
+        the turn as unfinished (a mid-thought pause).
+      * vad_min_silence 0.8 — Silero declares end-of-speech only after 0.8s of
+        silence (default 0.55), so brief disfluent pauses never trigger turn close.
+    Mode stays "dynamic"; unlikely_threshold stays None (model per-language default).
+    """
+    from app.config import Settings
+
+    fields = Settings.model_fields
+    assert fields["engine_endpointing_mode"].default == "dynamic"
+    assert fields["engine_endpointing_min_delay_s"].default == 1.8
+    assert fields["engine_endpointing_max_delay_s"].default == 7.0
+    assert fields["engine_turn_detector_unlikely_threshold"].default is None
+    assert fields["engine_vad_min_silence_s"].default == 0.8
+
+
+def test_aiconfig_exposes_endpointing_and_vad(monkeypatch):
+    from app.ai.config import ai_config
+
+    assert ai_config.engine_endpointing_mode == "dynamic"
+    assert ai_config.engine_endpointing_min_delay_s == 1.8
+    assert ai_config.engine_endpointing_max_delay_s == 7.0
+    assert ai_config.engine_vad_min_silence_s == 0.8
 
