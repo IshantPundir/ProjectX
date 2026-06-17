@@ -22,7 +22,10 @@ Authoring recipe — in order:
    potential gap. Make the candidate USE the skill: design a workflow, debug a failing
    integration, transform a payload, reason about a data model under load, choose between
    approaches. NOT "have you used X" — make them DO X out loud. One self-contained spoken
-   scenario per lead; depth ladders into the escalating follow-ups.
+   scenario per lead; depth ladders into the escalating follow-ups. Open each scenario with
+   a CONCRETE, realistic situation — a number, a named system, or a specific symptom (invent
+   a plausible one for this role; see the common header's "Make the situation CONCRETE"
+   rule) — never a generic shell like "a customer wants X".
 2. ONE PROJECT DEEP-DIVE. Exactly one `project_deepdive` over the candidate's most relevant
    real project — decisions they drove, what they chose it over, what broke, what they'd
    change. This naturally surfaces ownership and collaboration, so you usually need no

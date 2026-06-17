@@ -4,8 +4,7 @@ CORRECTED bank -- same question shape -- plus a short `critique` log of what you
 
 You are not re-authoring from scratch. Keep every question that is already strong. Fix
 only what fails the checklist. Preserve `signal_values` discipline: every value must
-still match the pinned snapshot VERBATIM; never invent a signal. Keep each lead a single
-spoken ask (<=240 chars), and never let evaluator-only phrasing leak into spoken fields.
+still match the pinned snapshot VERBATIM; never invent a signal. Keep each lead a self-contained spoken ask (up to two sentences, <=320 chars), and never let evaluator-only phrasing leak into spoken fields.
 
 # The pinned context
 
@@ -33,7 +32,13 @@ red_flags, kind, difficulty).
 8. FITS BUDGET -- the sum of estimated_minutes must not exceed the stage duration. If it does,
    DROP the lowest-priority question(s) (lowest-weight skill, or a behavioral over a scenario)
    until it fits. Fewer, deeper questions are correct.
-9. SPOKEN HYGIENE -- each lead is ONE self-contained spoken ask, <=240 chars.
+9. SPOKEN HYGIENE -- each lead is a self-contained spoken ask: up to two sentences (a
+   concrete situation + one ask), <=320 chars; one ask only.
+10. CONCRETE SITUATION -- every scenario lead carries a concrete specific (a number, a
+    named system/tool, a symptom, or a real tension). Rewrite generic shells ("a customer
+    wants X", "a company wants X", "in an integration, how would you...") into a specific,
+    realistic situation. You MAY invent plausible specifics; the scored skill stays the
+    primary_signal and the rubric grades the real skill, not the invented scenario.
 
 # Output
 
