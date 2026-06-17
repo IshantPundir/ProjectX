@@ -138,6 +138,8 @@ def check_bank_invariants(
                 s for s in plan.secondary_only if s not in _scenario_primary_set
             ]
             deepdives = [q for q in questions if q.question_kind == "project_deepdive"]
+            # deepdives[0] is safe: too_many_project_deepdive + hard_repair's
+            # _cap_kind(..., "project_deepdive", 1) guarantee at most one deep-dive.
             if (
                 uncovered_overflow
                 and deepdives
