@@ -778,13 +778,16 @@ async def re_extract_signals(
     db: AsyncSession = Depends(get_tenant_db),
     user: UserContext = Depends(get_current_user_roles),
 ) -> dict[str, str]:
-    """Unlock a confirmed/active job and RE-RUN signal extraction.
+    """Unlock a confirmed/active job and RE-ENRICH + RE-RUN signal extraction.
 
-    Clears the job's question banks (generated from the prior snapshot, now invalid),
-    regresses the job to ``signals_extracting``, and dispatches the extraction actor
-    (``skip_enrichment=True``) which inserts a NEW snapshot version. The recruiter
-    reviews the fresh signals, re-confirms, and regenerates the banks. Distinct from
-    the draft-only ``/extract-signals``. Same 422 guards (empty raw JD, missing profile).
+    Re-enriches the job from the raw JD (jd_enrichment prompt, Phase 1) and then
+    re-extracts signals on the fresh enriched JD (Phase 2). Clears the job's question
+    banks (generated from the prior snapshot, now invalid), resets the enrichment
+    idempotency guard so Phase 1 re-runs, regresses the job to ``signals_extracting``,
+    and dispatches the two-phase extraction actor (``skip_enrichment=False``). The
+    recruiter reviews the fresh signals, re-confirms, and regenerates the banks.
+    Distinct from the draft-only ``/extract-signals``. Same 422 guards (empty raw JD,
+    missing profile).
     """
     job = await require_job_access(db, job_id, user, "manage")
     if job.status not in _REEXTRACT_SOURCE_STATES:
@@ -808,6 +811,10 @@ async def re_extract_signals(
 
     # Clear the now-invalid banks + regress to signal review, in this transaction.
     await reset_banks_for_job(db, job_id=job.id)
+    # Reset the enrichment idempotency guard so Phase 1 re-runs from the RAW JD
+    # (otherwise _run_enrichment short-circuits on enrichment_status=='completed').
+    job.enrichment_status = "idle"
+    job.enrichment_error = None
     await transition(
         db, job,
         to_state="signals_extracting",
@@ -816,12 +823,14 @@ async def re_extract_signals(
     )
     await db.flush()
 
+    # skip_enrichment=False → the two-phase actor re-enriches from the raw JD
+    # (jd_enrichment prompt) THEN re-extracts signals on the fresh enriched JD.
     background_tasks.add_task(
         _safe_dispatch_extraction,
         job_posting_id=str(job.id),
         tenant_id=str(job.tenant_id),
         correlation_id=correlation_id,
-        skip_enrichment=True,
+        skip_enrichment=False,
     )
 
     status_event = await get_job_status(db, job_id)
