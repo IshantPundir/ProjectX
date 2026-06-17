@@ -29,7 +29,17 @@ export async function createFaceLandmarker(): Promise<FaceLandmarker> {
   return FaceLandmarker.createFromOptions(fileset, {
     baseOptions: {
       modelAssetPath: '/mediapipe/face_landmarker.task',
-      delegate: 'GPU',
+      // CPU (XNNPACK) — NOT GPU. Candidates join from arbitrary, unknown
+      // hardware; many laptops have no hardware GPU and Chromium falls back to a
+      // software WebGL backend. The graph still *initialises* there ("Graph
+      // successfully started running") but per-frame GPU inference stalls/fails,
+      // which silently killed the whole live detection loop on GPU-less devices
+      // (it worked only on dev machines with a real GPU). The FaceDetector
+      // already runs on CPU for the same reason — match it here. The delegate
+      // affects SPEED, not accuracy, and the blendshapes subgraph already runs
+      // on XNNPACK by default, so CPU is plenty for this coarse, throttled
+      // head-pose deterrent.
+      delegate: 'CPU',
     },
     runningMode: 'VIDEO',
     numFaces: 1, // pose/blink of the primary face only; count comes from FaceDetector
