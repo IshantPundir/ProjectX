@@ -43,6 +43,13 @@ red_flags, kind, difficulty).
     wants X", "a company wants X", "in an integration, how would you...") into a specific,
     realistic situation. You MAY invent plausible specifics; the scored skill stays the
     primary_signal and the rubric grades the real skill, not the invented scenario.
+11. DISTINCT SCENARIO PRIMARIES -- no two technical_scenario questions share a primary_signal.
+    Rewrite a duplicate scenario onto an uncovered skill (prefer a secondary-only skill from the
+    plan), or drop it.
+12. DEEP-DIVE COVERS OVERFLOW -- when the plan lists secondary-only skills not covered by any
+    scenario, the single project_deepdive's primary_signal must be ONE of them (so the
+    otherwise-unscored must-have is scored), and must differ from every scenario's primary. When
+    there are none, the deep-dive may be the candidate's own most significant project.
 
 # Output
 

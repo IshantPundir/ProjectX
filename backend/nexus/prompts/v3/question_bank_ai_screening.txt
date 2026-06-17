@@ -26,10 +26,17 @@ Authoring recipe — in order:
    a CONCRETE, realistic situation — a number, a named system, or a specific symptom (invent
    a plausible one for this role; see the common header's "Make the situation CONCRETE"
    rule) — never a generic shell like "a customer wants X".
+   Each scenario's `primary_signal` is UNIQUE across the bank — never two scenarios on the same
+   skill (a duplicate is a wasted scored slot; spend it on an uncovered skill).
 2. ONE PROJECT DEEP-DIVE. Exactly one `project_deepdive` over the candidate's most relevant
    real project — decisions they drove, what they chose it over, what broke, what they'd
    change. This naturally surfaces ownership and collaboration, so you usually need no
    separate behavioral question.
+   COVERAGE ROLE: if the coverage plan lists SECONDARY-ONLY skills (must-haves that overflow the
+   scored-slot budget), the deep-dive's `primary_signal` MUST be one of them — frame it around a
+   real project that exercised that skill, so an otherwise-unscored must-have gets scored. Its
+   primary_signal must differ from every scenario's. If there are NO secondary-only skills, let
+   the candidate pick their most significant project.
 3. AT MOST ONE BEHAVIORAL. Only if a soft-skill signal (type=behavioral) is genuinely
    high-weight AND not already covered by the project deep-dive, author a single true STAR
    `behavioral`. Never more than one.

@@ -74,6 +74,12 @@ Different wording, or appearing as two different JD bullets, does NOT make them 
 Keep two requirements SEPARATE only when a candidate would need genuinely different knowledge
 or different work to show each (do not over-merge truly distinct skills).
 
+Operational test — ONE scenario, ONE signal: before emitting two signals, ask "could a single
+realistic scenario question test both?" If yes, they are ONE competency — merge them, naming
+each. Managing a control and enforcing it, knowing a format/protocol and building with it, and
+designing and operating the same system each fail this test as two: one scenario tests each
+pair, so each pair is one signal.
+
 A pure UMBRELLA / category term — one that is just the sum of the specific skills already
 present, a broad domain label with no distinct skill of its own — is NOT its own signal. Fold
 it into the specific skills it umbrellas; never emit it as a separate catch-all.
