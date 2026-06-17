@@ -103,7 +103,7 @@ export function TabStrip({
               disabled={reExtracting}
             >
               <I d={REFRESH_ICON} size={11} />
-              {reExtracting ? 'Re-extracting...' : 'Unlock & re-run extraction'}
+              {reExtracting ? 'Re-enriching...' : 'Unlock & re-enrich'}
             </button>
             <button type="button" className="px-btn outline sm" disabled>
               Locked · live

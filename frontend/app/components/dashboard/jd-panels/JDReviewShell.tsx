@@ -229,9 +229,9 @@ export function JDReviewShell({
 
       <DangerConfirmDialog
         open={confirmReExtract}
-        title="Re-run signal extraction?"
-        description="This unlocks these live signals, replaces them with a fresh AI extraction, and clears the question banks generated from them. You'll review the new signals and regenerate the banks. The job resets to signal review."
-        confirmLabel="Unlock & re-run"
+        title="Re-enrich & re-extract?"
+        description="This regenerates the enriched JD from the raw JD, then re-extracts fresh signals from it and clears the question banks generated from the old signals. You'll review the new signals and regenerate the banks. The job resets to signal review."
+        confirmLabel="Unlock & re-enrich"
         onConfirm={() => { setConfirmReExtract(false); reExtract.mutate() }}
         onClose={() => setConfirmReExtract(false)}
       />
