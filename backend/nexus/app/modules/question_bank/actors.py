@@ -80,6 +80,15 @@ _tracer = trace.get_tracer("nexus.ai.openai")
 # primary_signal + difficulty + a new-taxonomy question_kind.
 _bank_prompt_loader = PromptLoader(version=ai_config.question_bank_prompt_version)
 
+# instructor re-ask budget for LLM field-omission on the strict, field-heavy
+# GeneratedQuestion / SingleQuestionOutput schemas. The model (gpt-5.4-mini)
+# nondeterministically drops required evaluator fields (positive_evidence,
+# red_flags, rubric, evaluation_hint, question_kind); instructor feeds the
+# validation error back on each retry, which reliably recovers an omitted field.
+# A budget of 1 made a single bad question fail the whole bank (see
+# docs/.../question-bank — the 2026-06-17 generation-failure investigation).
+_GENERATION_FIELD_RETRIES = 4
+
 
 # ---------------------------------------------------------------------------
 # Prompt assembly helpers
@@ -319,7 +328,7 @@ def _create_question_iterable(**kwargs):
         model=ai_config.question_bank_model,
         response_model=GeneratedQuestion,
         messages=kwargs["messages"],
-        max_retries=1,
+        max_retries=_GENERATION_FIELD_RETRIES,
         metadata=kwargs.get("metadata", {}),
         prompt_cache_key=f"qbank-gen-{kwargs['job_id']}",
     )
@@ -1523,7 +1532,7 @@ async def _regenerate_one_question(
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": "".join(user_parts)},
                 ],
-                max_retries=1,
+                max_retries=_GENERATION_FIELD_RETRIES,
                 metadata={
                     "bank_id": str(bank.id),
                     "stage_id": str(stage.id),
