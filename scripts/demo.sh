@@ -14,7 +14,9 @@
 #     signaling tunnels), backend/nexus/.env (CANDIDATE_SESSION_BASE_URL,
 #     CORS_ORIGINS, LIVEKIT_PUBLIC_URL), frontend/session/.env.local
 #     (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_LIVEKIT_WS_URL), backend docker compose
-#     (incl. bringing up the self-hosted LiveKit plane).
+#     (incl. bringing up the self-hosted LiveKit plane AND every nexus service:
+#     api, worker, engine, pdf-worker, vision-worker — so no queue is left
+#     without a consumer).
 #   - This script does NOT:    start `npm run dev` for any frontend, touch the
 #     recruiter app (frontend/app), or change anything Supabase-related.
 #
@@ -233,6 +235,33 @@ ensure_livekit_plane() {
   (cd "$BACKEND_DIR" && docker compose up -d livekit-redis livekit-server livekit-egress)
 }
 
+ensure_nexus_workers() {
+  # The dedicated queue-consumer workers must be running or their jobs queue in
+  # Redis forever with no consumer (the silent failure mode behind missing
+  # report-share emails + proctoring/reels):
+  #   nexus-pdf-worker    → report_share   (the Share-report-PDF email)
+  #   nexus-vision-worker → vision + reel  (proctoring analysis + candidate reel)
+  # recreate_backend_containers only handles api/worker/engine, so without this
+  # those two queues had no consumer in demo mode. Plain `up -d` is idempotent
+  # (won't drop an in-flight job), matching ensure_livekit_plane. The workers
+  # don't consume the rewritten candidate/livekit/cors env, so they need no
+  # --force-recreate on a lan/local toggle.
+  info "Ensuring the report-share PDF worker is up…"
+  (cd "$BACKEND_DIR" && docker compose up -d nexus-pdf-worker)
+
+  # Vision is a heavy POC: it needs the non-commercial ONNX weights at
+  # ./models/resnet34_gaze.onnx and (ideally) an NVIDIA GPU + nvidia-container-
+  # toolkit. On a host missing either, `up` errors — keep it BEST-EFFORT so it
+  # never aborts the demo (the rest of the stack still works without it).
+  info "Ensuring the vision worker is up (best-effort — needs GPU + ONNX weights)…"
+  if (cd "$BACKEND_DIR" && docker compose up -d nexus-vision-worker); then
+    ok "vision worker up"
+  else
+    info "⚠ vision worker did not start — proctoring + reels will not generate (non-fatal)."
+    info "  Needs ./models/resnet34_gaze.onnx + nvidia-container-toolkit. See backend/nexus/docker-compose.yml."
+  fi
+}
+
 read_env_value() {
   local file="$1" key="$2"
   # `|| true` keeps a missing key (grep exit 1) or a head-closed-pipe SIGPIPE
@@ -283,6 +312,9 @@ cmd_lan() {
   info "Recreating backend docker containers so they read the new env…"
   recreate_backend_containers
 
+  info "Ensuring the dedicated nexus queue-workers are up (pdf + vision)…"
+  ensure_nexus_workers
+
   cat <<EOF
 
 $(ok "LAN mode is live.")
@@ -332,9 +364,13 @@ cmd_local() {
     info "Restored env files to their pre-LAN values"
     info "Recreating backend docker containers so they read the restored env…"
     recreate_backend_containers
+    info "Ensuring the dedicated nexus queue-workers are up (pdf + vision)…"
+    ensure_nexus_workers
     ok "Local mode restored. If your session app was running, restart it to pick up NEXT_PUBLIC_API_URL=http://localhost:8000 and the local LIVEKIT_PUBLIC_URL."
   else
     info "No env backup to restore — nothing to change"
+    info "Ensuring the dedicated nexus queue-workers are up (pdf + vision)…"
+    ensure_nexus_workers
   fi
 }
 
