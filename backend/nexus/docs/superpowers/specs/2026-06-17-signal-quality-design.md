@@ -1,3 +1,94 @@
+# Signal Extraction — Quality Pass (weighting, must-have preservation, crisp distillation)
+
+**Date:** 2026-06-17
+**Status:** Design — approved, pending implementation
+**Branch:** `feat/jd-enrichment-fidelity` (continues the JD-pipeline fidelity work)
+**Scope:** Prompt-only. Targeted edits to `prompts/v2/jd_signal_extraction.txt` (already rewritten for fidelity in `2026-06-17-signal-extraction-fidelity-design.md`). No code or schema change; version stays `"v2"`.
+
+---
+
+## Problem
+
+After the fidelity rewrite, extraction stopped inventing substance (verified live on the EMM
+job — all 9 signals faithful, seniority `mid`). But QA of the faithful output surfaced three
+**signal-quality** issues (classification/distillation, not invention):
+
+1. **Must-haves under-weighted.** The raw JD has a 6-item Must-Have list; the prompt's own
+   rule says must-have-list items → weight 3. Only the Intune signal came out weight 3;
+   EMM/MDM, iOS, Android all came out weight 2.
+2. **A named must-have lost standing.** "Incident Management" (must-have #6) survived only
+   folded inside a combined responsibility signal at weight 2 — de-emphasized and no longer
+   individually named as a must-have.
+3. **Signals are copied responsibility SENTENCES, not crisp competency LABELS.** e.g.
+   `"Manage and configure Microsoft Intune for enterprise mobility and mobile device
+   management"` instead of `"Microsoft Intune administration & configuration"`. Plus the
+   symptom this produces: overlap/redundancy (iOS & Android appear both standalone and inside
+   the compliance signal) and a vague catch-all (`"Enterprise Mobility Management (EMM) and
+   Mobile Device Management (MDM)"` that just renames the whole role).
+
+### Root cause
+
+- The fidelity rewrite's grounding language was **over-literal**: `ai_extracted` required
+  "EVERY word of the value … grounded in the JD text" and the self-check demanded values
+  trace "word for word." That pushed the model to *copy sentences* rather than distil
+  competencies (issue 3).
+- The `Weight & knockout` rule mentioned must-have → weight 3 but did not make it binding, and
+  had no rule forcing every named must-have to survive consolidation at its weight (issues
+  1, 2).
+
+---
+
+## Goal
+
+Keep every fidelity guarantee (substance cannot be invented) while fixing signal quality:
+must-haves correctly weighted and individually preserved, and signal values expressed as
+crisp competency labels. Decisions taken:
+- **Distillation:** a signal value is a crisp competency LABEL; faithfulness governs
+  SUBSTANCE, not wording/length. Compressing a responsibility sentence into the competency it
+  tests is required; adding an unstated tool/specific/scope stays forbidden.
+- **Must-have preservation:** consolidation is allowed, but every item in the JD's Must-Have
+  list must remain individually named in a signal AND carry weight 3.
+
+Prompt-only, scales to all JDs (illustrations abstract). Schema unchanged.
+
+---
+
+## Design — five targeted edits to `prompts/v2/jd_signal_extraction.txt`
+
+The prompt's structure is sound; these edits integrate into existing sections (plus one new
+section). Everything else stays verbatim.
+
+1. **SUBSTANCE bullet (core rule) — add a distillation pointer.** Append: "Express the
+   substance as a crisp competency label (see Phrasing) — faithful to the JD's substance, not
+   necessarily its wording."
+2. **New section "Phrasing — name the competency, don't copy the sentence"** (after
+   CONSOLIDATE): a signal value is a crisp noun-phrase label, not a copied JD sentence;
+   compressing is required, adding unstated substance forbidden; each signal one distinct
+   unit (no duplicates, no whole-role catch-all). Abstract `<tool>`/`<purpose>` example.
+3. **`Weight & knockout` — make must-have → weight 3 binding** and redefine weight 2 as a
+   requirement NOT in the must-have list.
+4. **`Weight & knockout` — add "PRESERVE EVERY MUST-HAVE"** rule: every must-have survives,
+   individually named, at weight 3; consolidation may group but never drops a name or lowers
+   weight.
+5. **Reconcile over-literal grounding (the latent bug):** rewrite the `ai_extracted`
+   provenance definition and the "Before you output" checklist from *word-level* to
+   *substance-level* grounding, and add the two new quality checks (must-have named+weighted;
+   crisp-label not copied sentence).
+
+### Issue coverage
+
+| Issue | Closed by |
+|---|---|
+| Must-haves under-weighted (1) | Edit 3 (binding weight-3 rule) |
+| Named must-have de-emphasized (2) | Edit 4 (PRESERVE EVERY MUST-HAVE) |
+| Copied sentences vs crisp labels (3) | Edits 1, 2, 5 (distillation + reconcile grounding) |
+| Overlap / vague catch-all (symptom of 3) | Edit 2 ("one distinct unit … no two signals restate the same competency, no whole-role catch-all") |
+
+---
+
+## Final prompt text — `prompts/v2/jd_signal_extraction.txt`
+
+```
 You are an enterprise hiring-intelligence system that extracts a SMALL, HIGH-IMPACT set of
 structured hiring signals from a job description, for a downstream AI-led skills interview.
 
@@ -168,3 +259,35 @@ related responsibilities; the resulting signal is weight 3 and names the must-ha
   - Every signal carries: value, type, purpose, priority, weight, knockout, stage, source,
     inference_basis.
 Return only the structured JSON. No preamble, no markdown.
+```
+
+---
+
+## Non-goals
+
+- No change to `SignalItemV2` / `ExtractedSignals` schemas or validators.
+- No change to the actor, `_build_user_message`, or model/effort config.
+- No new prompt version (`jd_signal_extraction_prompt_version` stays `"v2"`).
+- No JD-specific tuning (illustrations stay abstract).
+
+## Operational notes
+
+- Runs in the lean `nexus-worker` (queue `jd_extraction`); `PromptLoader` caches in memory,
+  no hot-reload → **restart `nexus-worker` after editing** (`docker compose up -d
+  --force-recreate nexus-worker`).
+
+## Validation (manual)
+
+Re-extract (via "Unlock & re-enrich") on the EMM job and confirm:
+- every raw Must-Have-list item (Intune, EMM, MDM, iOS, Android, Incident Management) appears
+  named, at **weight 3**;
+- "Incident Management" is individually named (own signal or named element of an ITSM signal),
+  not silently absorbed;
+- signal values are crisp labels (e.g. "Microsoft Intune administration & configuration"),
+  not copied responsibility sentences;
+- no two signals restate the same competency; no vague whole-role catch-all;
+- (regression) still no invented substance, no re-scoped experience band, seniority `mid`,
+  list ~8–10.
+Spot-check a rich JD (correct weights, crisp labels, no padding) and a thin JD (sparse,
+faithful).
+```

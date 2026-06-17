@@ -20,7 +20,7 @@ export function useReExtractSignals(jobId: string) {
       return jobsApi.reExtractSignals(token, jobId)
     },
     onSuccess: () => {
-      toast.success('Re-running signal extraction')
+      toast.success('Re-enriching JD & re-extracting signals')
       void queryClient.invalidateQueries({ queryKey: ['jobs', jobId] })
       void queryClient.invalidateQueries({ queryKey: ['jobs-list'] })
       void queryClient.invalidateQueries({ queryKey: ['banks', jobId] })

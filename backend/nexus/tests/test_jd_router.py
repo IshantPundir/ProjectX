@@ -888,8 +888,9 @@ async def test_get_job_populates_enrichment_fields(db: AsyncSession):
 @pytest.mark.asyncio
 async def test_reextract_from_signals_confirmed_202(db: AsyncSession, monkeypatch):
     """Re-extract from signals_confirmed → 202; job transitions to
-    signals_extracting; extraction dispatched with skip_enrichment=True;
-    reset_banks_for_job called with the correct job_id."""
+    signals_extracting; extraction dispatched with skip_enrichment=False
+    (re-enriches from raw JD); reset_banks_for_job called with the correct
+    job_id."""
     captured = _stub_all_dispatches(monkeypatch)
 
     reset_calls: list[dict] = []
@@ -941,14 +942,16 @@ async def test_reextract_from_signals_confirmed_202(db: AsyncSession, monkeypatc
     assert len(reset_calls) == 1
     assert reset_calls[0]["job_id"] == job.id
 
-    # Extraction dispatched with skip_enrichment=True.
+    # Extraction dispatched with skip_enrichment=False (re-enriches from raw JD).
     extract_call = captured["extract_and_enhance_jd"]
     assert extract_call != {}
-    assert extract_call["kwargs"].get("skip_enrichment") is True
+    assert extract_call["kwargs"].get("skip_enrichment") is False
 
-    # Status now signals_extracting.
+    # Status now signals_extracting; enrichment guard was reset.
     await db.refresh(job)
     assert job.status == "signals_extracting"
+    assert job.enrichment_status == "idle"
+    assert job.enrichment_error is None
 
 
 @pytest.mark.asyncio
@@ -1001,16 +1004,19 @@ async def test_reextract_from_active_202(db: AsyncSession, monkeypatch):
     assert len(reset_calls) == 1
     extract_call = captured["extract_and_enhance_jd"]
     assert extract_call != {}
-    assert extract_call["kwargs"].get("skip_enrichment") is True
+    assert extract_call["kwargs"].get("skip_enrichment") is False
     await db.refresh(job)
     assert job.status == "signals_extracting"
+    assert job.enrichment_status == "idle"
+    assert job.enrichment_error is None
 
 
 @pytest.mark.asyncio
 async def test_reextract_from_signals_extracted_202(db: AsyncSession, monkeypatch):
     """Re-extract from signals_extracted → 202; job transitions to
-    signals_extracting; extraction dispatched with skip_enrichment=True;
-    reset_banks_for_job called with the correct job_id."""
+    signals_extracting; extraction dispatched with skip_enrichment=False
+    (re-enriches from raw JD); reset_banks_for_job called with the correct
+    job_id."""
     captured = _stub_all_dispatches(monkeypatch)
 
     reset_calls: list[dict] = []
@@ -1062,14 +1068,16 @@ async def test_reextract_from_signals_extracted_202(db: AsyncSession, monkeypatc
     assert len(reset_calls) == 1
     assert reset_calls[0]["job_id"] == job.id
 
-    # Extraction dispatched with skip_enrichment=True.
+    # Extraction dispatched with skip_enrichment=False (re-enriches from raw JD).
     extract_call = captured["extract_and_enhance_jd"]
     assert extract_call != {}
-    assert extract_call["kwargs"].get("skip_enrichment") is True
+    assert extract_call["kwargs"].get("skip_enrichment") is False
 
-    # Status now signals_extracting.
+    # Status now signals_extracting; enrichment guard was reset.
     await db.refresh(job)
     assert job.status == "signals_extracting"
+    assert job.enrichment_status == "idle"
+    assert job.enrichment_error is None
 
 
 @pytest.mark.asyncio
@@ -1124,9 +1132,11 @@ async def test_reextract_from_pipeline_built_202(db: AsyncSession, monkeypatch):
     assert reset_calls[0]["job_id"] == job.id
     extract_call = captured["extract_and_enhance_jd"]
     assert extract_call != {}
-    assert extract_call["kwargs"].get("skip_enrichment") is True
+    assert extract_call["kwargs"].get("skip_enrichment") is False
     await db.refresh(job)
     assert job.status == "signals_extracting"
+    assert job.enrichment_status == "idle"
+    assert job.enrichment_error is None
 
 
 @pytest.mark.asyncio

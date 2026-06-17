@@ -1,3 +1,43 @@
+# Signal Extraction Quality Pass — Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Improve signal-extraction quality — must-haves weighted at 3 and individually preserved, signal values expressed as crisp competency labels — without reopening any fidelity (no-invention) guarantee.
+
+**Architecture:** Prompt-only change. Replace `prompts/v2/jd_signal_extraction.txt` in place with the spec's verbatim text (adds a Phrasing section, makes must-have→weight-3 binding, adds a must-have-preservation rule, and reconciles the over-literal word-level grounding to substance-level). No schema, actor, or config change; `jd_signal_extraction_prompt_version` stays `"v2"`.
+
+**Tech Stack:** Plain `.txt` prompt file read by `app.ai.prompts.PromptLoader`; consumed by `app/modules/jd/actors.py::_run_signal_extraction`. Tests: pytest.
+
+## Global Constraints
+
+- Prompt-only. No change to `SignalItemV2`/`ExtractedSignals` schemas or validators, the actor, `_build_user_message`, or model/effort config.
+- No new prompt version: `jd_signal_extraction_prompt_version` stays `"v2"` (asserted by `tests/test_jd_extraction_prompt_version.py`).
+- Principle-based, scales to all JDs — no JD-specific text. Illustrations stay abstract (`<tool>`/`<purpose>` placeholders, the API/Workato examples already in v2).
+- Verbatim prompt text is the canonical copy in the spec: `docs/superpowers/specs/2026-06-17-signal-quality-design.md` (also inlined below).
+- Runs in the lean `nexus-worker` (queue `jd_extraction`); `PromptLoader` caches in memory, no hot-reload → restart `nexus-worker` after editing.
+
+---
+
+### Task 1: Apply the quality-pass edits to `jd_signal_extraction.txt`
+
+**Files:**
+- Modify (full replace): `prompts/v2/jd_signal_extraction.txt`
+- Test (existing, must stay green): `tests/test_jd_extraction_prompt_version.py`, `tests/test_jd_actor.py`
+
+**Interfaces:**
+- Consumes: nothing new.
+- Produces: a system prompt loaded via `prompt_loader.get("jd_signal_extraction")` (through `PromptLoader(version="v2")`) in `app/modules/jd/actors.py::_run_signal_extraction`. Output contract unchanged (`SignalExtractionOutput` → `ExtractedSignals`).
+
+- [ ] **Step 1: Confirm the version guard test passes BEFORE editing**
+
+Run: `docker compose run --rm nexus pytest tests/test_jd_extraction_prompt_version.py -v`
+Expected: PASS (asserts the active version is `"v2"`). The rewrite must NOT change the active version.
+
+- [ ] **Step 2: Replace the entire file contents**
+
+Overwrite `prompts/v2/jd_signal_extraction.txt` with exactly:
+
+```
 You are an enterprise hiring-intelligence system that extracts a SMALL, HIGH-IMPACT set of
 structured hiring signals from a job description, for a downstream AI-led skills interview.
 
@@ -168,3 +208,88 @@ related responsibilities; the resulting signal is weight 3 and names the must-ha
   - Every signal carries: value, type, purpose, priority, weight, knockout, stage, source,
     inference_basis.
 Return only the structured JSON. No preamble, no markdown.
+```
+
+- [ ] **Step 3: Confirm the prompt loads and the version guard still passes**
+
+Run: `docker compose run --rm nexus python -c "from app.ai.prompts import PromptLoader; from app.ai.config import ai_config; p = PromptLoader(version=ai_config.jd_signal_extraction_prompt_version).get('jd_signal_extraction'); print('version', ai_config.jd_signal_extraction_prompt_version, 'chars', len(p))"`
+Expected: prints `version v2 chars <positive int>`, no exception.
+
+- [ ] **Step 4: Run the regression subset**
+
+Run: `docker compose run --rm nexus pytest tests/test_jd_extraction_prompt_version.py tests/test_jd_actor.py tests/test_prompt_loader.py tests/test_ai_schemas.py -v`
+Expected: PASS. (`test_jd_actor.py` mocks the LLM so prompt wording does not affect it; the version test confirms the active version is still `"v2"`.)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add prompts/v2/jd_signal_extraction.txt
+git commit -m "feat(jd): signal-extraction quality pass (weighting, must-have preservation, crisp labels)
+
+Must-have-list items are weight 3 (binding) and every named must-have is
+preserved at weight 3 through consolidation; signal values are crisp
+competency labels, not copied JD sentences. Reconciles ai_extracted +
+self-check grounding from word-level to substance-level so distillation
+and fidelity coexist. v2 in place.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Task 2: Live quality validation
+
+No automated test — prompt quality is validated by a live re-extract and a manual
+signal-vs-JD review (project's manual-testing preference; no CI eval suite). Its own task
+because a reviewer could approve the prompt text yet reject the observed live behavior.
+
+**Files:** none (operational + validation only).
+
+- [ ] **Step 1: Restart the worker so it loads the new prompt**
+
+Run: `docker compose up -d --force-recreate nexus-worker`
+Expected: `nexus-worker` recreated and healthy (`docker compose ps nexus-worker`). Required because `PromptLoader` caches prompt files in memory and the worker has no hot-reload.
+
+- [ ] **Step 2: Re-extract the EMM job and check the quality criteria**
+
+In the recruiter app, click "Unlock & re-enrich" on the EMM Engineer job
+(`/jobs/11650922-79c6-43f6-8f26-4638303e1fbf?tab=jd`). When the new signals land, confirm ALL of:
+- every raw Must-Have-list item (Microsoft Intune, EMM, MDM, iOS, Android, Incident
+  Management) appears **named** in a signal, at **weight 3**;
+- "Incident Management" is individually named (its own signal, or a named element of an ITSM
+  signal) — not silently absorbed/down-weighted;
+- signal values are crisp competency labels (e.g. "Microsoft Intune administration &
+  configuration"), NOT copied responsibility sentences;
+- no two signals restate the same competency; no vague whole-role catch-all;
+- (regression) still no invented substance, no re-scoped experience band, seniority `mid`,
+  list ~8–10.
+
+> To read the stored signals + weights directly (optional):
+> `docker exec supabase_db_backend psql -U postgres -d postgres -t -A -c "select jsonb_pretty(signals) from job_posting_signal_snapshots where job_posting_id='11650922-79c6-43f6-8f26-4638303e1fbf' order by version desc limit 1;"`
+
+- [ ] **Step 3: Spot-check a rich JD and a thin JD**
+
+Re-extract on a rich/detailed JD (expect correct weights, crisp labels, no padding) and a
+deliberately vague JD (expect a sparse, faithful list). Confirm no invented substance and
+that must-haves are weight 3 in both.
+
+- [ ] **Step 4: (Optional) Run the real-API prompt-quality eval**
+
+If an OpenAI key is configured: `docker compose exec nexus pytest tests/jd/prompt_evals -m prompt_quality -q`
+Expected: PASS (lean ≤13 signals, eligibility classification, core skills weighted ≥2). Requires a live API key + spends tokens; skip if not validating against the real API.
+
+- [ ] **Step 5: Record the result**
+
+If all checks pass, note completion. If any check fails, capture the offending signal
+(value + weight) and which quality rule it violates, and iterate on the prompt (back to
+Task 1).
+
+---
+
+## Self-Review
+
+**Spec coverage:** All five edits (SUBSTANCE pointer, Phrasing section, binding weight-3, PRESERVE EVERY MUST-HAVE, reconciled provenance + checklist) are present in the inlined Task 1 text → matches the spec's "Final prompt text" verbatim. Issue→fix table (weighting/preservation/distillation/overlap) → Task 2 Step 2 checklist maps each. `nexus-worker` restart → Task 2 Step 1. Manual three-JD validation → Task 2 Steps 2-3. Optional real-API eval → Task 2 Step 4. Non-goals (no schema/actor/config change, version stays v2) → Global Constraints. Full coverage.
+
+**Placeholder scan:** No TBD/TODO/"handle edge cases". Full prompt text inlined. The `<tool>` / `<purpose>` tokens are intentional abstract placeholders inside the prompt copy, not plan placeholders. Validation steps enumerate concrete pass/fail conditions.
+
+**Type consistency:** No new types/signatures. Prompt name `jd_signal_extraction` and version `"v2"` used consistently; output contract (`SignalExtractionOutput`/`ExtractedSignals`) unchanged.
