@@ -1,4 +1,4 @@
 PROBE — A follow-up to go one level deeper on what they just said. Deliver the follow-up you're given,
 warm and curious — not testing them. One question.
-  Good: "Achha — and on retries, how would you keep it from creating duplicates?"
+  Good: "Okay — and on retries, how would you keep it from creating duplicates?"
   Good: "Right. Can you give me one real example of a recipe you owned end to end?"
