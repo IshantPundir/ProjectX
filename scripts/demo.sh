@@ -325,17 +325,29 @@ cmd_lan() {
   echo "    session  → $session_url"
   echo "    livekit  → $livekit_wss (signaling; media is LAN-direct)"
 
-  info "Rewriting backend/nexus/.env (CANDIDATE_SESSION_BASE_URL, LIVEKIT_PUBLIC_URL, CORS_ORIGINS)…"
+  local lan_ip; lan_ip="$(detect_lan_ip)"
+  [[ -n "$lan_ip" ]] || die "Could not detect this host's LAN IP (needed for the recordings share link)."
+  info "Detected LAN IP: $lan_ip"
+
+  info "Rewriting backend/nexus/.env (CANDIDATE_SESSION_BASE_URL, LIVEKIT_PUBLIC_URL, RECORDING_SHARE_BASE_URL, CORS_ORIGINS)…"
   set_env_var "$BACKEND_ENV" "CANDIDATE_SESSION_BASE_URL" "$session_url"
   set_env_var "$BACKEND_ENV" "LIVEKIT_PUBLIC_URL" "$livekit_wss"
-  set_cors_origins "$BACKEND_ENV" "$session_url" "$backend_url" "${LOCAL_ORIGINS[@]}"
+  info "Pointing the recordings share link at the recruiter app on the LAN…"
+  set_env_var "$BACKEND_ENV" "RECORDING_SHARE_BASE_URL" "http://${lan_ip}:3000"
+  set_cors_origins "$BACKEND_ENV" "$session_url" "$backend_url" "http://${lan_ip}:3000" "${LOCAL_ORIGINS[@]}"
 
   info "Rewriting frontend/session/.env.local (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_LIVEKIT_WS_URL)…"
   set_env_var "$SESSION_ENV" "NEXT_PUBLIC_API_URL" "$backend_url"
   set_env_var "$SESSION_ENV" "NEXT_PUBLIC_LIVEKIT_WS_URL" "$livekit_wss $livekit_url"
 
+  info "Rewriting frontend/app/.env.local (NEXT_PUBLIC_API_URL → LAN backend)…"
+  set_env_var "$APP_ENV" "NEXT_PUBLIC_API_URL" "http://${lan_ip}:8000"
+
   info "Recreating backend docker containers so they read the new env…"
   recreate_backend_containers
+
+  info "Recreating the report-share PDF worker so it reads RECORDING_SHARE_BASE_URL…"
+  (cd "$BACKEND_DIR" && docker compose up -d --force-recreate nexus-pdf-worker)
 
   info "Ensuring the dedicated nexus queue-workers are up (pdf + vision)…"
   ensure_nexus_workers
@@ -355,11 +367,18 @@ Next steps:
   1. (Re)start the session app — required because Next.js reads .env.local on boot
      (this is also how it picks up the new NEXT_PUBLIC_LIVEKIT_WS_URL):
        (cd frontend/session && npm run dev)
-  2. From your recruiter dashboard at http://localhost:3000, send an invite.
-  3. Grab the candidate URL from the dry-run email log:
+  2. To let a PDF recipient watch the recording from another device, (re)start
+     the recruiter app so it reads the rewritten NEXT_PUBLIC_API_URL, and reach
+     it via the LAN IP (NOT localhost):
+       (cd frontend/app && npm run dev)
+       → recruiter dashboard on this machine: http://${lan_ip}:3000
+     The shared report PDF's "See full session recording" link will point at
+     http://${lan_ip}:3000/recordings/<token>, reachable by any same-WiFi device.
+  3. From your recruiter dashboard at http://${lan_ip}:3000, send an invite.
+  4. Grab the candidate URL from the dry-run email log:
        docker compose -f $BACKEND_DIR/docker-compose.yml logs --tail=200 nexus \\
          | grep -E 'invite_url|email.dry_run'
-  4. Open that URL on a device that is ON THE SAME WiFi as this machine.
+  5. Open that URL on a device that is ON THE SAME WiFi as this machine.
      (WebRTC media goes LAN-direct to this host — a phone on cellular or a
       remote laptop will connect signaling but get no audio/video.)
 
@@ -389,6 +408,8 @@ cmd_local() {
     info "Restored env files to their pre-LAN values"
     info "Recreating backend docker containers so they read the restored env…"
     recreate_backend_containers
+    info "Recreating the report-share PDF worker so it drops RECORDING_SHARE_BASE_URL…"
+    (cd "$BACKEND_DIR" && docker compose up -d --force-recreate nexus-pdf-worker)
     info "Ensuring the dedicated nexus queue-workers are up (pdf + vision)…"
     ensure_nexus_workers
     ok "Local mode restored. If your session app was running, restart it to pick up NEXT_PUBLIC_API_URL=http://localhost:8000 and the local LIVEKIT_PUBLIC_URL."
@@ -411,6 +432,9 @@ cmd_status() {
   local backend_lk_public session_lk_ws
   backend_lk_public="$(read_env_value "$BACKEND_ENV" "LIVEKIT_PUBLIC_URL")"
   session_lk_ws="$(read_env_value "$SESSION_ENV" "NEXT_PUBLIC_LIVEKIT_WS_URL")"
+  local backend_rec_share app_api
+  backend_rec_share="$(read_env_value "$BACKEND_ENV" "RECORDING_SHARE_BASE_URL")"
+  app_api="$(read_env_value "$APP_ENV" "NEXT_PUBLIC_API_URL")"
 
   echo "Mode: $mode"
   echo
@@ -418,6 +442,8 @@ cmd_status() {
   echo "  frontend/session NEXT_PUBLIC_LIVEKIT_WS_URL : ${session_lk_ws:-<unset>}"
   echo "  backend          CANDIDATE_SESSION_BASE_URL : ${backend_csbu:-<unset>}"
   echo "  backend          LIVEKIT_PUBLIC_URL         : ${backend_lk_public:-<unset>}"
+  echo "  backend          RECORDING_SHARE_BASE_URL   : ${backend_rec_share:-<unset>}"
+  echo "  frontend/app     NEXT_PUBLIC_API_URL        : ${app_api:-<unset>}"
   echo
 
   if ngrok_pid_alive; then
