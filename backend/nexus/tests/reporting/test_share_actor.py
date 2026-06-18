@@ -135,3 +135,43 @@ async def test_share_actor_marks_failed_on_render_error(db_session, monkeypatch,
     await db_session.refresh(seeded_share)
     assert seeded_share.status == "failed"
     assert "chromium died" in (seeded_share.error or "")
+
+
+@pytest.mark.asyncio
+async def test_share_actor_uses_recording_share_base_url_override(
+    db_session, monkeypatch, seeded_share
+):
+    """When RECORDING_SHARE_BASE_URL is set (LAN demo), the PDF link uses it
+    instead of frontend_base_url."""
+    captured = {}
+    real_build = actors.build_pdf_context
+
+    def _capture_build(*args, **kwargs):
+        captured["full_session_url"] = kwargs.get("full_session_url")
+        return real_build(*args, **kwargs)
+
+    async def fake_render(ctx):
+        return b"%PDF-1.4 fake"
+
+    class FakeStorage:
+        async def upload_bytes(self, key, data, *, content_type):
+            pass
+        async def presign_get_url(self, key, *, ttl_seconds):
+            return "https://r2/photo.jpg"
+
+    async def fake_send_email(*, to, subject, html, attachments=None):
+        pass
+
+    monkeypatch.setattr(actors.settings, "recording_share_base_url", "http://192.168.1.50:3000")
+    _patch_bypass_session(monkeypatch, db_session)
+    monkeypatch.setattr(actors, "build_pdf_context", _capture_build)
+    monkeypatch.setattr(actors, "render_report_pdf", fake_render)
+    monkeypatch.setattr(actors, "get_object_storage", lambda: FakeStorage())
+    monkeypatch.setattr(actors, "send_email", fake_send_email)
+
+    await actors._share_report_pdf_async(
+        share_id=seeded_share.id, tenant_id=seeded_share.tenant_id, correlation_id="c",
+    )
+
+    url = captured["full_session_url"]
+    assert url.startswith("http://192.168.1.50:3000/recordings/")
