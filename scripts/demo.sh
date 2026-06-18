@@ -17,8 +17,13 @@
 #     (incl. bringing up the self-hosted LiveKit plane AND every nexus service:
 #     api, worker, engine, pdf-worker, vision-worker — so no queue is left
 #     without a consumer).
-#   - This script does NOT:    start `npm run dev` for any frontend, touch the
-#     recruiter app (frontend/app), or change anything Supabase-related.
+#   - This script ALSO touches (added 2026-06-18): frontend/app/.env.local
+#     (NEXT_PUBLIC_API_URL → http://<LAN-IP>:8000) so the recruiter app's public
+#     /recordings/<token> page, opened from another same-WiFi device, can reach
+#     the backend. The PDF's recordings link is pointed at http://<LAN-IP>:3000
+#     via the backend's RECORDING_SHARE_BASE_URL.
+#   - This script does NOT:    start `npm run dev` for any frontend, or change
+#     anything Supabase-related.
 #
 # Self-hosted LiveKit / LAN-only note:
 #   WebRTC media flows LAN-direct (UDP 50000-60000) to this host's LAN IP — ngrok
@@ -39,6 +44,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_DIR="$REPO_ROOT/backend/nexus"
 BACKEND_ENV="$BACKEND_DIR/.env"
 SESSION_ENV="$REPO_ROOT/frontend/session/.env.local"
+APP_ENV="$REPO_ROOT/frontend/app/.env.local"
 NGROK_CONFIG="$REPO_ROOT/scripts/ngrok.yml"
 NGROK_GLOBAL_CONFIG="$HOME/.config/ngrok/ngrok.yml"
 STATE_DIR="$REPO_ROOT/scripts/.state"
@@ -46,6 +52,7 @@ NGROK_PID_FILE="$STATE_DIR/ngrok.pid"
 NGROK_LOG_FILE="$STATE_DIR/ngrok.log"
 BACKEND_ENV_BACKUP="$STATE_DIR/backend.env.backup"
 SESSION_ENV_BACKUP="$STATE_DIR/session.env.local.backup"
+APP_ENV_BACKUP="$STATE_DIR/app.env.local.backup"
 
 # Origins to keep in CORS_ORIGINS regardless of mode (local dev shouldn't
 # break while the tunnel is up).
@@ -89,8 +96,20 @@ require_tools() {
 require_files() {
   [[ -f "$BACKEND_ENV" ]]        || die "Backend .env not found at $BACKEND_ENV"
   [[ -f "$SESSION_ENV" ]]        || die "Session .env.local not found at $SESSION_ENV"
+  [[ -f "$APP_ENV" ]]            || die "Recruiter app .env.local not found at $APP_ENV"
   [[ -f "$NGROK_CONFIG" ]]       || die "ngrok config not found at $NGROK_CONFIG"
   [[ -f "$NGROK_GLOBAL_CONFIG" ]]|| die "Global ngrok config not found at $NGROK_GLOBAL_CONFIG (run \`ngrok config add-authtoken <token>\`)"
+}
+
+# Echo the host's primary LAN IPv4 (the source address used to reach the
+# internet). Falls back to the first `hostname -I` address. Used so the shared
+# report PDF + the recruiter app's API base point at a same-WiFi-reachable host
+# instead of localhost.
+detect_lan_ip() {
+  local ip
+  ip="$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' | head -1 || true)"
+  [[ -z "$ip" ]] && ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  echo "$ip"
 }
 
 ngrok_pid_alive() {
@@ -157,6 +176,7 @@ backup_envs_once() {
   mkdir -p "$STATE_DIR"
   [[ -f "$BACKEND_ENV_BACKUP" ]] || cp "$BACKEND_ENV" "$BACKEND_ENV_BACKUP"
   [[ -f "$SESSION_ENV_BACKUP" ]] || cp "$SESSION_ENV" "$SESSION_ENV_BACKUP"
+  [[ -f "$APP_ENV_BACKUP" ]]     || cp "$APP_ENV" "$APP_ENV_BACKUP"
 }
 
 restore_envs() {
@@ -169,6 +189,11 @@ restore_envs() {
   if [[ -f "$SESSION_ENV_BACKUP" ]]; then
     cp "$SESSION_ENV_BACKUP" "$SESSION_ENV"
     rm "$SESSION_ENV_BACKUP"
+    restored=1
+  fi
+  if [[ -f "$APP_ENV_BACKUP" ]]; then
+    cp "$APP_ENV_BACKUP" "$APP_ENV"
+    rm "$APP_ENV_BACKUP"
     restored=1
   fi
   return $((1 - restored))
