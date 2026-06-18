@@ -2,17 +2,17 @@ import type { FaceDetector } from '@mediapipe/tasks-vision'
 import { visionFileset } from './face-landmarker'
 
 /**
- * Minimum detection confidence for a box to count as a face. Raised well above
- * the previous over-permissive 0.3 (and above the SDK's 0.5 default) to cut
- * FALSE POSITIVES — shadows, patterns, posters and background objects that
- * BlazeFace momentarily scores as low-confidence "faces" and which produced
- * spurious `multiple_faces` flags. The candidate's own close, well-lit face
- * scores ~0.8–0.95, so this does NOT affect detecting them; the recall it trims
- * is far/oblique/dim faces, which are the server RetinaFace plane's job anyway
- * (see spec §5). If a real, present face is ever missed (a false
- * `face_not_visible`), dial this back toward 0.5.
+ * Minimum detection confidence for a box to count as a face. Set to the SDK's
+ * BlazeFace default (0.5): a balance between cutting FALSE POSITIVES — shadows,
+ * patterns, posters and background objects that momentarily score as
+ * low-confidence "faces" and produced spurious `multiple_faces` flags — and not
+ * MISSING a real, present face (a false `face_not_visible`). The candidate's own
+ * close, well-lit face scores ~0.8–0.95, well clear of this floor; the recall it
+ * trims is far/oblique/dim faces, which are the server RetinaFace plane's job
+ * anyway (see spec §5). Spurious `multiple_faces` is further guarded by the
+ * 0.5s sustain debounce in nudge-kinds.ts (a transient frame won't fire).
  */
-export const FACE_DETECTION_MIN_CONFIDENCE = 0.6
+export const FACE_DETECTION_MIN_CONFIDENCE = 0.5
 
 /** Distilled face-count signal from a FaceDetector VIDEO result. */
 export interface FaceCountSummary {
