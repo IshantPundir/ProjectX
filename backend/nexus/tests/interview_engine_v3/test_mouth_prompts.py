@@ -21,11 +21,13 @@ def test_persona_has_placeholders_but_no_rubric_leak():
     assert "no scoring" in low or "no evaluation" in low or "hold no" in low
 
 
-def test_bridge_is_gist_mirror_commit_to_nothing():
+def test_bridge_is_neutral_ack_no_echo_commit_to_nothing():
     from app.ai.prompts import PromptLoader
     bridge = PromptLoader(version="v4").get("engine/mouth/bridge")
     low = bridge.lower()
-    assert "mirror" in low          # gist-mirror
+    # The bridge must NOT echo the candidate's answer back (avoids the
+    # "did it only catch a couple words?" doubt) — it is a neutral acknowledgment.
+    assert "do not echo" in low or "no echo" in low
     # commits to NOTHING about quality/next move
     assert "commit to nothing" in low or "commits to nothing" in low or "never evaluate" in low
 
