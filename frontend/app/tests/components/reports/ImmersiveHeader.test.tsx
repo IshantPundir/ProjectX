@@ -15,18 +15,18 @@ test('shows identity, email, job and skills', () => {
   expect(screen.getByText('Punar Sharma')).toBeInTheDocument()
   expect(screen.getByText('punar@example.com')).toBeInTheDocument()
   expect(screen.getByText('Intune')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /candidate reel/i })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /candidate highlight/i })).toBeInTheDocument()
 })
 
 test('hides the reel button on reject', () => {
   render(<ImmersiveHeader header={header} verdict="reject" hasReel onOpenReel={() => {}} onOpenSession={() => {}} />)
-  expect(screen.queryByRole('button', { name: /candidate reel/i })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /candidate highlight/i })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: /full session/i })).toBeInTheDocument()
 })
 
 test('hasReel=false hides reel button even on advance verdict', () => {
   render(<ImmersiveHeader header={header} verdict="advance" hasReel={false} onOpenReel={() => {}} onOpenSession={() => {}} />)
-  expect(screen.queryByRole('button', { name: /candidate reel/i })).toBeNull()
+  expect(screen.queryByRole('button', { name: /candidate highlight/i })).toBeNull()
   expect(screen.getByRole('button', { name: /full session/i })).toBeInTheDocument()
 })
 

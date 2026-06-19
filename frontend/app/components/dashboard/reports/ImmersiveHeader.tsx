@@ -120,19 +120,12 @@ export function ImmersiveHeader({
               {showReel && (
                 <button
                   type="button"
-                  aria-label="Candidate Reel"
+                  aria-label="Candidate highlight"
                   onClick={onOpenReel}
-                  className="rh-btn-reel inline-flex items-center gap-[11px] cursor-pointer"
+                  className="rh-btn-reel inline-flex items-center gap-[9px] cursor-pointer"
                 >
-                  <span className="rh-btn-reel-icon" aria-hidden>
-                    <Play size={12} />
-                  </span>
-                  <span>
-                    <span className="block text-[14px] font-bold">Candidate Reel</span>
-                    <span className="block text-[10.5px] font-semibold opacity-85">
-                      AI highlight
-                    </span>
-                  </span>
+                  <Play size={14} aria-hidden />
+                  Candidate highlight
                 </button>
               )}
 

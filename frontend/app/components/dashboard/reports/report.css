@@ -174,37 +174,34 @@
   border: 1px solid rgba(255,255,255,.16);
 }
 
-/* CTA — glowing gradient reel button */
-.rh-btn-reel {
-  padding: 13px 20px;
+/* CTA — shared sizing for both header buttons */
+.rh-btn-reel,
+.rh-btn-sec {
+  min-width: 170px;
+  padding: 11px 20px;
   border-radius: 13px;
-  background: linear-gradient(100deg,#7b5cff,#b14cff 55%,#ff5ea0);
+  font-weight: 600;
+  font-size: 13px;
+  justify-content: center;
+}
+
+/* CTA — accent-tinted highlight button (no gradient) */
+.rh-btn-reel {
+  background: color-mix(in srgb, var(--px-accent) 22%, transparent);
   color: #fff;
-  border: none;
-  box-shadow: 0 0 0 1px rgba(255,255,255,.12), 0 10px 26px rgba(150,76,255,.5);
+  border: 1px solid color-mix(in srgb, var(--px-accent) 60%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--px-accent) 30%, transparent);
 }
 .rh-btn-reel:hover {
-  filter: brightness(1.08);
-}
-.rh-btn-reel-icon {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: rgba(255,255,255,.22);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: color-mix(in srgb, var(--px-accent) 32%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--px-accent) 45%, transparent);
 }
 
 /* CTA — glass session button */
 .rh-btn-sec {
-  padding: 13px 18px;
-  border-radius: 13px;
   background: rgba(255,255,255,.08);
-  border: 1px solid rgba(255,255,255,.22);
-  color: #eef;
-  font-weight: 600;
-  font-size: 13px;
+  border: 1px solid rgba(255,255,255,.18);
+  color: rgba(220,220,240,.80);
 }
 .rh-btn-sec:hover {
   background: rgba(255,255,255,.13);
