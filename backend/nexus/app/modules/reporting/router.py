@@ -38,6 +38,7 @@ from app.modules.reporting.schemas import (
     ShareReportIn,
     ShareReportOut,
 )
+from app.modules.reporting.scoring.scale import to_ten
 from app.modules.reporting.serialization import report_read_from_row
 from app.modules.session import (
     SessionNotFoundError,
@@ -268,7 +269,7 @@ async def list_report_index(
             completed_at=r["completed_at"].isoformat() if r["completed_at"] else None,
             report_status=r["report_status"],
             verdict=r["verdict"],
-            overall_score=r["overall_score"],
+            overall_score=to_ten(r["overall_score"]),
         )
         for r in rows
     ]

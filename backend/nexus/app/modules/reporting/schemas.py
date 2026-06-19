@@ -69,7 +69,7 @@ class ReportIndexItem(BaseModel):
     completed_at: str | None = None
     report_status: str  # none | pending | generating | ready | failed
     verdict: Verdict | None = None
-    overall_score: int | None = None
+    overall_score: float | None = None
 
 
 class ReportIndexPage(BaseModel):
@@ -133,13 +133,13 @@ class NarrativeOut(BaseModel):
 
 
 class ScoreOut(BaseModel):
-    score: int | None
+    score: float | None
     tier_label: str
     tone: str                      # ok | caution | danger | neutral
     confidence: Confidence
     coverage: float = 0.0
-    session_score: int | None = None   # pre-adjustment deterministic base (overall only)
-    holistic_delta: int | None = None  # bounded ±5 delta applied (overall only)
+    session_score: float | None = None   # pre-adjustment deterministic base (overall only)
+    holistic_delta: float | None = None  # bounded ±5 delta applied (overall only)
 
 
 class QuestionOut(BaseModel):
@@ -170,7 +170,7 @@ class SignalAssessmentOut(BaseModel):
     priority: str
     provenance: Literal["not_reached", "asked_directly", "cross_credited", "probed_absent"]
     level: Literal["strong", "solid", "thin", "absent", "not_reached"]
-    score: int | None = None
+    score: float | None = None
     evidence: list[str] = Field(default_factory=list)
     overridden: bool = False
     override_reason: str | None = None
@@ -182,7 +182,7 @@ class ReportRead(BaseModel):
     """Recruiter-facing report (PDF-shaped). Mirrors session_reports JSONB columns."""
     verdict: Verdict
     verdict_reason: str
-    overall_score: int | None
+    overall_score: float | None
     overall_coverage: float
     overall_confidence: Confidence
     decision: DecisionOut
