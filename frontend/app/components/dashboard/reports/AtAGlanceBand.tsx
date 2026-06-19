@@ -66,25 +66,34 @@ export function AtAGlanceBand({ report }: Props) {
   return (
     <div className="rounded-2xl border border-[var(--px-border)] bg-[var(--px-surface-1)] shadow-sm overflow-hidden">
       {/* ── Top zone: radar left, rings + lede right ── */}
-      <div className="flex items-center gap-10 px-7 py-7">
-        {/* Radar — fixed 240×230 as per mockup */}
-        <div className="flex-none w-[240px] h-[230px]">
+      <div className="flex items-center gap-0 px-7 py-7">
+        {/* Radar — wider viewBox (360×300), fixed display size ~300px */}
+        <div className="flex-none w-[300px] h-[230px]">
           <CompetencyRadar assessments={signal_assessments} />
         </div>
 
-        {/* Right side: rings + lede */}
-        <div className="flex-1 min-w-0">
-          {/* Three evenly-spaced rings — equal size */}
-          <div className="flex justify-between mb-5">
-            <ScoreRing valueTen={overallScore}   label="Overall"       tone={overallTone}   size={92} />
-            <ScoreRing valueTen={technicalScore} label="Technical"     tone={technicalTone} size={92} />
-            <ScoreRing valueTen={commsScore}     label="Communication" tone={commsTone}      size={92} />
-          </div>
+        {/* Vertical divider */}
+        <div
+          className="flex-none self-stretch mx-6"
+          style={{ width: '1px', background: 'var(--px-hairline)' }}
+          aria-hidden="true"
+        />
 
-          {/* One-line lede */}
-          <p className="text-sm leading-snug text-[var(--px-fg-2)]">
-            {lede}
-          </p>
+        {/* Right side: rings cluster + lede — centered, capped width */}
+        <div className="flex-1 min-w-0">
+          <div className="max-w-[520px] mx-auto">
+            {/* Three rings in a tight centered row */}
+            <div className="flex items-start gap-8 justify-center mb-5">
+              <ScoreRing valueTen={overallScore}   label="Overall"       tone={overallTone}   size={104} />
+              <ScoreRing valueTen={technicalScore} label="Technical"     tone={technicalTone} size={104} />
+              <ScoreRing valueTen={commsScore}     label="Communication" tone={commsTone}      size={104} />
+            </div>
+
+            {/* One-line lede, centered */}
+            <p className="text-sm leading-snug text-[var(--px-fg-2)] text-center">
+              {lede}
+            </p>
+          </div>
         </div>
       </div>
 

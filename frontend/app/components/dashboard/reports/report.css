@@ -85,6 +85,28 @@
   100% { transform: scale(1.7); opacity: 0; }
 }
 
+/* --- Competency radar hover: subtle scale from center + glow --- */
+/*
+ * The SVG has class="px-radar". The data polygon carries class="px-radar-data".
+ * We transition: fill opacity (slightly higher), scale from center, drop-shadow.
+ * transform-origin is set on the SVG element for correct center scaling.
+ */
+.px-radar {
+  transform-origin: center center;
+  transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
+              filter 200ms ease;
+}
+.px-radar:hover {
+  transform: scale(1.03);
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--px-accent) 40%, transparent));
+}
+.px-radar-data {
+  transition: fill-opacity 200ms ease;
+}
+.px-radar:hover .px-radar-data {
+  fill-opacity: 0.55;
+}
+
 /* ─── ImmersiveHeader ──────────────────────────────────────────────────────── */
 
 /* atmospheric background */
@@ -197,4 +219,6 @@
   .px-shine::after { display: none; }
   .report-playbtn::before, .report-playbtn::after { animation: none; }
   .report-playposter:hover img, .report-playposter:hover .report-playbtn { transform: none; }
+  .px-radar, .px-radar:hover { transform: none; filter: none; }
+  .px-radar-data, .px-radar:hover .px-radar-data { fill-opacity: unset; }
 }

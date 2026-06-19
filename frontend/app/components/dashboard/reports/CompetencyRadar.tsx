@@ -45,6 +45,30 @@ function buildDataPolygon(
 }
 
 // ---------------------------------------------------------------------------
+// Label truncation
+// ---------------------------------------------------------------------------
+
+const MAX_LABEL_CHARS = 16
+
+/**
+ * Truncate a signal name to ≤ MAX_LABEL_CHARS characters, breaking on a word
+ * boundary and appending "…". If the name is already within the limit, return
+ * it unchanged.
+ */
+function truncateLabel(name: string): string {
+  if (name.length <= MAX_LABEL_CHARS) return name
+
+  // Walk backwards from position MAX_LABEL_CHARS to find the last word boundary
+  let cut = MAX_LABEL_CHARS
+  while (cut > 0 && name[cut] !== ' ') cut--
+
+  // If no space found at all, hard-cut at MAX_LABEL_CHARS
+  if (cut === 0) return name.slice(0, MAX_LABEL_CHARS) + '…'
+
+  return name.slice(0, cut) + '…'
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -98,20 +122,20 @@ export function CompetencyRadar({ assessments }: Props): React.ReactElement {
   const n = assessed.length
   const factors = assessed.map((a) => (a.score ?? 0) / 10)
 
-  // SVG viewport — matches mockup proportions (240×230)
-  const VW = 240
-  const VH = 230
-  const cx = VW / 2         // 120
-  const cy = VH / 2 - 0.5  // ~114.5 — centers the hexagon in the taller viewport
-  const maxR = 91           // distance from center to outer polygon vertex
+  // SVG viewport — wider to give labels room on left/right
+  const VW = 360
+  const VH = 300
+  const cx = VW / 2         // 180
+  const cy = VH / 2 - 0.5  // ~149.5
+  const maxR = 95           // distance from center to outer polygon vertex
 
   // Text clearance around the radar — extra pixels beyond maxR where labels live
-  const labelPad = 22
+  const labelPad = 24
 
   return (
     <svg
       viewBox={`0 0 ${VW} ${VH}`}
-      className="w-full h-full"
+      className="px-radar w-full h-full"
       aria-label="Competency radar"
       role="img"
     >
@@ -157,6 +181,7 @@ export function CompetencyRadar({ assessments }: Props): React.ReactElement {
 
       {/* Data polygon */}
       <polygon
+        className="px-radar-data"
         points={buildDataPolygon(cx, cy, maxR, factors)}
         fill={`url(#${gradId})`}
         stroke="var(--px-accent)"
@@ -173,7 +198,7 @@ export function CompetencyRadar({ assessments }: Props): React.ReactElement {
         })}
       </g>
 
-      {/* Axis labels */}
+      {/* Axis labels — truncated with full name in <title> for tooltip */}
       {assessed.map((a, i) => {
         const angle = -90 + (i * 360) / n
         const [lx, ly] = polar(cx, cy, maxR + labelPad, angle)
@@ -183,7 +208,9 @@ export function CompetencyRadar({ assessments }: Props): React.ReactElement {
         const textAnchor =
           xDiff > 6 ? 'start' : xDiff < -6 ? 'end' : 'middle'
 
-        // Shift label slightly outward to avoid overlapping the outer polygon edge
+        const displayLabel = truncateLabel(a.signal)
+        const isTruncated = displayLabel !== a.signal
+
         return (
           <text
             key={a.signal}
@@ -191,11 +218,12 @@ export function CompetencyRadar({ assessments }: Props): React.ReactElement {
             y={ly.toFixed(2)}
             textAnchor={textAnchor}
             dominantBaseline="middle"
-            fontSize="9.5"
+            fontSize="11"
             fontWeight="700"
-            fill="#5b5e69"
+            fill="var(--px-fg-3)"
           >
-            {a.signal}
+            {isTruncated && <title>{a.signal}</title>}
+            {displayLabel}
           </text>
         )
       })}
