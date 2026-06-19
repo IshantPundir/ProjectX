@@ -48,6 +48,15 @@ export function ScoresCard({ report }: { report: ReportRead }) {
         </div>
       )}
 
+      {report.signal_assessments.length > 0 && (
+        <div className="mt-3 border-t pt-3" style={{ borderColor: 'var(--px-hairline)' }}>
+          <div className="mb-2 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-fg-3)' }}>
+            Competency breakdown
+          </div>
+          <CompetencyRadar assessments={report.signal_assessments} />
+        </div>
+      )}
+
       <div className="mt-3 flex gap-2 border-t pt-2.5" style={{ borderColor: 'var(--px-hairline)' }}>
         <div className="flex-1">
           <div className="text-[9px] uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>Coverage</div>
@@ -58,15 +67,6 @@ export function ScoresCard({ report }: { report: ReportRead }) {
           <div className="text-[12px] font-semibold" style={{ color: 'var(--px-fg)' }}>{confidenceLabel(overall?.confidence ?? 'low')}</div>
         </div>
       </div>
-
-      {report.signal_assessments.length > 0 && (
-        <div className="mt-3 border-t pt-3" style={{ borderColor: 'var(--px-hairline)' }}>
-          <div className="mb-2 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-fg-3)' }}>
-            Competency breakdown
-          </div>
-          <CompetencyRadar assessments={report.signal_assessments} />
-        </div>
-      )}
     </section>
   )
 }

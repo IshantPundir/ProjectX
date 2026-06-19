@@ -1,7 +1,7 @@
 import { Play } from 'lucide-react'
 import './report.css'
 import type { ReportHeader, Verdict } from '@/lib/api/reports'
-import { verdictMeta } from './report-format'
+import { VerdictStamp } from './VerdictStamp'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -53,22 +53,7 @@ export function ImmersiveHeader({
   onOpenReel,
   onOpenSession,
 }: ImmersiveHeaderProps) {
-  const meta = verdictMeta(verdict)
   const showReel = hasReel && verdict !== 'reject'
-
-  const stampColor =
-    meta.tone === 'ok'
-      ? '#36d07f'
-      : meta.tone === 'danger'
-        ? '#f87171'
-        : '#a78bfa'
-
-  const stampShadowColor =
-    meta.tone === 'ok'
-      ? 'rgba(54,208,127,.25)'
-      : meta.tone === 'danger'
-        ? 'rgba(248,113,113,.25)'
-        : 'rgba(167,139,250,.25)'
 
   return (
     <div className="rh-hero overflow-hidden rounded-[18px] shadow-[0_12px_40px_rgba(20,20,40,.22)]">
@@ -164,17 +149,7 @@ export function ImmersiveHeader({
           </div>
 
           {/* Verdict stamp */}
-          <div
-            className="rh-stamp"
-            style={{
-              borderColor: stampColor,
-              color: stampColor,
-              boxShadow: `0 0 22px ${stampShadowColor}`,
-            }}
-            aria-label={`Verdict: ${meta.label}`}
-          >
-            {meta.label.toUpperCase()}
-          </div>
+          <VerdictStamp verdict={verdict} />
         </div>
 
         {/* ── Skills ── */}

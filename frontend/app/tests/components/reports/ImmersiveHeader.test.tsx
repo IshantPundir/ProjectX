@@ -36,3 +36,19 @@ test('null date and duration render without NaN or Invalid Date', () => {
   expect(document.body.textContent).not.toMatch(/NaN|Invalid Date/)
   expect(screen.getByText('Punar Sharma')).toBeInTheDocument()
 })
+
+test('renders worn SVG verdict stamp with correct text for each verdict', () => {
+  const { unmount } = render(<ImmersiveHeader header={header} verdict="advance" hasReel onOpenReel={() => {}} onOpenSession={() => {}} />)
+  expect(screen.getByText('APPROVED')).toBeInTheDocument()
+  expect(screen.getByRole('img', { name: /verdict: approved/i })).toBeInTheDocument()
+  unmount()
+
+  const { unmount: u2 } = render(<ImmersiveHeader header={header} verdict="borderline" hasReel onOpenReel={() => {}} onOpenSession={() => {}} />)
+  expect(screen.getByText('BORDERLINE')).toBeInTheDocument()
+  expect(screen.getByRole('img', { name: /verdict: borderline/i })).toBeInTheDocument()
+  u2()
+
+  render(<ImmersiveHeader header={header} verdict="reject" hasReel={false} onOpenReel={() => {}} onOpenSession={() => {}} />)
+  expect(screen.getByText('REJECTED')).toBeInTheDocument()
+  expect(screen.getByRole('img', { name: /verdict: rejected/i })).toBeInTheDocument()
+})
