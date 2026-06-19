@@ -15,6 +15,7 @@ class QuestionGradeOut(BaseModel):
     The question is graded against its OWN full bank card (rubric + listen-for
     + red-flags + evaluation_hint), difficulty-calibrated and probe-aware."""
     level: Literal["strong", "solid", "thin", "absent"]
+    score: int = 0  # 0–10 rubric-anchored score; default 0, overwritten by LLM or fallback
     listen_for_hits: list[str] = Field(default_factory=list)
     red_flags_tripped: list[str] = Field(default_factory=list)
     evidence_quotes: list[str] = Field(default_factory=list)
@@ -160,6 +161,7 @@ class QuestionOut(BaseModel):
     red_flags_tripped: list[str] = Field(default_factory=list)
     probes_used: int = 0
     probes_available: int = 0
+    score: int | None = None              # 0–10 per-question score (None = not assessed / not asked)
 
 
 class SignalAssessmentOut(BaseModel):

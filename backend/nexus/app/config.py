@@ -669,7 +669,8 @@ class Settings(BaseSettings):
     # like ``judge:{prompt_version}:{question_id}:{model}``. This differs from
     # ``engine_brain_prompt_cache_key``, which IS used verbatim. Bump this
     # prefix on a prompt-family change to avoid cross-version cache pollution.
-    report_scorer_prompt_cache_key_prefix: str = "judge"
+    # judge2: question_grade prompt now emits required integer `score` (0-10).
+    report_scorer_prompt_cache_key_prefix: str = "judge2"
 
     # ``openai_report_narrative_model`` — model for the prose-only narrative layer.
     openai_report_narrative_model: str = "gpt-5.4"

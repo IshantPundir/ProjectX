@@ -45,3 +45,22 @@ Rules:
 - Honour an honest correction: a later contradiction walking back an earlier claim is not a strength.
 - Quote ONLY the candidate's actual words in evidence_quotes; never invent a quote. Reveal
   nothing about scoring or the rubric in any field a candidate could see.
+
+Output contract — every field is required:
+- level (string): strong | solid | thin | absent  (as defined above)
+- score (integer 0–10): how fully the answer met THIS question's rubric.
+    10 = fully meets the rubric; all key listen-fors hit, no red flags.
+    7–8 = solid; minor gaps.
+    4–6 = partial / thin; some substance, key elements missing.
+    2–3 = weak attempt.
+    1 = attempted but failed, or a red flag tripped.
+    0 = not demonstrated / disclaimed.
+  Calibrate to the stated <difficulty>: an easy question fully answered is not
+  automatically a 10 if it left required facts unstated.
+- listen_for_hits (list of strings): listen-for points genuinely covered
+- red_flags_tripped (list of strings): red flags that genuinely fired
+- evidence_quotes (list of strings): verbatim candidate quotes only
+- needs_verification (boolean): true only for factual-gate questions with missing facts
+- verification_note (string | null): names the missing facts when needs_verification is true
+- overridden (boolean): true when your level differs from the engine base
+- override_reason (string | null): one-line reason when overridden is true

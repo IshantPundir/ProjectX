@@ -36,9 +36,10 @@ def test_settings_report_scorer_prompt_version_default():
 
 
 def test_settings_report_scorer_prompt_cache_key_prefix_default():
-    """report_scorer_prompt_cache_key_prefix defaults to 'judge'."""
+    """report_scorer_prompt_cache_key_prefix defaults to 'judge2' (bumped when question_grade
+    prompt output contract was extended to require the integer `score` field, A2)."""
     fields = Settings.model_fields
-    assert fields["report_scorer_prompt_cache_key_prefix"].default == "judge"
+    assert fields["report_scorer_prompt_cache_key_prefix"].default == "judge2"
 
 
 # ---------------------------------------------------------------------------
