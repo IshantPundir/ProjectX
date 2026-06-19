@@ -28,6 +28,7 @@ from app.modules.reporting.actors import score_session_report, share_report_pdf
 from app.modules.reporting.assets import (
     attach_question_thumbnails,
     attach_reference_photo,
+    attach_report_header,
 )
 from app.modules.reporting.models import ReportShare, SessionReport
 from app.modules.reporting.schemas import (
@@ -140,6 +141,8 @@ async def get_report_by_session(
     await attach_question_thumbnails(
         db=db, report=read, session_id=session_id, tenant_id=tenant_id)
     await attach_reference_photo(
+        db=db, report=read, session_id=session_id, tenant_id=tenant_id)
+    await attach_report_header(
         db=db, report=read, session_id=session_id, tenant_id=tenant_id)
     return read.model_dump(mode="json")
 
@@ -316,6 +319,8 @@ async def get_report_by_id(
     await attach_question_thumbnails(
         db=db, report=read, session_id=row.session_id, tenant_id=tenant_id)
     await attach_reference_photo(
+        db=db, report=read, session_id=row.session_id, tenant_id=tenant_id)
+    await attach_report_header(
         db=db, report=read, session_id=row.session_id, tenant_id=tenant_id)
     return read.model_dump(mode="json")
 

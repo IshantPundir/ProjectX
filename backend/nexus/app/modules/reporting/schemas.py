@@ -180,6 +180,23 @@ class SignalAssessmentOut(BaseModel):
     level_basis: str = ""                 # e.g. "dedicated: thin; +1 cross-credit → solid"
 
 
+class ReportHeader(BaseModel):
+    """Server-sourced identity block: candidate, job, session timing, demonstrated skills.
+
+    Attached at read time by ``attach_report_header`` in ``assets.py``.
+    All callers (authenticated report GET + public share envelope) use the same
+    function so the header is always consistent.
+    """
+    candidate_name: str
+    candidate_email: str | None = None
+    job_title: str = ""
+    stage_label: str = ""
+    session_started_at: str | None = None   # ISO 8601
+    duration_seconds: int | None = None
+    skills: list[str] = Field(default_factory=list)
+    reference_photo_url: str | None = None
+
+
 class ReportRead(BaseModel):
     """Recruiter-facing report (PDF-shaped). Mirrors session_reports JSONB columns."""
     verdict: Verdict
@@ -204,6 +221,7 @@ class ReportRead(BaseModel):
     human_decision: dict | None = None
     generated_at: str | None = None
     reference_photo_url: str | None = None  # presigned R2 GET, attached at read time
+    header: ReportHeader | None = None      # server-sourced identity block, attached at read time
 
 
 class ShareReportIn(BaseModel):
