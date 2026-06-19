@@ -85,6 +85,109 @@
   100% { transform: scale(1.7); opacity: 0; }
 }
 
+/* ─── ImmersiveHeader ──────────────────────────────────────────────────────── */
+
+/* atmospheric background */
+.rh-hero-in {
+  background:
+    radial-gradient(620px circle at 12% 8%, rgba(111,104,240,.55), transparent 42%),
+    radial-gradient(520px circle at 92% 96%, rgba(54,208,127,.20), transparent 46%),
+    linear-gradient(120deg,#141531,#2b2d62);
+}
+
+/* dot-grid pseudo-layer */
+.rh-dot-grid {
+  position: absolute;
+  inset: 0;
+  opacity: .5;
+  background-image: radial-gradient(rgba(255,255,255,.06) 1px, transparent 1px);
+  background-size: 16px 16px;
+  pointer-events: none;
+}
+
+/* photo / monogram */
+.rh-photo {
+  height: 164px;
+  width: 164px;
+  flex: none;
+  border-radius: 20px;
+  border: 3px solid rgba(255,255,255,.22);
+  box-shadow: 0 0 0 6px rgba(111,104,240,.18), 0 14px 34px rgba(0,0,0,.4);
+  object-fit: cover;
+}
+.rh-monogram {
+  background: linear-gradient(135deg,#6f68f0,#4f46e5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 60px;
+  font-weight: 800;
+  color: #fff;
+}
+
+/* verdict stamp */
+.rh-stamp {
+  border: 2.5px solid;
+  font-style: italic;
+  font-weight: 800;
+  font-size: 21px;
+  letter-spacing: 1px;
+  padding: 8px 17px;
+  border-radius: 8px;
+  transform: rotate(-7deg);
+  flex: none;
+  white-space: nowrap;
+}
+
+/* skill pill */
+.rh-pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.12);
+  color: #e7e8fb;
+  margin: 4px 5px 0 0;
+  border: 1px solid rgba(255,255,255,.16);
+}
+
+/* CTA — glowing gradient reel button */
+.rh-btn-reel {
+  padding: 13px 20px;
+  border-radius: 13px;
+  background: linear-gradient(100deg,#7b5cff,#b14cff 55%,#ff5ea0);
+  color: #fff;
+  border: none;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.12), 0 10px 26px rgba(150,76,255,.5);
+}
+.rh-btn-reel:hover {
+  filter: brightness(1.08);
+}
+.rh-btn-reel-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* CTA — glass session button */
+.rh-btn-sec {
+  padding: 13px 18px;
+  border-radius: 13px;
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.22);
+  color: #eef;
+  font-weight: 600;
+  font-size: 13px;
+}
+.rh-btn-sec:hover {
+  background: rgba(255,255,255,.13);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .px-gauge-ring { animation: none; stroke-dashoffset: var(--px-gauge-final-offset); }
   .px-reveal { animation: none; opacity: 1; transform: none; }
