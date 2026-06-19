@@ -118,11 +118,51 @@ class TestTemplateSmokeC2:
         assert "/ 5" in html
 
     def test_no_title_truncation_artifact(self):
-        """The full question_text appears as the question heading (not the short title)."""
-        ctx = _build_ctx_with_radar()
+        """The full question_text appears as the question heading (not the short title).
+
+        The fixture uses a distinctive short title that must never appear in the
+        rendered question heading when question_text is present.
+        """
+        # Use a report whose question has a distinctive short title.
+        base = {
+            "verdict": "advance", "verdict_reason": "ok",
+            "overall_score": 8.5, "overall_coverage": 1.0, "overall_confidence": "high",
+            "decision": {"headline": "h", "why_positive": {"title": "p", "body": "pb"},
+                         "why_negative": {"title": "n", "body": "nb"}},
+            "scores": {
+                "overall": {"score": 8.5, "tier_label": "Strong", "tone": "ok",
+                            "confidence": "high", "coverage": 1.0},
+            },
+            "quick_summary": "Strong.",
+            "strengths": [], "concerns": [],
+            "questions": [
+                {
+                    "seq": 1, "question_id": "q1",
+                    "title": "SHORT_TITLE_ARTIFACT",
+                    "question_text": "Describe a time you designed a distributed system from scratch and handled the trade-offs between consistency and availability.",
+                    "status_badge": "passed", "status_tone": "ok",
+                    "candidate_quote": "", "our_read": "",
+                    "difficulty": "hard", "score": 8,
+                }
+            ],
+            "methodology": {"note": "", "charity_flags": []},
+            "signal_assessments": [],
+        }
+        report = ReportRead.model_validate(base)
+        ctx = build_pdf_context(
+            report,
+            candidate_name="Test Candidate",
+            job_title="Engineer",
+            stage_label="AI Screening",
+            generated_on="Jun 15, 2026",
+            reference_photo_url=None,
+            full_session_url="https://x",
+        )
         html = build_pdf_html(ctx)
-        # Full text is there
+        # Full question_text must be present in the heading
         assert "distributed system from scratch" in html
+        # The short title must NOT appear in the heading (question_text wins)
+        assert "SHORT_TITLE_ARTIFACT" not in html
 
     def test_session_date_in_html(self):
         ctx = _build_ctx_with_radar()

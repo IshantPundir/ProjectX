@@ -201,6 +201,45 @@ def build_radar_geometry(radar: list[dict], *, size: float = 240) -> dict | None
     }
 
 
+def derive_strengths(
+    assessments: list,
+    *,
+    cap: int = 3,
+) -> list[str]:
+    """Return up to `cap` signal names where level is 'solid' or 'strong'.
+
+    Mirrors the web AtAGlanceBand Top-strengths predicate: level ∈ {solid, strong},
+    sorted by weight descending. No knockout/priority filter — any positively-assessed
+    signal qualifies regardless of its requirement tier.
+    """
+    _POSITIVE = {"solid", "strong"}
+    candidates = [a for a in assessments if a.level in _POSITIVE]
+    candidates.sort(key=lambda a: (-a.weight, a.signal))
+    return [a.signal for a in candidates[:cap]]
+
+
+def derive_watchouts(
+    assessments: list,
+    *,
+    cap: int = 3,
+) -> list[str]:
+    """Return up to `cap` signal names that are gapped AND required/knockout.
+
+    Mirrors the web AtAGlanceBand Watch-outs predicate:
+      - (knockout is True) OR (priority == 'required')
+      - AND level ∈ {thin, absent, not_reached}
+
+    Sorted by weight descending.
+    """
+    _NEGATIVE = {"thin", "absent", "not_reached"}
+    candidates = [
+        a for a in assessments
+        if (a.knockout or a.priority == "required") and a.level in _NEGATIVE
+    ]
+    candidates.sort(key=lambda a: (-a.weight, a.signal))
+    return [a.signal for a in candidates[:cap]]
+
+
 @dataclass(frozen=True)
 class StampSpec:
     text: str
@@ -311,4 +350,7 @@ def build_pdf_context(
         "header": header_block,
         "radar": radar_list,
         "radar_geom": build_radar_geometry(radar_list),
+        # ---- at-a-glance pills (web parity) ----
+        "strengths_pills": derive_strengths(report.signal_assessments),
+        "watchout_pills": derive_watchouts(report.signal_assessments),
     }

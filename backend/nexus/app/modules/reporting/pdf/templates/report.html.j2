@@ -218,6 +218,29 @@
   </div>
   {% endif %}
 
+  {% if strengths_pills or watchout_pills %}
+  <div class="sec keep" style="padding-top:14px;padding-bottom:6px">
+    <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
+      {% if strengths_pills %}
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#0e7a45">Top strengths</span>
+        {% for name in strengths_pills %}
+        <span class="chip" style="background:#e7f7ee;color:#0e7a45">{{ name }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if watchout_pills %}
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#b4791a">Watch-outs</span>
+        {% for name in watchout_pills %}
+        <span class="chip" style="background:#fbf1de;color:#b4791a">{{ name }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   <div class="sec">
     <div class="secnum"><span class="e">01 &mdash; Summary</span><span class="ln"></span></div>
     <p class="body">{{ quick_summary }}</p>
