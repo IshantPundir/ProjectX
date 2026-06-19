@@ -1,9 +1,11 @@
 'use client'
 
 import { useState, type CSSProperties } from 'react'
+import { Share2 } from 'lucide-react'
 
 import type { HumanDecisionValue, ReportRead } from '@/lib/api/reports'
 import { useReel } from '@/lib/hooks/use-reel'
+import { Button } from '@/components/px'
 import { AtAGlanceBand } from './AtAGlanceBand'
 import { HumanDecisionPanel } from './HumanDecisionPanel'
 import { ImmersiveHeader } from './ImmersiveHeader'
@@ -14,6 +16,7 @@ import { QuickSummary } from './QuickSummary'
 import { ReportMethodologyFooter } from './ReportMethodologyFooter'
 import './report.css'
 import { ScoresCard } from './ScoresCard'
+import { ShareReportDialog } from './ShareReportDialog'
 import { SignalAuditTable } from './SignalAuditTable'
 import { StrengthsConcerns } from './StrengthsConcerns'
 import { ReelTheater } from './theater/ReelTheater'
@@ -37,6 +40,9 @@ export function ReportView({
   report, sessionId, candidateName, candidateId, title = 'Interview', subtitle = '',
   canRegenerate, onRegenerate, onDecision, isSubmitting,
 }: Props) {
+  // ── Share state ───────────────────────────────────────────────────────────
+  const [shareOpen, setShareOpen] = useState(false)
+
   // ── Theater state ─────────────────────────────────────────────────────────
   const [theaterOpen, setTheaterOpen] = useState(false)
   const [theaterFlagMs, setTheaterFlagMs] = useState<number | null>(null)
@@ -56,6 +62,17 @@ export function ReportView({
 
   return (
     <div className="mx-auto max-w-[1400px] px-6 pb-10 pt-5">
+      {/* ── Action cluster — Share + Regenerate ── */}
+      <div className="mb-3 flex justify-end gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={() => setShareOpen(true)}>
+          <Share2 size={14} className="mr-1.5" /> Share
+        </Button>
+        {canRegenerate && (
+          <Button type="button" variant="outline" size="sm" onClick={onRegenerate}>Regenerate</Button>
+        )}
+      </div>
+      <ShareReportDialog sessionId={sessionId} open={shareOpen} onOpenChange={setShareOpen} />
+
       {/* ── Immersive header ── */}
       {report.header ? (
         <div className="mb-5 px-reveal" style={{ '--px-stagger': 0 } as CSSProperties}>

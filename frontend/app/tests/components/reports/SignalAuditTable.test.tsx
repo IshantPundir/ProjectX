@@ -33,7 +33,7 @@ describe('SignalAuditTable', () => {
   })
 
   it('renders the level in the grade cell', () => {
-    const a = makeSignalAssessment({ level: 'solid', provenance: 'asked_directly', score: 80 })
+    const a = makeSignalAssessment({ level: 'solid', provenance: 'asked_directly', score: 8.0 })
     render(<SignalAuditTable assessments={[a]} />)
     expect(screen.getByText('solid')).toBeInTheDocument()
     expect(screen.getByText(/asked_directly/)).toBeInTheDocument()

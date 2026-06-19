@@ -12,9 +12,8 @@ describe('ScoresCard', () => {
     expect(screen.getByText('Technical')).toBeInTheDocument()
     expect(screen.getByText('Communication')).toBeInTheDocument()
     expect(screen.queryByText('Behavioral')).not.toBeInTheDocument()  // not_assessed → hidden
-    // Scores are already 0–10; fixture has overall.score=41 but that's the old 0–100 value.
-    // The ScoreGauge now formats as-is: 41.0
-    expect(screen.getAllByText('41.0').length).toBeGreaterThan(0)
+    // Scores are 0–10; fixture overall.score=4.1, formatTen renders as-is → "4.1"
+    expect(screen.getAllByText('4.1').length).toBeGreaterThan(0)
   })
 
   it('shows the session-score provenance sub-line (values already 0–10)', () => {

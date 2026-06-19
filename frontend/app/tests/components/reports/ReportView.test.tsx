@@ -17,6 +17,10 @@ vi.mock('@/lib/hooks/use-session-proctoring', () => ({
 vi.mock('@/lib/hooks/use-reel', () => ({
   useReel: () => ({ data: { status: 'absent', signed_url: null, eligible: false, chapters: [] }, isLoading: false }),
 }))
+// useShareReport is used by ShareReportDialog embedded in ReportView
+vi.mock('@/lib/hooks/use-share-report', () => ({
+  useShareReport: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}))
 
 const noop = vi.fn()
 
@@ -78,11 +82,14 @@ describe('ReportView — Layout II', () => {
   })
 
   it('scores in ScoresCard are rendered without double-division (0-10 native)', () => {
-    // The fixture has overall.score=41 which is OLD 0-100 format (test data not yet updated)
-    // but ScoresCard/ScoreGauge now render as-is (formatTen, no ÷10).
-    // This confirms no double-division: score=41 → "41.0" displayed, not "4.1".
+    // Fixture overall.score=4.1 (0-10 native). ScoreGauge uses formatTen (no ÷10),
+    // so it should display "4.1" — not "0.4" (double-divided).
     renderView()
-    // ScoresCard should show the score as-is (41.0 from the fixture)
-    expect(screen.getAllByText('41.0').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('4.1').length).toBeGreaterThan(0)
+  })
+
+  it('Share button is present in the action cluster', () => {
+    renderView()
+    expect(screen.getByRole('button', { name: /share/i })).toBeInTheDocument()
   })
 })
