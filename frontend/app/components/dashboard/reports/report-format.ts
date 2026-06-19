@@ -32,10 +32,20 @@ export const TONE_BG: Record<Tone, string> = {
   accent: 'var(--px-accent-tint)',
 }
 
-/** 0–100 integer → "X.X" out of ten; null stays null (never a zero). */
+/**
+ * @deprecated Backend scores are already 0–10. Use `formatTen` instead.
+ * Kept only for components that haven't been migrated yet.
+ * 0–100 integer → "X.X" out of ten; null stays null (never a zero).
+ */
 export function scoreToTen(score: number | null): string | null {
   if (score === null || score === undefined) return null
   return (score / 10).toFixed(1)
+}
+
+/** Format an already-0–10 score as "X.X"; null stays null (never a zero). */
+export function formatTen(score: number | null): string | null {
+  if (score === null || score === undefined) return null
+  return score.toFixed(1)
 }
 
 /** ms → "mm:ss". */
@@ -56,12 +66,12 @@ export function verdictMeta(v: Verdict): VerdictMeta {
   return VERDICT_META[v]
 }
 
-/** Tier tone from a 0–100 score, aligned to backend verdict thresholds
- *  (ADVANCE_THRESHOLD 65 / REJECT_THRESHOLD 40 in reporting/scoring/constants.py). */
+/** Tier tone from a 0–10 score, aligned to backend verdict thresholds
+ *  (ADVANCE_THRESHOLD 6.5 / REJECT_THRESHOLD 4.0 on a 0–10 scale). */
 export function scoreBandTone(score: number | null): Tone {
   if (score === null || score === undefined) return 'neutral'
-  if (score >= 65) return 'ok'
-  if (score >= 40) return 'caution'
+  if (score >= 6.5) return 'ok'
+  if (score >= 4.0) return 'caution'
   return 'danger'
 }
 

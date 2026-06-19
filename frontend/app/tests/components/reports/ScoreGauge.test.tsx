@@ -3,9 +3,9 @@ import { render, screen } from '@testing-library/react'
 import { ScoreGauge } from '@/components/dashboard/reports/ScoreGauge'
 
 describe('ScoreGauge', () => {
-  it('renders normalized 0-10 value (36 -> 3.6)', () => {
-    render(<ScoreGauge score={36} label="Overall" />)
-    expect(screen.getByText('3.6')).toBeInTheDocument()
+  it('renders already-0-10 value as-is (7.5 -> "7.5")', () => {
+    render(<ScoreGauge score={7.5} label="Overall" />)
+    expect(screen.getByText('7.5')).toBeInTheDocument()
   })
   it('renders "n/a" for a null score (never a zero)', () => {
     render(<ScoreGauge score={null} label="Behavioral" />)
@@ -13,7 +13,7 @@ describe('ScoreGauge', () => {
     expect(screen.queryByText('0.0')).not.toBeInTheDocument()
   })
   it('exposes an accessible label with the value + context', () => {
-    render(<ScoreGauge score={70} label="Technical" />)
+    render(<ScoreGauge score={7.0} label="Technical" />)
     expect(screen.getByRole('img', { name: /Technical score 7\.0 out of 10/i })).toBeInTheDocument()
   })
   it('null gauge label says not assessed', () => {

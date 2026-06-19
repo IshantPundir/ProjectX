@@ -1,5 +1,5 @@
 import type { SignalAssessmentOut } from '@/lib/api/reports'
-import { scoreToTen } from './report-format'
+import { formatTen } from './report-format'
 
 export function SignalAuditTable({ assessments }: { assessments: SignalAssessmentOut[] }) {
   if (!assessments.length) return null
@@ -49,7 +49,7 @@ export function SignalAuditTable({ assessments }: { assessments: SignalAssessmen
                   )}
                 </td>
                 <td className="py-1 pr-2 tabular-nums" style={{ color: 'var(--px-fg-3)' }}>
-                  {scoreToTen(a.score) ?? '—'}
+                  {formatTen(a.score) ?? '—'}
                 </td>
                 <td className="py-1" style={{ color: 'var(--px-fg-4)' }}>{a.override_reason ?? ''}</td>
               </tr>

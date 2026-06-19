@@ -24,11 +24,12 @@ describe('SignalAuditTable', () => {
     const thin: SignalAssessmentOut = {
       signal: 'API expertise: RESTful APIs', type: 'competency', weight: 2, knockout: false,
       priority: 'required', provenance: 'asked_directly',
-      level: 'thin', score: 25, evidence: [], overridden: false, override_reason: null,
+      // score is already 0–10 (backend native scale); formatTen renders as-is
+      level: 'thin', score: 2.5, evidence: [], overridden: false, override_reason: null,
     }
     render(<SignalAuditTable assessments={[thin]} />)
     expect(screen.getByTitle(/possible bluff/i)).toBeInTheDocument()  // the "thin" chip
-    expect(screen.getByText('2.5')).toBeInTheDocument()               // score 25 → /10
+    expect(screen.getByText('2.5')).toBeInTheDocument()               // score 2.5 → "2.5"
   })
 
   it('renders the level in the grade cell', () => {

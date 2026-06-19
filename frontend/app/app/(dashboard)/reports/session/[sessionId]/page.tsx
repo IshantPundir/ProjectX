@@ -22,6 +22,8 @@ export default function ReportPage() {
 
   // The link usually carries candidateName, but it can be blank (opened without
   // the param) — fall back to the candidate record so the name still shows.
+  // ReportView prefers report.header.candidate_name when available (new reports);
+  // these query-param values are the legacy fallback for reports without a header.
   const { data: candidate } = useCandidate(candidateId)
   const candidateName = (sp.get('candidateName') || candidate?.name || 'Candidate').trim() || 'Candidate'
 

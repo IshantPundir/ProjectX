@@ -1,7 +1,7 @@
 import type { ReportRead, ScoreOut } from '@/lib/api/reports'
 import { ScoreGauge } from './ScoreGauge'
 import { VerdictBand } from './VerdictBand'
-import { confidenceLabel, scoreToTen, tierTone, verdictMeta } from './report-format'
+import { confidenceLabel, formatTen, tierTone, verdictMeta } from './report-format'
 
 const DIMS: { key: string; label: string }[] = [
   { key: 'technical', label: 'Technical' },
@@ -30,9 +30,9 @@ export function ScoresCard({ report }: { report: ReportRead }) {
         {overall?.session_score != null && (overall.holistic_delta ?? 0) !== 0 && (
           <div className="mt-1 text-[10px]" style={{ color: 'var(--px-fg-4)' }}
                title="Deterministic session score, plus a bounded holistic adjustment. See methodology.">
-            Session score {scoreToTen(overall.session_score)}
+            Session score {formatTen(overall.session_score)}
             {' · holistic '}{(overall.holistic_delta as number) > 0 ? '+' : ''}
-            {((overall.holistic_delta as number) / 10).toFixed(1)}
+            {(overall.holistic_delta as number).toFixed(1)}
           </div>
         )}
       </div>
