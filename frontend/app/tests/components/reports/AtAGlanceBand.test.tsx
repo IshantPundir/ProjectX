@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { AtAGlanceBand } from '@/components/dashboard/reports/AtAGlanceBand'
+import { AtAGlanceBand, deriveWatchouts } from '@/components/dashboard/reports/AtAGlanceBand'
 import { makeReport, makeSignalAssessment } from './_fixture'
 
 // ---------------------------------------------------------------------------
@@ -79,6 +79,34 @@ test('renders required/knockout thin+absent signals as watch-out pills', () => {
   expect(pillTexts).toContain('Identity / Azure AD')
   // knockout=true + level=absent → watch-out
   expect(pillTexts).toContain('Comms Skill')
+})
+
+// ---------------------------------------------------------------------------
+// Watch-out cap + order (web must match PDF: top-3 by weight desc, signal tie-break)
+// ---------------------------------------------------------------------------
+
+test('deriveWatchouts caps at 3 and returns them weight-desc (lowest-weight excluded)', () => {
+  // 4 watch-out-eligible signals (required + thin/absent/not_reached) with distinct weights
+  const assessments = [
+    makeSignalAssessment({ signal: 'Delta', level: 'thin',        weight: 4, knockout: false, priority: 'required' }),
+    makeSignalAssessment({ signal: 'Alpha', level: 'absent',      weight: 3, knockout: false, priority: 'required' }),
+    makeSignalAssessment({ signal: 'Beta',  level: 'not_reached', weight: 2, knockout: true,  priority: 'preferred' }),
+    // This one has the lowest weight — must be excluded
+    makeSignalAssessment({ signal: 'Gamma', level: 'thin',        weight: 1, knockout: false, priority: 'required' }),
+  ]
+
+  const result = deriveWatchouts(assessments)
+
+  // Only top-3 returned
+  expect(result).toHaveLength(3)
+
+  // Ordered weight desc
+  expect(result[0].signal).toBe('Delta')
+  expect(result[1].signal).toBe('Alpha')
+  expect(result[2].signal).toBe('Beta')
+
+  // Lowest-weight entry excluded
+  expect(result.map((r) => r.signal)).not.toContain('Gamma')
 })
 
 // ---------------------------------------------------------------------------

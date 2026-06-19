@@ -17,21 +17,24 @@ export function firstSentence(text: string): string {
 const STRENGTH_LEVELS: ReadonlySet<QuestionLevel> = new Set(['solid', 'strong'])
 const WATCHOUT_LEVELS: ReadonlySet<QuestionLevel> = new Set(['thin', 'absent', 'not_reached'])
 
-/** Top-3 solid/strong signals by weight descending. */
+/** Top-3 solid/strong signals by weight descending, signal-name tie-broken. */
 export function deriveStrengths(assessments: SignalAssessmentOut[]): SignalAssessmentOut[] {
   return assessments
     .filter((a) => STRENGTH_LEVELS.has(a.level))
-    .sort((a, b) => b.weight - a.weight)
+    .sort((a, b) => b.weight - a.weight || a.signal.localeCompare(b.signal))
     .slice(0, 3)
 }
 
-/** Required or knockout signals with a thin/absent/not_reached level. */
+/** Top-3 required/knockout thin+absent+not_reached signals by weight desc, signal-name tie-broken. */
 export function deriveWatchouts(assessments: SignalAssessmentOut[]): SignalAssessmentOut[] {
-  return assessments.filter(
-    (a) =>
-      (a.knockout === true || a.priority === 'required') &&
-      WATCHOUT_LEVELS.has(a.level),
-  )
+  return assessments
+    .filter(
+      (a) =>
+        (a.knockout === true || a.priority === 'required') &&
+        WATCHOUT_LEVELS.has(a.level),
+    )
+    .sort((a, b) => b.weight - a.weight || a.signal.localeCompare(b.signal))
+    .slice(0, 3)
 }
 
 // ---------------------------------------------------------------------------
