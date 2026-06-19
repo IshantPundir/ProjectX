@@ -85,6 +85,28 @@
             font-style:italic; line-height:1.75; margin-top:13px; }
   .qread { font-size:11.5px; color:#3a3d45; line-height:1.7; margin-top:10px; }
   .pad-bottom { height:30px; }
+
+  /* header additions */
+  .hemail { font-size:11px; color:#9b9cc4; margin:3px 0 0; }
+  .hmeta { font-size:11px; color:#bcbdda; margin:6px 0 0; line-height:1.6; }
+  .hskills { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .hskill { background:rgba(255,255,255,.13); color:#e0e0f0; font-size:9.5px;
+             font-weight:600; border-radius:6px; padding:3px 9px; letter-spacing:.4px; }
+
+  /* radar section */
+  .atglance { display:flex; gap:32px; align-items:flex-start; padding:22px 34px 0; }
+  .radar-wrap { flex:none; }
+  .radar-bar { display:flex; flex-direction:column; gap:8px; min-width:160px; }
+  .rbar-row { display:flex; align-items:center; gap:8px; }
+  .rbar-label { font-size:10px; font-weight:700; color:#3a3d45; flex:1; min-width:0;
+                white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rbar-track { flex:1; height:5px; background:#ececf1; border-radius:3px; overflow:hidden; }
+  .rbar-fill { height:100%; background:#6f68f0; border-radius:3px; }
+  .rbar-score { font-size:10px; font-weight:700; color:#3a3d45; width:22px; text-align:right; }
+
+  /* star row */
+  .qscore { display:flex; align-items:center; gap:8px; margin-top:8px; }
+  .qlabel { font-size:10px; color:#6b6f7a; font-weight:600; }
 </style></head>
 <body>
   <svg width="0" height="0" style="position:absolute"><defs>
@@ -100,7 +122,7 @@
   {%- macro gauge(label, score, color, tier, size, stroke, numsize) -%}
     {%- set r = (size / 2) - stroke -%}
     {%- set circ = 6.2831853 * r -%}
-    {%- set pct = (score if score is not none else 0) / 100 -%}
+    {%- set pct = (score if score is not none else 0) / 10 -%}
     {%- set off = circ * (1 - pct) -%}
     <div class="gz">
       <svg width="{{ size }}" height="{{ size }}" viewBox="0 0 {{ size }} {{ size }}">
@@ -127,8 +149,19 @@
       {% else %}<div class="mono">{{ monogram }}</div>{% endif %}
       <div class="who">
         <div class="hname serif">{{ candidate_name }}</div>
-        <div class="hrole">{{ job_title }}</div>
-        <a class="stub" href="{{ full_session_url }}">&#9654; See full session recording</a>
+        {% if header.candidate_email %}<div class="hemail">{{ header.candidate_email }}</div>{% endif %}
+        <div class="hmeta">
+          {{ header.job_title or job_title }}
+          {%- if header.stage_label %} &middot; {{ header.stage_label }}{% endif %}
+          {%- if header.session_date %} &middot; {{ header.session_date }}{% endif %}
+          {%- if header.duration %} &middot; {{ header.duration }}{% endif %}
+        </div>
+        {% if header.skills %}
+        <div class="hskills">
+          {% for sk in header.skills %}<span class="hskill">{{ sk }}</span>{% endfor %}
+        </div>
+        {% endif %}
+        <a class="stub" href="{{ full_session_url }}" style="margin-top:14px;display:inline-block">&#9654; See full session recording</a>
       </div>
       <div class="stampwrap">
         <svg width="196" height="98" viewBox="0 0 200 100">
@@ -148,6 +181,42 @@
     {{ gauge('Overall', overall_score, overall_color, overall_tier, 106, 9, 30) }}
     {% for d in dimensions %}{{ gauge(d.name, d.score, d.color, d.tier, 106, 9, 30) }}{% endfor %}
   </div>
+
+  {% if radar_geom %}
+  <div class="atglance">
+    <div class="radar-wrap">
+      <svg width="{{ radar_geom.size }}" height="{{ radar_geom.size }}" viewBox="0 0 {{ radar_geom.size }} {{ radar_geom.size }}">
+        <!-- grid polygons -->
+        <polygon points="{{ radar_geom.grid_points }}" fill="none" stroke="#e3e3ea" stroke-width="1"/>
+        <polygon points="{{ radar_geom.mid_points }}" fill="none" stroke="#e3e3ea" stroke-width="0.7" stroke-dasharray="3,3"/>
+        <!-- axis lines -->
+        {% for ax in radar_geom.axes %}
+        <line x1="{{ ax.x1 }}" y1="{{ ax.y1 }}" x2="{{ ax.x2 }}" y2="{{ ax.y2 }}" stroke="#e3e3ea" stroke-width="0.7"/>
+        {% endfor %}
+        <!-- data polygon -->
+        <polygon points="{{ radar_geom.data_points }}" fill="rgba(111,104,240,0.18)" stroke="#6f68f0" stroke-width="2" stroke-linejoin="round"/>
+        <!-- axis labels -->
+        {% for lb in radar_geom.labels %}
+        <text x="{{ lb.x }}" y="{{ lb.y }}" text-anchor="{{ lb.anchor }}"
+              font-family="Liberation Sans,Arial,sans-serif" font-size="8" fill="#54565f"
+              font-weight="600">{{ lb.name }}</text>
+        {% endfor %}
+      </svg>
+    </div>
+  </div>
+  {% elif radar %}
+  <div class="sec keep">
+    <div class="radar-bar">
+      {% for ax in radar %}
+      <div class="rbar-row">
+        <span class="rbar-label">{{ ax.name }}</span>
+        <div class="rbar-track"><div class="rbar-fill" style="width:{{ (ax.score / 10 * 100)|int }}%"></div></div>
+        <span class="rbar-score">{{ ax.score }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
 
   <div class="sec">
     <div class="secnum"><span class="e">01 &mdash; Summary</span><span class="ln"></span></div>
@@ -196,9 +265,33 @@
     <div class="secnum"><span class="e">04 &mdash; Question by question</span><span class="ln"></span></div>
     {% for q in questions %}
     <div class="qcard"><div class="qhead">
-      <div style="display:flex"><span class="qnum">{{ q.seq }}</span><span class="qtitle">{{ q.title }}</span></div>
+      <div style="display:flex"><span class="qnum">{{ q.seq }}</span><span class="qtitle">{{ q.question_text or q.title }}</span></div>
       <div style="white-space:nowrap"><span class="chip chip-{{ q.status_tone or 'neutral' }}">{{ q.status_badge|replace('_',' ') }}</span>
         {% if q.difficulty %}<span class="chip chip-diff">{{ q.difficulty }}</span>{% endif %}</div></div>
+      {% if q.stars is defined and q.score is not none %}
+      <div class="qscore">
+        <svg width="80" height="16" viewBox="0 0 80 16">
+          {% for i in range(5) %}
+          {%- set f = q.stars[i] -%}
+          {%- set sx = i * 16 -%}
+          <!-- empty star outline -->
+          <polygon points="{{ sx+8 }},1 {{ sx+10 }},6 {{ sx+15 }},6 {{ sx+11 }},9 {{ sx+12 }},14 {{ sx+8 }},11 {{ sx+4 }},14 {{ sx+5 }},9 {{ sx+1 }},6 {{ sx+6 }},6"
+                   fill="#f0f0f4" stroke="#d0d0d8" stroke-width="0.5"/>
+          {% if f >= 1.0 %}
+          <!-- full fill -->
+          <polygon points="{{ sx+8 }},1 {{ sx+10 }},6 {{ sx+15 }},6 {{ sx+11 }},9 {{ sx+12 }},14 {{ sx+8 }},11 {{ sx+4 }},14 {{ sx+5 }},9 {{ sx+1 }},6 {{ sx+6 }},6"
+                   fill="#f5a623"/>
+          {% elif f >= 0.5 %}
+          <!-- half fill via clip -->
+          <defs><clipPath id="hc{{ loop.index }}"><rect x="{{ sx }}" y="0" width="8" height="16"/></clipPath></defs>
+          <polygon points="{{ sx+8 }},1 {{ sx+10 }},6 {{ sx+15 }},6 {{ sx+11 }},9 {{ sx+12 }},14 {{ sx+8 }},11 {{ sx+4 }},14 {{ sx+5 }},9 {{ sx+1 }},6 {{ sx+6 }},6"
+                   fill="#f5a623" clip-path="url(#hc{{ loop.index }})"/>
+          {% endif %}
+          {% endfor %}
+        </svg>
+        <span class="qlabel">{{ "%.1f"|format(q.score / 2) }} / 5</span>
+      </div>
+      {% endif %}
       {% if q.candidate_quote %}<div class="qquote">&ldquo;{{ q.candidate_quote }}&rdquo;</div>{% endif %}
       {% if q.our_read %}<div class="qread">{{ q.our_read }}</div>{% endif %}
     </div>

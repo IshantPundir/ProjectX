@@ -4,6 +4,7 @@ No I/O, no Playwright — unit-testable anywhere.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -124,6 +125,82 @@ def _build_radar(report: ReportRead) -> list[dict]:
     ]
 
 
+def build_radar_geometry(radar: list[dict], *, size: float = 240) -> dict | None:
+    """Precompute SVG coordinates for the radar spider chart.
+
+    Args:
+        radar: list of {"name": str, "score": float} — each score 0–10
+        size: SVG canvas size (square), default 240
+
+    Returns:
+        None if len(radar) < 3 (template renders bar fallback instead).
+        Otherwise a dict with:
+          - size: SVG canvas size (passed through for template)
+          - cx, cy: center point
+          - R: max radius
+          - grid_points: full-radius polygon points string
+          - mid_points: 0.5-radius polygon points string
+          - axes: list of {"x1": cx, "y1": cy, "x2": float, "y2": float} per axis
+          - data_points: data polygon points string (each vertex at R * score/10)
+          - labels: list of {"x": float, "y": float, "anchor": str, "name": str}
+    """
+    n = len(radar)
+    if n < 3:
+        return None
+
+    cx = cy = size / 2.0
+    # Leave room for labels around the edge.
+    R = size / 2.0 - 30.0
+
+    def _vertex(factor: float, i: int) -> tuple[float, float]:
+        angle_deg = -90.0 + i * 360.0 / n
+        rad = math.radians(angle_deg)
+        return (cx + R * factor * math.cos(rad), cy + R * factor * math.sin(rad))
+
+    def _pts(factor: float) -> str:
+        return " ".join(f"{_vertex(factor, i)[0]:.2f},{_vertex(factor, i)[1]:.2f}" for i in range(n))
+
+    # Data polygon: each vertex at R * (score / 10)
+    data_pts_list: list[str] = []
+    for i, ax in enumerate(radar):
+        score = ax.get("score") or 0.0
+        factor = max(0.0, min(1.0, score / 10.0))
+        x, y = _vertex(factor, i)
+        data_pts_list.append(f"{x:.2f},{y:.2f}")
+    data_points = " ".join(data_pts_list)
+
+    # Axes
+    axes = []
+    for i in range(n):
+        gx, gy = _vertex(1.0, i)
+        axes.append({"x1": cx, "y1": cy, "x2": gx, "y2": gy})
+
+    # Labels — push 18px outward from grid edge
+    label_factor = 1.0 + 18.0 / R
+    labels = []
+    for i, ax in enumerate(radar):
+        lx, ly = _vertex(label_factor, i)
+        if lx > cx + 2:
+            anchor = "start"
+        elif lx < cx - 2:
+            anchor = "end"
+        else:
+            anchor = "middle"
+        labels.append({"x": lx, "y": ly, "anchor": anchor, "name": ax["name"]})
+
+    return {
+        "size": size,
+        "cx": cx,
+        "cy": cy,
+        "R": R,
+        "grid_points": _pts(1.0),
+        "mid_points": _pts(0.5),
+        "axes": axes,
+        "data_points": data_points,
+        "labels": labels,
+    }
+
+
 @dataclass(frozen=True)
 class StampSpec:
     text: str
@@ -202,6 +279,9 @@ def build_pdf_context(
     effective_job_title = header_block["job_title"]
     effective_stage_label = header_block["stage_label"]
 
+    # Build radar list once; reuse for both the raw list and precomputed geometry.
+    radar_list = _build_radar(report)
+
     return {
         # ---- legacy top-level keys (template backwards-compat) ----
         "candidate_name": effective_candidate_name,
@@ -227,7 +307,8 @@ def build_pdf_context(
         "concerns": [c.model_dump() for c in report.concerns],
         # ---- per-question rows (score + question_text + stars) ----
         "questions": questions,
-        # ---- C1 additions ----
+        # ---- C1/C2 additions ----
         "header": header_block,
-        "radar": _build_radar(report),
+        "radar": radar_list,
+        "radar_geom": build_radar_geometry(radar_list),
     }
