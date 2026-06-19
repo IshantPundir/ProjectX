@@ -9,7 +9,6 @@ import { Button } from '@/components/px'
 import { AtAGlanceBand } from './AtAGlanceBand'
 import { HumanDecisionPanel } from './HumanDecisionPanel'
 import { ImmersiveHeader } from './ImmersiveHeader'
-import { PlaybackPanel } from './PlaybackPanel'
 import { ProctoringIntegrityPanel } from './ProctoringIntegrityPanel'
 import { QuestionByQuestion } from './QuestionByQuestion'
 import { QuickSummary } from './QuickSummary'
@@ -127,7 +126,6 @@ export function ReportView({
               <ScoresCard key="scores" report={report} />,
               <ProctoringIntegrityPanel key="proctoring" sessionId={report.session_id ?? sessionId} onSeek={(ms) => openTheater(ms)} />,
               <HumanDecisionPanel key="decision" verdict={report.verdict} decision={report.human_decision} onSubmit={onDecision} isSubmitting={isSubmitting} />,
-              <PlaybackPanel key="p" report={report} candidateName={resolvedName} onOpenTheater={() => openTheater(null)} />,
             ].map((node, i) => (
               <div key={node.key} className="px-reveal" style={{ '--px-stagger': i + 7 } as CSSProperties}>{node}</div>
             ))}

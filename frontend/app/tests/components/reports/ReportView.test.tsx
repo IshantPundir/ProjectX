@@ -4,12 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReportView } from '@/components/dashboard/reports/ReportView'
 import { makeReport } from './_fixture'
 
-// ReportView embeds <SessionPlayback>, <ProctoringIntegrityPanel>, and
-// <AtAGlanceBand> which call query hooks. Mock them so this stays a focused
-// layout test (no network required).
-vi.mock('@/lib/hooks/use-session-recording', () => ({
-  useSessionRecording: () => ({ data: { status: 'absent', transcript: [] }, isLoading: false }),
-}))
+// ReportView embeds <ProctoringIntegrityPanel> and <AtAGlanceBand> which call
+// query hooks. Mock them so this stays a focused layout test (no network required).
 vi.mock('@/lib/hooks/use-session-proctoring', () => ({
   useSessionProctoring: () => ({ data: undefined, isLoading: true }),
 }))
