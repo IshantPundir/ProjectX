@@ -1,3 +1,4 @@
+import { expect, test } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { CompetencyRadar } from '@/components/dashboard/reports/CompetencyRadar'
 import type { SignalAssessmentOut } from '@/lib/api/reports'

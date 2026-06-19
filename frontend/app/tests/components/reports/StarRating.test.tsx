@@ -1,4 +1,5 @@
 // tests/components/reports/StarRating.test.tsx
+import { expect, test } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { StarRating } from '@/components/dashboard/reports/StarRating'
 
