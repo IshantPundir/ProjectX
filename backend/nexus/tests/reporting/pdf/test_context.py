@@ -38,9 +38,9 @@ def test_assessed_dimensions_drops_unassessed():
 
 def test_assessed_dimensions_color_bands():
     scores = {
-        "technical": {"score": 89},      # >=80 → green
-        "communication": {"score": 70},  # 60..79 → amber
-        "behavioral": {"score": 10},     # <60 → red
+        "technical": {"score": 8.9},     # >=8.0 → green
+        "communication": {"score": 7.0}, # 6.0..7.9 → amber
+        "behavioral": {"score": 1.0},    # <6.0 → red
     }
     by_name = {d["name"]: d["color"] for d in assessed_dimensions(scores)}
     assert by_name["Technical"] == "#137a45"
