@@ -23,3 +23,16 @@ test('hides the reel button on reject', () => {
   expect(screen.queryByRole('button', { name: /candidate reel/i })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: /full session/i })).toBeInTheDocument()
 })
+
+test('hasReel=false hides reel button even on advance verdict', () => {
+  render(<ImmersiveHeader header={header} verdict="advance" hasReel={false} onOpenReel={() => {}} onOpenSession={() => {}} />)
+  expect(screen.queryByRole('button', { name: /candidate reel/i })).toBeNull()
+  expect(screen.getByRole('button', { name: /full session/i })).toBeInTheDocument()
+})
+
+test('null date and duration render without NaN or Invalid Date', () => {
+  const nullHeader = { ...header, session_started_at: null, duration_seconds: null }
+  render(<ImmersiveHeader header={nullHeader as never} verdict="advance" hasReel onOpenReel={() => {}} onOpenSession={() => {}} />)
+  expect(document.body.textContent).not.toMatch(/NaN|Invalid Date/)
+  expect(screen.getByText('Punar Sharma')).toBeInTheDocument()
+})
