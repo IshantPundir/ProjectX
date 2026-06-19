@@ -48,6 +48,7 @@ export function makeSignalAssessment(overrides: Partial<SignalAssessmentOut> = {
 /** A complete, valid new-shape ReportRead for component tests. Override per test. */
 export function makeReport(overrides: Partial<ReportRead> = {}): ReportRead {
   return {
+    header: null,
     verdict: 'borderline',
     verdict_reason: 'Could not confirm a must-have.',
     overall_score: 41,
