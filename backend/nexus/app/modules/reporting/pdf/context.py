@@ -23,10 +23,10 @@ _DIM_ORDER = [
 ]
 
 
-def _bar_color(score: int) -> str:
-    if score >= 80:
+def _bar_color(score: float) -> str:
+    if score >= 8.0:
         return "#137a45"
-    if score >= 60:
+    if score >= 6.0:
         return "#b4791a"
     return "#d23b34"
 
@@ -65,8 +65,8 @@ def assessed_dimensions(scores: dict) -> list[dict]:
             continue
         out.append({
             "name": label,
-            "score": int(score),
-            "color": _bar_color(int(score)),
+            "score": score,
+            "color": _bar_color(score),
             "tier": dim.get("tier_label") or "",
         })
     return out
