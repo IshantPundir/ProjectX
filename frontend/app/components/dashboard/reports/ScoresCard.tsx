@@ -1,4 +1,5 @@
 import type { ReportRead, ScoreOut } from '@/lib/api/reports'
+import { CompetencyRadar } from './CompetencyRadar'
 import { ScoreGauge } from './ScoreGauge'
 import { VerdictBand } from './VerdictBand'
 import { confidenceLabel, formatTen, tierTone, verdictMeta } from './report-format'
@@ -57,6 +58,15 @@ export function ScoresCard({ report }: { report: ReportRead }) {
           <div className="text-[12px] font-semibold" style={{ color: 'var(--px-fg)' }}>{confidenceLabel(overall?.confidence ?? 'low')}</div>
         </div>
       </div>
+
+      {report.signal_assessments.length > 0 && (
+        <div className="mt-3 border-t pt-3" style={{ borderColor: 'var(--px-hairline)' }}>
+          <div className="mb-2 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-fg-3)' }}>
+            Competency breakdown
+          </div>
+          <CompetencyRadar assessments={report.signal_assessments} />
+        </div>
+      )}
     </section>
   )
 }

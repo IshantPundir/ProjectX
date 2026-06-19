@@ -30,4 +30,18 @@ describe('ScoresCard', () => {
     // session_score=3.6 → "3.6", holistic_delta=0.2 → "+0.2"
     expect(screen.getByText(/Session score 3\.6 · holistic \+0\.2/)).toBeInTheDocument()
   })
+
+  it('renders the competency radar section when signal_assessments is non-empty', () => {
+    render(<ScoresCard report={makeReport()} />)
+    // Section label
+    expect(screen.getByText('Competency breakdown')).toBeInTheDocument()
+    // CompetencyRadar renders the signal name as an SVG label (fixture has one assessment)
+    expect(screen.getByRole('img', { name: /competency/i })).toBeInTheDocument()
+  })
+
+  it('does not render the competency radar section when signal_assessments is empty', () => {
+    render(<ScoresCard report={makeReport({ signal_assessments: [] })} />)
+    expect(screen.queryByText('Competency breakdown')).not.toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: /competency/i })).not.toBeInTheDocument()
+  })
 })

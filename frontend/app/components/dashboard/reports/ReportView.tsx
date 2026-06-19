@@ -6,7 +6,6 @@ import { Share2 } from 'lucide-react'
 import type { HumanDecisionValue, ReportRead } from '@/lib/api/reports'
 import { useReel } from '@/lib/hooks/use-reel'
 import { Button } from '@/components/px'
-import { AtAGlanceBand } from './AtAGlanceBand'
 import { HumanDecisionPanel } from './HumanDecisionPanel'
 import { ImmersiveHeader } from './ImmersiveHeader'
 import { ProctoringIntegrityPanel } from './ProctoringIntegrityPanel'
@@ -98,11 +97,6 @@ export function ReportView({
           </div>
         </div>
       )}
-
-      {/* ── At-a-glance band ── */}
-      <div className="mb-5 px-reveal" style={{ '--px-stagger': 1 } as CSSProperties}>
-        <AtAGlanceBand report={report} />
-      </div>
 
       {/* ── Two-column body ── */}
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.7fr_1fr]">
