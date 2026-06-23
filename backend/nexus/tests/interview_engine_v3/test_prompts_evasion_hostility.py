@@ -36,3 +36,11 @@ def test_clarify_prompt_handles_relevance():
     assert "relevance" in txt or "why does this matter" in txt
     # purpose, not criteria
     assert "helps" in txt or "purpose" in txt
+
+
+def test_redirect_prompt_delivers_boundary_and_reframe():
+    txt = PromptLoader("v4").get("engine/mouth/redirect").lower()
+    assert "boundary" in txt
+    assert "reframe" in txt
+    assert "never defensive" in txt or "not defensive" in txt
+    assert "never" in txt and ("scold" in txt or "preach" in txt or "lectur" in txt)
