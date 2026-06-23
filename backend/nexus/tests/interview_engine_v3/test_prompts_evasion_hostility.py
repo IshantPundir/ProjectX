@@ -29,3 +29,10 @@ def test_brain_redirect_reframe_offered_once_then_stalled():
     # Persistence: reframe/boundary once; continued dodging → existing STALLED advance.
     assert "once" in txt
     assert "stalled" in txt
+
+
+def test_clarify_prompt_handles_relevance():
+    txt = PromptLoader("v4").get("engine/mouth/clarify").lower()
+    assert "relevance" in txt or "why does this matter" in txt
+    # purpose, not criteria
+    assert "helps" in txt or "purpose" in txt
