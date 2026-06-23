@@ -44,3 +44,10 @@ def test_redirect_prompt_delivers_boundary_and_reframe():
     assert "reframe" in txt
     assert "never defensive" in txt or "not defensive" in txt
     assert "never" in txt and ("scold" in txt or "preach" in txt or "lectur" in txt)
+
+
+def test_bridge_prompt_minimal_neutral_beat_for_hostility():
+    txt = PromptLoader("v4").get("engine/mouth/bridge").lower()
+    assert "hostile" in txt or "insult" in txt
+    # Must warn that "okay"/"got it" reads as agreeing with the remark.
+    assert "agreeing with the remark" in txt
