@@ -26,12 +26,12 @@ export function VerdictStamp({ verdict }: { verdict: Verdict }) {
 
   return (
     <svg
-      width="190"
-      height="95"
+      width="256"
+      height="128"
       viewBox="0 0 200 100"
       role="img"
       aria-label={`Verdict: ${text.charAt(0) + text.slice(1).toLowerCase()}`}
-      style={{ filter: `drop-shadow(0 0 10px ${color}40)`, flex: 'none' }}
+      style={{ filter: `drop-shadow(0 0 16px ${color}55)`, flex: 'none' }}
     >
       <defs>
         <filter id={wornId} x="-12%" y="-25%" width="124%" height="150%">
