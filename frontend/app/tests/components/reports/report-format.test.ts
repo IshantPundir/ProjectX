@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   scoreToTen, formatTen, formatTimestamp, verdictMeta, scoreBandTone, tierTone,
-  severityMeta, statusBadgeMeta, confidenceLabel, TONE_INK,
+  severityMeta, statusBadgeMeta, confidenceLabel, TONE_INK, ADVANCE_BAND, REJECT_BAND, SCORE_MAX, bandZones,
 } from '@/components/dashboard/reports/report-format'
 
 describe('report-format', () => {
@@ -51,5 +51,25 @@ describe('report-format', () => {
     expect(confidenceLabel('high')).toBe('High')
     expect(formatTimestamp(90000)).toBe('01:30')
     expect(TONE_INK.ok).toMatch(/var\(--px-/)
+  })
+})
+
+describe('band thresholds', () => {
+  it('exposes the 0-10 verdict band constants', () => {
+    expect(ADVANCE_BAND).toBe(6.5)
+    expect(REJECT_BAND).toBe(4.0)
+    expect(SCORE_MAX).toBe(10)
+  })
+
+  it('bandZones() returns boundary positions as percentages of the track', () => {
+    expect(bandZones()).toEqual({ rejectPct: 40, advancePct: 65 })
+  })
+
+  it('scoreBandTone stays aligned to the exported bands', () => {
+    expect(scoreBandTone(6.5)).toBe('ok')      // >= ADVANCE_BAND
+    expect(scoreBandTone(6.49)).toBe('caution') // borderline
+    expect(scoreBandTone(4.0)).toBe('caution')  // >= REJECT_BAND
+    expect(scoreBandTone(3.99)).toBe('danger')
+    expect(scoreBandTone(null)).toBe('neutral')
   })
 })
