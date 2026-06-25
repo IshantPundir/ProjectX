@@ -189,7 +189,12 @@ class ReportHeader(BaseModel):
     """
     candidate_name: str
     candidate_email: str | None = None
+    candidate_title: str | None = None       # candidate's current role
+    candidate_location: str | None = None
+    company_name: str | None = None          # hiring company (tenant)
     job_title: str = ""
+    job_location: str | None = None
+    work_arrangement: str | None = None      # remote / hybrid / onsite
     stage_label: str = ""
     session_started_at: str | None = None   # ISO 8601
     duration_seconds: int | None = None

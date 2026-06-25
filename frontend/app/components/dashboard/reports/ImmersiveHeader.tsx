@@ -170,16 +170,35 @@ export function ImmersiveHeader({
               {header.candidate_name}
             </p>
 
-            {header.candidate_email && (
-              <p className="mb-[11px] text-[13px] text-[#c7c8e4]">{header.candidate_email}</p>
+            {(header.candidate_email || header.candidate_title || header.candidate_location) && (
+              <div className="mb-[11px] space-y-[3px]">
+                {header.candidate_email && (
+                  <p className="text-[13px] text-[#c7c8e4]">{header.candidate_email}</p>
+                )}
+                {(header.candidate_title || header.candidate_location) && (
+                  <p className="text-[12.5px] text-[#b9bae0]">
+                    {[
+                      header.candidate_title,
+                      header.candidate_location && `📍 ${header.candidate_location}`,
+                    ].filter(Boolean).join('   ·   ')}
+                  </p>
+                )}
+              </div>
             )}
 
             {/* Inline info row */}
             <div className="flex flex-wrap gap-[22px] text-[12.5px] text-[#cfd0ea]">
               <span>
                 💼 <strong className="text-white">{header.job_title}</strong>
+                {header.company_name ? ` · ${header.company_name}` : ''}
                 {header.stage_label ? ` · ${header.stage_label}` : ''}
               </span>
+
+              {(header.work_arrangement || header.job_location) && (
+                <span>
+                  🌐 {[header.work_arrangement, header.job_location].filter(Boolean).join(' · ')}
+                </span>
+              )}
 
               {header.session_started_at && (
                 <span>🗓 {formatSessionDate(header.session_started_at)}</span>

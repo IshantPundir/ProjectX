@@ -53,7 +53,12 @@ def test_report_header_all_fields():
     h = ReportHeader(
         candidate_name="Arjun",
         candidate_email="arjun@example.com",
+        candidate_title="Senior Accountant",
+        candidate_location="Mumbai, India",
+        company_name="Acme Corp",
         job_title="SRE",
+        job_location="Bangalore",
+        work_arrangement="Remote",
         stage_label="Round 1",
         session_started_at="2026-06-19T10:00:00+00:00",
         duration_seconds=1800,
@@ -63,6 +68,19 @@ def test_report_header_all_fields():
     assert h.candidate_name == "Arjun"
     assert h.duration_seconds == 1800
     assert len(h.skills) == 2
+    assert h.company_name == "Acme Corp"
+    assert h.candidate_title == "Senior Accountant"
+    assert h.job_location == "Bangalore"
+    assert h.work_arrangement == "Remote"
+
+
+def test_report_header_new_fields_default_none():
+    h = ReportHeader(candidate_name="X", job_title="Y", stage_label="Z")
+    assert h.company_name is None
+    assert h.candidate_title is None
+    assert h.candidate_location is None
+    assert h.job_location is None
+    assert h.work_arrangement is None
 
 
 # ---------------------------------------------------------------------------
