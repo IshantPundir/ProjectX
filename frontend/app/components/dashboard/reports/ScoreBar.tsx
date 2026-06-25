@@ -41,13 +41,13 @@ export function ScoreBar({
     ? `${label} score ${ten} out of 10, ${stateLabel}`
     : `${label} ${stateLabel}`
 
-  const trackH = variant === 'hero' ? 'h-3.5' : variant === 'compact' ? 'h-2' : 'h-2.5'
-  const labelSize = variant === 'hero' ? 'text-[13px]' : 'text-[12px]'
-  const valueSize = variant === 'hero' ? 'text-[20px]' : 'text-[13px]'
+  const trackH = variant === 'hero' ? 'h-4' : variant === 'compact' ? 'h-2.5' : 'h-3.5'
+  const labelSize = variant === 'hero' ? 'text-[15px]' : variant === 'compact' ? 'text-[12px]' : 'text-[14px]'
+  const valueSize = variant === 'hero' ? 'text-[22px]' : variant === 'compact' ? 'text-[13px]' : 'text-[16px]'
 
   return (
     <div role="img" aria-label={aria} className="px-scorebar w-full">
-      <div className="mb-1 flex items-baseline justify-between gap-2">
+      <div className="mb-1.5 flex items-baseline justify-between gap-2">
         <span className={`${labelSize} truncate font-semibold`} style={{ color: 'var(--px-fg-2)' }}>
           {mustHave && <span aria-hidden className="mr-1" style={{ color: 'var(--px-accent)' }}>★</span>}
           {label}
