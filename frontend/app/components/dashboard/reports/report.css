@@ -162,22 +162,17 @@
               0 14px 34px rgba(0,0,0,.4);
   object-fit: cover;
 }
-/* verified badge — top-right corner of the photo */
+/* verified seal badge — top-right corner of the photo */
 .rh-verified {
   position: absolute;
-  top: -8px;
-  right: -8px;
+  top: -10px;
+  right: -10px;
   z-index: 2;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 32px;
-  width: 32px;
-  border-radius: 999px;
-  background: linear-gradient(140deg, #3b82f6, #2563eb);
-  color: #fff;
-  border: 3px solid #1a1b3d;
-  box-shadow: 0 3px 10px rgba(37, 99, 235, .45);
+  line-height: 0;
+  filter:
+    drop-shadow(0 1px 0 rgba(255, 255, 255, .35))
+    drop-shadow(0 4px 7px rgba(8, 47, 110, .55));
 }
 
 .rh-monogram {
