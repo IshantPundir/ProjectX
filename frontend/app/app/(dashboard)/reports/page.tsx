@@ -7,7 +7,7 @@ import { toast } from 'sonner'
 
 import { Button } from '@/components/px'
 import { VerdictChip } from '@/components/dashboard/reports/VerdictBand'
-import { scoreToTen } from '@/components/dashboard/reports/report-format'
+import { formatTen } from '@/components/dashboard/reports/report-format'
 import type { ReportIndexItem } from '@/lib/api/reports'
 import { useMe } from '@/lib/hooks/use-me'
 import { useRegenerateReport, useReportsIndex } from '@/lib/hooks/use-report'
@@ -109,7 +109,7 @@ function ReportRow({ item, isSuperAdmin }: { item: ReportIndexItem; isSuperAdmin
   const regen = useRegenerateReport(item.session_id)
   const hasReport = item.report_status === 'ready' || item.report_status === 'failed'
   const generating = item.report_status === 'pending' || item.report_status === 'generating'
-  const ten = scoreToTen(item.overall_score)
+  const ten = formatTen(item.overall_score)
 
   const handleGenerate = () => {
     regen.mutate(undefined, {

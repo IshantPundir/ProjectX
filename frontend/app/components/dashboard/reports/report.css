@@ -85,6 +85,128 @@
   100% { transform: scale(1.7); opacity: 0; }
 }
 
+/* --- Competency radar hover: subtle scale from center + glow --- */
+/*
+ * The SVG has class="px-radar". The data polygon carries class="px-radar-data".
+ * We transition: fill opacity (slightly higher), scale from center, drop-shadow.
+ * transform-origin is set on the SVG element for correct center scaling.
+ */
+.px-radar {
+  transform-origin: center center;
+  transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
+              filter 200ms ease;
+}
+.px-radar:hover {
+  transform: scale(1.03);
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--px-accent) 40%, transparent));
+}
+.px-radar-data {
+  transition: fill-opacity 200ms ease;
+}
+.px-radar:hover .px-radar-data {
+  fill-opacity: 0.55;
+}
+
+/* ─── ImmersiveHeader ──────────────────────────────────────────────────────── */
+
+/* atmospheric background */
+.rh-hero-in {
+  background:
+    radial-gradient(620px circle at 12% 8%, rgba(111,104,240,.55), transparent 42%),
+    radial-gradient(520px circle at 92% 96%, rgba(54,208,127,.20), transparent 46%),
+    linear-gradient(120deg,#141531,#2b2d62);
+}
+
+/* dot-grid pseudo-layer */
+.rh-dot-grid {
+  position: absolute;
+  inset: 0;
+  opacity: .5;
+  background-image: radial-gradient(rgba(255,255,255,.06) 1px, transparent 1px);
+  background-size: 16px 16px;
+  pointer-events: none;
+}
+
+/* photo / monogram */
+.rh-photo {
+  height: 164px;
+  width: 164px;
+  flex: none;
+  border-radius: 20px;
+  border: 3px solid rgba(255,255,255,.22);
+  box-shadow: 0 0 0 6px rgba(111,104,240,.18), 0 14px 34px rgba(0,0,0,.4);
+  object-fit: cover;
+}
+.rh-monogram {
+  background: linear-gradient(135deg,#6f68f0,#4f46e5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 60px;
+  font-weight: 800;
+  color: #fff;
+}
+
+/* verdict stamp */
+.rh-stamp {
+  border: 2.5px solid;
+  font-style: italic;
+  font-weight: 800;
+  font-size: 21px;
+  letter-spacing: 1px;
+  padding: 8px 17px;
+  border-radius: 8px;
+  transform: rotate(-7deg);
+  flex: none;
+  white-space: nowrap;
+}
+
+/* skill pill */
+.rh-pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.12);
+  color: #e7e8fb;
+  margin: 4px 5px 0 0;
+  border: 1px solid rgba(255,255,255,.16);
+}
+
+/* CTA — shared sizing for both header buttons */
+.rh-btn-reel,
+.rh-btn-sec {
+  min-width: 170px;
+  padding: 11px 20px;
+  border-radius: 13px;
+  font-weight: 600;
+  font-size: 13px;
+  justify-content: center;
+}
+
+/* CTA — accent-tinted highlight button (no gradient) */
+.rh-btn-reel {
+  background: color-mix(in srgb, var(--px-accent) 22%, transparent);
+  color: #fff;
+  border: 1px solid color-mix(in srgb, var(--px-accent) 60%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--px-accent) 30%, transparent);
+}
+.rh-btn-reel:hover {
+  background: color-mix(in srgb, var(--px-accent) 32%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--px-accent) 45%, transparent);
+}
+
+/* CTA — glass session button */
+.rh-btn-sec {
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.18);
+  color: rgba(220,220,240,.80);
+}
+.rh-btn-sec:hover {
+  background: rgba(255,255,255,.13);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .px-gauge-ring { animation: none; stroke-dashoffset: var(--px-gauge-final-offset); }
   .px-reveal { animation: none; opacity: 1; transform: none; }
@@ -94,4 +216,6 @@
   .px-shine::after { display: none; }
   .report-playbtn::before, .report-playbtn::after { animation: none; }
   .report-playposter:hover img, .report-playposter:hover .report-playbtn { transform: none; }
+  .px-radar, .px-radar:hover { transform: none; filter: none; }
+  .px-radar-data, .px-radar:hover .px-radar-data { fill-opacity: unset; }
 }

@@ -24,15 +24,16 @@ describe('SignalAuditTable', () => {
     const thin: SignalAssessmentOut = {
       signal: 'API expertise: RESTful APIs', type: 'competency', weight: 2, knockout: false,
       priority: 'required', provenance: 'asked_directly',
-      level: 'thin', score: 25, evidence: [], overridden: false, override_reason: null,
+      // score is already 0–10 (backend native scale); formatTen renders as-is
+      level: 'thin', score: 2.5, evidence: [], overridden: false, override_reason: null,
     }
     render(<SignalAuditTable assessments={[thin]} />)
     expect(screen.getByTitle(/possible bluff/i)).toBeInTheDocument()  // the "thin" chip
-    expect(screen.getByText('2.5')).toBeInTheDocument()               // score 25 → /10
+    expect(screen.getByText('2.5')).toBeInTheDocument()               // score 2.5 → "2.5"
   })
 
   it('renders the level in the grade cell', () => {
-    const a = makeSignalAssessment({ level: 'solid', provenance: 'asked_directly', score: 80 })
+    const a = makeSignalAssessment({ level: 'solid', provenance: 'asked_directly', score: 8.0 })
     render(<SignalAuditTable assessments={[a]} />)
     expect(screen.getByText('solid')).toBeInTheDocument()
     expect(screen.getByText(/asked_directly/)).toBeInTheDocument()
@@ -65,5 +66,28 @@ describe('SignalAuditTable', () => {
     const a = makeSignalAssessment({ cross_credit_applied: false, level_basis: '' })
     render(<SignalAuditTable assessments={[a]} />)
     expect(screen.queryByText('cross-credited')).not.toBeInTheDocument()
+  })
+
+  it('renders the score as X.X and a mini-bar with width reflecting the score', () => {
+    // score 8.0 → "8.0" text; mini-bar width = 80%
+    const a = makeSignalAssessment({ score: 8.0 })
+    const { container } = render(<SignalAuditTable assessments={[a]} />)
+    // score label
+    expect(screen.getByText('8.0')).toBeInTheDocument()
+    // mini-bar element: a div with role "presentation" and inline width style
+    const bar = container.querySelector('[data-testid="score-mini-bar"]')
+    expect(bar).not.toBeNull()
+    expect((bar as HTMLElement).style.width).toBe('80%')
+  })
+
+  it('renders an em-dash and no mini-bar fill when score is null', () => {
+    const a = makeSignalAssessment({ score: null as unknown as number })
+    const { container } = render(<SignalAuditTable assessments={[a]} />)
+    // em-dash for null score
+    expect(screen.getByText('—')).toBeInTheDocument()
+    // bar should still be present but with 0% width
+    const bar = container.querySelector('[data-testid="score-mini-bar"]')
+    expect(bar).not.toBeNull()
+    expect((bar as HTMLElement).style.width).toBe('0%')
   })
 })

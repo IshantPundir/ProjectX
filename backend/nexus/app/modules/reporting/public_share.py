@@ -19,6 +19,7 @@ from app.modules.reel import build_playback, check_eligibility, get_reel
 from app.modules.reporting.assets import (
     attach_question_thumbnails,
     attach_reference_photo,
+    attach_report_header,
 )
 from app.modules.reporting.labels import load_session_labels
 from app.modules.reporting.models import ReportShare, SessionReport
@@ -73,6 +74,8 @@ async def build_public_envelope(
     await attach_question_thumbnails(
         db=db, report=report, session_id=session_id, tenant_id=tenant_id)
     await attach_reference_photo(
+        db=db, report=report, session_id=session_id, tenant_id=tenant_id)
+    await attach_report_header(
         db=db, report=report, session_id=session_id, tenant_id=tenant_id)
 
     try:

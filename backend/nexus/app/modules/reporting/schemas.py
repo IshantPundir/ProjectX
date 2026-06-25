@@ -15,6 +15,7 @@ class QuestionGradeOut(BaseModel):
     The question is graded against its OWN full bank card (rubric + listen-for
     + red-flags + evaluation_hint), difficulty-calibrated and probe-aware."""
     level: Literal["strong", "solid", "thin", "absent"]
+    score: int = 0  # 0–10 rubric-anchored score; default 0, overwritten by LLM or fallback
     listen_for_hits: list[str] = Field(default_factory=list)
     red_flags_tripped: list[str] = Field(default_factory=list)
     evidence_quotes: list[str] = Field(default_factory=list)
@@ -69,7 +70,7 @@ class ReportIndexItem(BaseModel):
     completed_at: str | None = None
     report_status: str  # none | pending | generating | ready | failed
     verdict: Verdict | None = None
-    overall_score: int | None = None
+    overall_score: float | None = None
 
 
 class ReportIndexPage(BaseModel):
@@ -133,13 +134,13 @@ class NarrativeOut(BaseModel):
 
 
 class ScoreOut(BaseModel):
-    score: int | None
+    score: float | None
     tier_label: str
     tone: str                      # ok | caution | danger | neutral
     confidence: Confidence
     coverage: float = 0.0
-    session_score: int | None = None   # pre-adjustment deterministic base (overall only)
-    holistic_delta: int | None = None  # bounded ±5 delta applied (overall only)
+    session_score: float | None = None   # pre-adjustment deterministic base (overall only)
+    holistic_delta: float | None = None  # bounded ±5 delta applied (overall only)
 
 
 class QuestionOut(BaseModel):
@@ -160,6 +161,7 @@ class QuestionOut(BaseModel):
     red_flags_tripped: list[str] = Field(default_factory=list)
     probes_used: int = 0
     probes_available: int = 0
+    score: int | None = None              # 0–10 per-question score (None = not assessed / not asked)
 
 
 class SignalAssessmentOut(BaseModel):
@@ -170,7 +172,7 @@ class SignalAssessmentOut(BaseModel):
     priority: str
     provenance: Literal["not_reached", "asked_directly", "cross_credited", "probed_absent"]
     level: Literal["strong", "solid", "thin", "absent", "not_reached"]
-    score: int | None = None
+    score: float | None = None
     evidence: list[str] = Field(default_factory=list)
     overridden: bool = False
     override_reason: str | None = None
@@ -178,11 +180,28 @@ class SignalAssessmentOut(BaseModel):
     level_basis: str = ""                 # e.g. "dedicated: thin; +1 cross-credit → solid"
 
 
+class ReportHeader(BaseModel):
+    """Server-sourced identity block: candidate, job, session timing, demonstrated skills.
+
+    Attached at read time by ``attach_report_header`` in ``assets.py``.
+    All callers (authenticated report GET + public share envelope) use the same
+    function so the header is always consistent.
+    """
+    candidate_name: str
+    candidate_email: str | None = None
+    job_title: str = ""
+    stage_label: str = ""
+    session_started_at: str | None = None   # ISO 8601
+    duration_seconds: int | None = None
+    skills: list[str] = Field(default_factory=list)
+    reference_photo_url: str | None = None
+
+
 class ReportRead(BaseModel):
     """Recruiter-facing report (PDF-shaped). Mirrors session_reports JSONB columns."""
     verdict: Verdict
     verdict_reason: str
-    overall_score: int | None
+    overall_score: float | None
     overall_coverage: float
     overall_confidence: Confidence
     decision: DecisionOut
@@ -202,6 +221,7 @@ class ReportRead(BaseModel):
     human_decision: dict | None = None
     generated_at: str | None = None
     reference_photo_url: str | None = None  # presigned R2 GET, attached at read time
+    header: ReportHeader | None = None      # server-sourced identity block, attached at read time
 
 
 class ShareReportIn(BaseModel):

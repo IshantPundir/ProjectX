@@ -1,0 +1,53 @@
+"""Structural guards for the evasion/hostility prompt behavior (no API)."""
+from app.ai.prompts import PromptLoader
+
+
+def _brain() -> str:
+    return PromptLoader("v4").get("engine/brain.system").lower()
+
+
+def test_brain_clarify_covers_relevance_question():
+    txt = _brain()
+    # "why does this matter?" is a clarify (stay on floor), not evasion/advance.
+    assert "why does this matter" in txt
+    assert "relevance" in txt
+    # It must say this case does NOT advance the floor (unique to the new relevance clause).
+    assert "does not advance the floor" in txt
+
+
+def test_brain_redirect_names_hostility_and_refusal():
+    txt = _brain()
+    assert "hostility" in txt or "insult" in txt
+    assert "refus" in txt  # refusal / refuse / refuses
+    # light boundary, never defensive/scolding
+    assert "boundary" in txt
+    assert "never defensive" in txt or "not defensive" in txt
+
+
+def test_brain_redirect_reframe_offered_once_then_stalled():
+    txt = _brain()
+    # Persistence: reframe/boundary once; continued dodging → existing STALLED advance.
+    assert "offered once" in txt
+    assert "keeps refusing or stays" in txt
+
+
+def test_clarify_prompt_handles_relevance():
+    txt = PromptLoader("v4").get("engine/mouth/clarify").lower()
+    assert "relevance" in txt or "why does this matter" in txt
+    # purpose, not criteria
+    assert "helps" in txt or "purpose" in txt
+
+
+def test_redirect_prompt_delivers_boundary_and_reframe():
+    txt = PromptLoader("v4").get("engine/mouth/redirect").lower()
+    assert "boundary" in txt
+    assert "reframe" in txt
+    assert "never defensive" in txt or "not defensive" in txt
+    assert "never" in txt and ("scold" in txt or "preach" in txt or "lectur" in txt)
+
+
+def test_bridge_prompt_minimal_neutral_beat_for_hostility():
+    txt = PromptLoader("v4").get("engine/mouth/bridge").lower()
+    assert "hostile" in txt or "insult" in txt
+    # Must warn that "okay"/"got it" reads as agreeing with the remark.
+    assert "agreeing with the remark" in txt

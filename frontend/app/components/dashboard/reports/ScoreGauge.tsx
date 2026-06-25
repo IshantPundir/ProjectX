@@ -1,10 +1,10 @@
 import type { CSSProperties } from 'react'
 
-import { scoreToTen, scoreBandTone, TONE_FILL, type Tone } from './report-format'
+import { formatTen, scoreBandTone, TONE_FILL, type Tone } from './report-format'
 import './report.css'
 
 interface ScoreGaugeProps {
-  /** 0–100 domain (the report's native scale). null → "not assessed". */
+  /** 0–10 domain (the report's native scale). null → "not assessed". */
   score: number | null
   label: string
   /** Diameter in px. Default 58 (dimension gauges); pass ~118 for Overall. */
@@ -23,9 +23,10 @@ const C = 2 * Math.PI * R // ≈ 263.9
 
 export function ScoreGauge({ score, label, size = 58, toneOverride, caption, hideLabel = false }: ScoreGaugeProps) {
   const assessed = score !== null && score !== undefined
-  const ten = scoreToTen(score)
+  const ten = formatTen(score)
   const tone = toneOverride ?? scoreBandTone(score)
-  const finalOffset = assessed ? C * (1 - (score as number) / 100) : C
+  // score is already 0–10; fill = score / 10
+  const finalOffset = assessed ? C * (1 - (score as number) / 10) : C
   const stroke = size >= 90 ? 9 : 10
   const numFont = size >= 90 ? 22 : 26 // viewBox units (100×100)
   const aria = assessed ? `${label} score ${ten} out of 10` : `${label} not assessed`

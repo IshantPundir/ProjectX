@@ -1,14 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
-  scoreToTen, formatTimestamp, verdictMeta, scoreBandTone, tierTone,
+  scoreToTen, formatTen, formatTimestamp, verdictMeta, scoreBandTone, tierTone,
   severityMeta, statusBadgeMeta, confidenceLabel, TONE_INK,
 } from '@/components/dashboard/reports/report-format'
 
 describe('report-format', () => {
-  it('scoreToTen', () => {
+  it('scoreToTen (deprecated 0–100 ÷10 helper)', () => {
     expect(scoreToTen(41)).toBe('4.1')
     expect(scoreToTen(100)).toBe('10.0')
     expect(scoreToTen(null)).toBeNull()
+  })
+  it('formatTen — formats an already-0-10 value, no division', () => {
+    expect(formatTen(4.1)).toBe('4.1')
+    expect(formatTen(10)).toBe('10.0')
+    expect(formatTen(0)).toBe('0.0')
+    expect(formatTen(null)).toBeNull()
   })
   it('verdictMeta relabels to recruiter-facing words', () => {
     expect(verdictMeta('advance').label).toBe('Recommended')
@@ -32,9 +38,16 @@ describe('report-format', () => {
     expect(tierTone('danger')).toBe('danger')
     expect(tierTone('bogus')).toBe('neutral')
   })
-  it('scoreBandTone + confidenceLabel still work (kept)', () => {
-    expect(scoreBandTone(80)).toBe('ok')
+  it('scoreBandTone uses 0–10 thresholds (6.5 / 4.0)', () => {
+    expect(scoreBandTone(8)).toBe('ok')
+    expect(scoreBandTone(6.5)).toBe('ok')
+    expect(scoreBandTone(6.4)).toBe('caution')
+    expect(scoreBandTone(4.0)).toBe('caution')
+    expect(scoreBandTone(3.9)).toBe('danger')
+    expect(scoreBandTone(0)).toBe('danger')
     expect(scoreBandTone(null)).toBe('neutral')
+  })
+  it('confidenceLabel + formatTimestamp + TONE_INK still work', () => {
     expect(confidenceLabel('high')).toBe('High')
     expect(formatTimestamp(90000)).toBe('01:30')
     expect(TONE_INK.ok).toMatch(/var\(--px-/)

@@ -320,6 +320,7 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id,
             listen_for_hits=(g.listen_for_hits if g else []),
             red_flags_tripped=(g.red_flags_tripped if g else []),
             probes_used=len(qr.probes_used), probes_available=qr.probes_available,
+            score=(g.score if g else None),
         ))
 
     # Fold in narrative per-question prose (our_read / refined candidate_quote).

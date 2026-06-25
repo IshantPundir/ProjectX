@@ -34,7 +34,7 @@ export function makeSignalAssessment(overrides: Partial<SignalAssessmentOut> = {
     priority: 'required',
     provenance: 'asked_directly',
     level: 'solid',
-    score: 80,
+    score: 8.0,
     evidence: ['Around six years.'],
     overridden: false,
     override_reason: null,
@@ -48,9 +48,10 @@ export function makeSignalAssessment(overrides: Partial<SignalAssessmentOut> = {
 /** A complete, valid new-shape ReportRead for component tests. Override per test. */
 export function makeReport(overrides: Partial<ReportRead> = {}): ReportRead {
   return {
+    header: null,
     verdict: 'borderline',
     verdict_reason: 'Could not confirm a must-have.',
-    overall_score: 41,
+    overall_score: 4.1,
     overall_coverage: 0.47,
     overall_confidence: 'medium',
     decision: {
@@ -59,10 +60,10 @@ export function makeReport(overrides: Partial<ReportRead> = {}): ReportRead {
       why_negative: { title: 'But depth was not shown', body: 'Technical answers stayed thin.' },
     },
     scores: {
-      overall: { score: 41, tier_label: 'Below Bar', tone: 'caution', confidence: 'medium', coverage: 0.47 },
-      technical: { score: 41, tier_label: 'Below Bar', tone: 'caution', confidence: 'medium', coverage: 0.55 },
+      overall: { score: 4.1, tier_label: 'Below Bar', tone: 'caution', confidence: 'medium', coverage: 0.47 },
+      technical: { score: 4.1, tier_label: 'Below Bar', tone: 'caution', confidence: 'medium', coverage: 0.55 },
       behavioral: { score: null, tier_label: 'Not Assessed', tone: 'neutral', confidence: 'low', coverage: 0 },
-      communication: { score: 70, tier_label: 'Meets Bar', tone: 'ok', confidence: 'medium', coverage: 1 },
+      communication: { score: 7.0, tier_label: 'Meets Bar', tone: 'ok', confidence: 'medium', coverage: 1 },
     },
     quick_summary: 'This candidate sits right on the line.',
     strengths: [{ title: 'Meets the experience bar', detail: 'Around six years overall.' }],
@@ -96,7 +97,7 @@ export function makeReport(overrides: Partial<ReportRead> = {}): ReportRead {
     signal_assessments: [
       {
         signal: '4+ years total professional experience', type: 'experience', weight: 3, knockout: true,
-        priority: 'required', provenance: 'asked_directly' as const, level: 'solid' as const, score: 80,
+        priority: 'required', provenance: 'asked_directly' as const, level: 'solid' as const, score: 8.0,
         evidence: ['Around six years.'], overridden: false, override_reason: null,
         cross_credit_applied: false, level_basis: '',
       },

@@ -28,6 +28,7 @@ from app.modules.reporting.actors import score_session_report, share_report_pdf
 from app.modules.reporting.assets import (
     attach_question_thumbnails,
     attach_reference_photo,
+    attach_report_header,
 )
 from app.modules.reporting.models import ReportShare, SessionReport
 from app.modules.reporting.schemas import (
@@ -38,6 +39,7 @@ from app.modules.reporting.schemas import (
     ShareReportIn,
     ShareReportOut,
 )
+from app.modules.reporting.scoring.scale import to_ten
 from app.modules.reporting.serialization import report_read_from_row
 from app.modules.session import (
     SessionNotFoundError,
@@ -139,6 +141,8 @@ async def get_report_by_session(
     await attach_question_thumbnails(
         db=db, report=read, session_id=session_id, tenant_id=tenant_id)
     await attach_reference_photo(
+        db=db, report=read, session_id=session_id, tenant_id=tenant_id)
+    await attach_report_header(
         db=db, report=read, session_id=session_id, tenant_id=tenant_id)
     return read.model_dump(mode="json")
 
@@ -268,7 +272,7 @@ async def list_report_index(
             completed_at=r["completed_at"].isoformat() if r["completed_at"] else None,
             report_status=r["report_status"],
             verdict=r["verdict"],
-            overall_score=r["overall_score"],
+            overall_score=to_ten(r["overall_score"]),
         )
         for r in rows
     ]
@@ -315,6 +319,8 @@ async def get_report_by_id(
     await attach_question_thumbnails(
         db=db, report=read, session_id=row.session_id, tenant_id=tenant_id)
     await attach_reference_photo(
+        db=db, report=read, session_id=row.session_id, tenant_id=tenant_id)
+    await attach_report_header(
         db=db, report=read, session_id=row.session_id, tenant_id=tenant_id)
     return read.model_dump(mode="json")
 

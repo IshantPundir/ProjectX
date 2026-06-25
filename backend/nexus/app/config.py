@@ -550,6 +550,20 @@ class Settings(BaseSettings):
     def _strip_trailing_slash(cls, v: str) -> str:
         return v.rstrip("/")
 
+    # Base URL for the public recordings share page (the "See full session
+    # recording" button in the shared report PDF). Defaults to frontend_base_url
+    # (the recruiter app hosts /recordings/) when unset — production leaves this
+    # unset, so there is no behavior change. Overridden ONLY for the LAN demo,
+    # where the recruiter app is reached at the host's LAN IP instead of
+    # localhost (scripts/demo.sh sets it). Kept separate from frontend_base_url
+    # so the LAN override does not disturb recruiter invite-email links.
+    recording_share_base_url: str | None = None
+
+    @field_validator("recording_share_base_url")
+    @classmethod
+    def _strip_recording_share_trailing_slash(cls, v: str | None) -> str | None:
+        return v.rstrip("/") if v else v
+
     # Candidate session base URL — used to build interview invite links in
     # scheduler emails. Kept SEPARATE from frontend_base_url so the two
     # surfaces (recruiter dashboard vs. candidate session app) can be
@@ -655,7 +669,8 @@ class Settings(BaseSettings):
     # like ``judge:{prompt_version}:{question_id}:{model}``. This differs from
     # ``engine_brain_prompt_cache_key``, which IS used verbatim. Bump this
     # prefix on a prompt-family change to avoid cross-version cache pollution.
-    report_scorer_prompt_cache_key_prefix: str = "judge"
+    # judge2: question_grade prompt now emits required integer `score` (0-10).
+    report_scorer_prompt_cache_key_prefix: str = "judge2"
 
     # ``openai_report_narrative_model`` — model for the prose-only narrative layer.
     openai_report_narrative_model: str = "gpt-5.4"

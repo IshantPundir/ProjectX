@@ -19,6 +19,6 @@ def test_report_read_from_row_maps_columns():
     )
     read = report_read_from_row(row)
     assert read.verdict == "advance"
-    assert read.overall_score == 90
+    assert read.overall_score == 9.0  # recruiter-facing 0-10 scale: to_ten(90) = 9.0
     assert read.quick_summary == "Solid screen."
-    assert read.scores["overall"].score == 90
+    assert read.scores["overall"].score == 9.0  # recruiter-facing 0-10 scale: to_ten(90) = 9.0

@@ -689,7 +689,7 @@ async def test_report_index_lists_completed_with_report(db: AsyncSession):
     assert item is not None, body
     assert item["report_status"] == "ready"
     assert item["verdict"] == "advance"
-    assert item["overall_score"] == 85
+    assert item["overall_score"] == 8.5  # recruiter-facing 0-10 scale: to_ten(85) = 8.5
 
 
 @pytest.mark.asyncio

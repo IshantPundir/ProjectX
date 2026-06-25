@@ -11,9 +11,22 @@ export type StatusBadge =
 export type HumanDecisionValue = 'advance' | 'reject' | 'hold'
 
 // --- Response shapes (mirror reporting/schemas.py::ReportRead) ---
+
+export interface ReportHeader {
+  candidate_name: string
+  candidate_email: string | null
+  job_title: string
+  stage_label: string
+  session_started_at: string | null
+  duration_seconds: number | null
+  skills: string[]
+  reference_photo_url: string | null
+}
+
 export interface WhyColumn { title: string; body: string }
 export interface DecisionOut { headline: string; why_positive: WhyColumn; why_negative: WhyColumn }
 export interface ScoreOut {
+  /** Dimension score on a 0–10 scale; null when not yet scored. */
   score: number | null
   tier_label: string
   tone: string
@@ -54,6 +67,8 @@ export interface QuestionOut {
   probes_used?: number
   /** Total probes available for this question in the bank card. */
   probes_available?: number
+  /** Rubric-anchored 0–10 score; null when not assessed. */
+  score?: number | null
 }
 export interface MethodologyOut { note: string; charity_flags: string[] }
 export interface SignalAssessmentOut {
@@ -66,6 +81,7 @@ export interface SignalAssessmentOut {
   provenance: 'not_reached' | 'asked_directly' | 'cross_credited' | 'probed_absent'
   /** Rubric-anchored quality level for this signal. */
   level: QuestionLevel
+  /** Rubric-anchored 0–10 score for this signal; null when not scored. */
   score: number | null
   evidence: string[]
   overridden: boolean
@@ -93,8 +109,10 @@ export interface HumanDecision {
 }
 
 export interface ReportRead {
+  header: ReportHeader | null
   verdict: Verdict
   verdict_reason: string
+  /** Role-fit score on a 0–10 scale; null when not yet scored. */
   overall_score: number | null
   overall_coverage: number
   overall_confidence: Confidence

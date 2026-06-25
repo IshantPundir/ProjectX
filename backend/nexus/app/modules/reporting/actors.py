@@ -456,7 +456,12 @@ async def _share_report_pdf_async(
             share.share_token_hash = hash_share_token(share_token)
             share.share_expires_at = datetime.now(UTC) + timedelta(
                 days=settings.recording_share_ttl_days)
-            full_session_url = f"{settings.frontend_base_url}/recordings/{share_token}"
+            # LAN demo: recording_share_base_url points at the host LAN IP so a
+            # PDF recipient on the same WiFi can open the page; unset in prod →
+            # falls back to frontend_base_url (the recruiter app). See
+            # docs/superpowers/specs/2026-06-18-lan-recordings-share-link-design.md
+            share_base = settings.recording_share_base_url or settings.frontend_base_url
+            full_session_url = f"{share_base}/recordings/{share_token}"
 
             share.status = "rendering"
             await db.flush()

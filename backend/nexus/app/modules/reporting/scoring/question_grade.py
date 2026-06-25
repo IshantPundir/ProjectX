@@ -18,6 +18,7 @@ from app.modules.interview_runtime.evidence import (
     EvidenceNote, EvidenceStance, EvidenceTexture,
 )
 from app.modules.reporting.schemas import QuestionGradeOut
+from app.modules.reporting.scoring.constants import level_score
 from app.modules.reporting.scoring.grounding import ground_quotes
 from app.modules.reporting.scoring.types import DemonstrationLevel
 
@@ -26,6 +27,11 @@ _tracer = trace.get_tracer("nexus.ai.openai")
 
 _TEXTURE_RANK = {EvidenceTexture.thin: 0, EvidenceTexture.concrete: 1, EvidenceTexture.strong: 2}
 _RANK_LEVEL = {2: "strong", 1: "solid", 0: "thin"}
+
+
+def score_from_level(level: str) -> int:
+    """Fallback 0–10 question score from an engine level (LEVEL_POINTS ÷ 10, rounded)."""
+    return round(level_score(level) / 10)
 
 
 def question_base_level(notes: list[EvidenceNote]) -> DemonstrationLevel:
@@ -106,7 +112,9 @@ async def grade_question(
     if parsed is None:
         log.warning("reporting.question_grade.refusal", question_id=question.get("id"),
                     correlation_id=correlation_id)
-        return QuestionGradeOut(level=base_level if base_level != "not_reached" else "thin")
+        lvl = base_level if base_level != "not_reached" else "thin"
+        return QuestionGradeOut(level=lvl, score=score_from_level(lvl))
 
     grounded, _ = ground_quotes(parsed.evidence_quotes, notes_block)
-    return parsed.model_copy(update={"evidence_quotes": grounded})
+    clamped = max(0, min(10, parsed.score))
+    return parsed.model_copy(update={"evidence_quotes": grounded, "score": clamped})

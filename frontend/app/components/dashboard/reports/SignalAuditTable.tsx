@@ -1,5 +1,5 @@
 import type { SignalAssessmentOut } from '@/lib/api/reports'
-import { scoreToTen } from './report-format'
+import { formatTen, scoreBandTone, TONE_FILL } from './report-format'
 
 export function SignalAuditTable({ assessments }: { assessments: SignalAssessmentOut[] }) {
   if (!assessments.length) return null
@@ -48,8 +48,19 @@ export function SignalAuditTable({ assessments }: { assessments: SignalAssessmen
                     </span>
                   )}
                 </td>
-                <td className="py-1 pr-2 tabular-nums" style={{ color: 'var(--px-fg-3)' }}>
-                  {scoreToTen(a.score) ?? '—'}
+                <td className="py-1 pr-2" style={{ color: 'var(--px-fg-3)' }}>
+                  <span className="tabular-nums">{formatTen(a.score) ?? '—'}</span>
+                  {/* slim horizontal mini-bar: width = score × 10%, tinted by band tone */}
+                  <div className="mt-0.5 h-[3px] w-full overflow-hidden rounded-full" style={{ background: 'var(--px-hairline)' }}>
+                    <div
+                      data-testid="score-mini-bar"
+                      className="h-full rounded-full"
+                      style={{
+                        width: a.score != null ? `${a.score * 10}%` : '0%',
+                        background: TONE_FILL[scoreBandTone(a.score)],
+                      }}
+                    />
+                  </div>
                 </td>
                 <td className="py-1" style={{ color: 'var(--px-fg-4)' }}>{a.override_reason ?? ''}</td>
               </tr>
