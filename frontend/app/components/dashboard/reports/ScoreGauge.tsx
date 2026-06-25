@@ -16,12 +16,15 @@ interface ScoreGaugeProps {
   /** Hide the visible label/caption (the svg keeps its aria-label). For dense
    *  inline rows like the theater top bar where space is at a premium. */
   hideLabel?: boolean
+  /** Scale the gauge to fill its container width (up to `size` as the cap),
+   *  instead of rendering at a fixed pixel diameter. */
+  fluid?: boolean
 }
 
 const R = 42
 const C = 2 * Math.PI * R // ≈ 263.9
 
-export function ScoreGauge({ score, label, size = 58, toneOverride, caption, hideLabel = false }: ScoreGaugeProps) {
+export function ScoreGauge({ score, label, size = 58, toneOverride, caption, hideLabel = false, fluid = false }: ScoreGaugeProps) {
   const assessed = score !== null && score !== undefined
   const ten = formatTen(score)
   const tone = toneOverride ?? scoreBandTone(score)
@@ -33,8 +36,15 @@ export function ScoreGauge({ score, label, size = 58, toneOverride, caption, hid
   const ringStyle = { '--px-gauge-final-offset': String(finalOffset) } as CSSProperties
 
   return (
-    <div className="flex flex-col items-center text-center px-gauge">
-      <svg viewBox="0 0 100 100" width={size} height={size} role="img" aria-label={aria}>
+    <div className={`flex flex-col items-center text-center px-gauge${fluid ? ' w-full' : ''}`}>
+      <svg
+        viewBox="0 0 100 100"
+        role="img"
+        aria-label={aria}
+        {...(fluid
+          ? { width: '100%', style: { maxWidth: size, height: 'auto' } as CSSProperties }
+          : { width: size, height: size })}
+      >
         <circle
           cx="50" cy="50" r={R} fill="none"
           stroke="var(--px-surface-3)" strokeWidth={stroke}

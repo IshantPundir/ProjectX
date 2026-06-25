@@ -40,22 +40,26 @@ export function GlanceBand({ report }: { report: ReportRead }): React.ReactEleme
       style={{ borderColor: 'var(--px-hairline)' }}
     >
       <div className="flex flex-col gap-7">
-        {/* Top row: gauges on the left, AI recommendation filling the space on
-            the right. */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[auto_1fr] lg:items-center">
-          {/* Overall + dimension gauges — side by side, color-coded by value,
-              Overall the largest and most prominent. */}
-          <div className="flex flex-wrap items-center justify-center gap-x-9 gap-y-5">
-            <ScoreGauge score={overall?.score ?? null} label="Overall" size={140} />
+        {/* Top row: exact 50-50 split — gauges fill the left half (scaling to
+            fit), AI recommendation fills the right half. */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-center">
+          {/* Overall + dimension gauges — scale to fill the left column,
+              color-coded by value, Overall the largest and most prominent. */}
+          <div className="flex items-center justify-center gap-4 sm:gap-6">
+            <div className="flex flex-[1.6] justify-center">
+              <ScoreGauge score={overall?.score ?? null} label="Overall" size={210} fluid />
+            </div>
             {dims.length > 0 && (
-              <div className="hidden h-[88px] w-px self-center sm:block" style={{ background: 'var(--px-hairline)' }} aria-hidden />
+              <div className="hidden h-[96px] w-px self-center sm:block" style={{ background: 'var(--px-hairline)' }} aria-hidden />
             )}
             {dims.map(({ key, label }) => (
-              <ScoreGauge key={key} score={report.scores[key]?.score ?? null} label={label} size={94} />
+              <div key={key} className="flex flex-1 justify-center">
+                <ScoreGauge score={report.scores[key]?.score ?? null} label={label} size={150} fluid />
+              </div>
             ))}
           </div>
 
-          {/* AI recommendation — verdict + explanation + coverage/confidence */}
+          {/* AI recommendation — verdict + explanation, fills the right half */}
           <div className="lg:border-l lg:pl-8" style={{ borderColor: 'var(--px-hairline)' }}>
             <SectionLabel>AI recommendation</SectionLabel>
             <div className="text-[28px] font-extrabold leading-tight tracking-tight" style={{ color: TONE_INK[meta.tone] }}>
