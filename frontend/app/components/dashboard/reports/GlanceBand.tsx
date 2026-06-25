@@ -90,7 +90,7 @@ export function GlanceBand({ report }: { report: ReportRead }): React.ReactEleme
             <div className="flex flex-col gap-3.5">
               {mustHaves.map((a) => (
                 <ScoreBar key={a.signal} score={a.score} label={a.signal} variant="row"
-                  mustHave notReached={a.provenance === 'not_reached'} />
+                  mustHave notReached={a.provenance === 'not_reached'} hint={a.level_basis || undefined} />
               ))}
             </div>
           </div>
@@ -103,7 +103,7 @@ export function GlanceBand({ report }: { report: ReportRead }): React.ReactEleme
             <div className="flex flex-col gap-3.5">
               {others.map((a) => (
                 <ScoreBar key={a.signal} score={a.score} label={a.signal} variant="row"
-                  notReached={a.provenance === 'not_reached'} />
+                  notReached={a.provenance === 'not_reached'} hint={a.level_basis || undefined} />
               ))}
             </div>
           </div>

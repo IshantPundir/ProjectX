@@ -20,11 +20,13 @@ interface ScoreBarProps {
   showBands?: boolean
   /** Secondary line under the bar. */
   caption?: string
+  /** Extra detail appended to the status tooltip (e.g. a signal's level basis). */
+  hint?: string
 }
 
 export function ScoreBar({
   score, label, variant = 'row', toneOverride,
-  mustHave = false, notReached = false, showBands, caption,
+  mustHave = false, notReached = false, showBands, caption, hint,
 }: ScoreBarProps): React.ReactElement {
   const assessed = score !== null && score !== undefined && !notReached
   const ten = formatTen(score)
@@ -38,8 +40,14 @@ export function ScoreBar({
     ? notReached ? 'not reached' : 'not assessed'
     : cleared ? 'above hiring bar' : 'below hiring bar'
   const aria = assessed
-    ? `${label} score ${ten} out of 10, ${stateLabel}`
+    ? `${label} score ${ten} out of 10, ${stateLabel}${hint ? `. ${hint}` : ''}`
     : `${label} ${stateLabel}`
+
+  // Plain-language status shown on hover over the value/glyph.
+  const statusText = cleared
+    ? `Clears the hiring bar — scored ${ten} of 10 (bar at ${ADVANCE_BAND})`
+    : `Below the hiring bar — scored ${ten} of 10 (bar at ${ADVANCE_BAND})`
+  const tooltipText = hint ? `${statusText}. ${hint}` : statusText
 
   const trackH = variant === 'hero' ? 'h-4' : variant === 'compact' ? 'h-2.5' : 'h-3.5'
   const labelSize = variant === 'hero' ? 'text-[15px]' : variant === 'compact' ? 'text-[12px]' : 'text-[14px]'
@@ -52,15 +60,21 @@ export function ScoreBar({
           {mustHave && <span aria-hidden className="mr-1" style={{ color: 'var(--px-accent)' }}>★</span>}
           {label}
         </span>
-        <span className={`${valueSize} whitespace-nowrap font-bold tabular-nums`}
-          style={{ color: assessed ? 'var(--px-fg)' : 'var(--px-fg-4)' }}>
-          {assessed ? ten : 'n/a'}
-          {assessed && (
-            <span aria-hidden className="ml-1" style={{ color: cleared ? 'var(--px-ok)' : 'var(--px-caution)' }}>
-              {cleared ? '✓' : '⚠'}
+        {assessed ? (
+          <span className="px-tooltip-root cursor-help">
+            <span className={`${valueSize} whitespace-nowrap font-bold tabular-nums`} style={{ color: 'var(--px-fg)' }}>
+              {ten}
+              <span aria-hidden className="ml-1" style={{ color: cleared ? 'var(--px-ok)' : 'var(--px-caution)' }}>
+                {cleared ? '✓' : '⚠'}
+              </span>
             </span>
-          )}
-        </span>
+            <span role="tooltip" className="px-tooltip-content">{tooltipText}</span>
+          </span>
+        ) : (
+          <span className={`${valueSize} whitespace-nowrap font-bold tabular-nums`} style={{ color: 'var(--px-fg-4)' }}>
+            n/a
+          </span>
+        )}
       </div>
 
       <div className={`relative ${trackH} w-full overflow-hidden rounded-full`} style={{ background: 'var(--px-surface-3)' }}>

@@ -17,6 +17,18 @@ describe('ScoreBar', () => {
     expect(bar.textContent).toContain('⚠')
   })
 
+  it('exposes a plain-language status tooltip explaining the glyph', () => {
+    render(<ScoreBar score={4.9} label="Behavioral" />)
+    const tip = screen.getByRole('tooltip')
+    expect(tip).toHaveTextContent('Below the hiring bar — scored 4.9 of 10 (bar at 6.5)')
+  })
+
+  it('appends the hint to the status tooltip and the a11y label when provided', () => {
+    render(<ScoreBar score={7.2} label="Domain" hint="dedicated: thin; +1 cross-credit → solid" />)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('dedicated: thin; +1 cross-credit → solid')
+    expect(screen.getByRole('img', { name: /dedicated: thin/ })).toBeInTheDocument()
+  })
+
   it('sets the fill width to score/10 as a percentage', () => {
     const { container } = render(<ScoreBar score={6.0} label="Comms" />)
     const fill = container.querySelector('.px-scorebar-fill') as HTMLElement
