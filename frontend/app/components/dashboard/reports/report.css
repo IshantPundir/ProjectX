@@ -207,6 +207,22 @@
   background: rgba(255,255,255,.13);
 }
 
+/* --- ScoreBar (threshold-banded horizontal bar) --- */
+.px-band-reject     { background: color-mix(in srgb, var(--px-danger) 12%, transparent); }
+.px-band-borderline { background: color-mix(in srgb, var(--px-caution) 12%, transparent); }
+.px-band-advance    { background: color-mix(in srgb, var(--px-ok) 12%, transparent); }
+.px-bar-marker {
+  width: 2px;
+  background: var(--px-fg-3);
+  opacity: 0.55;
+  transform: translateX(-1px);
+}
+@keyframes px-bar-grow { from { width: 0; } to { width: var(--px-bar-fill); } }
+.px-scorebar-fill {
+  width: var(--px-bar-fill);
+  animation: px-bar-grow 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .px-gauge-ring { animation: none; stroke-dashoffset: var(--px-gauge-final-offset); }
   .px-reveal { animation: none; opacity: 1; transform: none; }
@@ -218,4 +234,5 @@
   .report-playposter:hover img, .report-playposter:hover .report-playbtn { transform: none; }
   .px-radar, .px-radar:hover { transform: none; filter: none; }
   .px-radar-data, .px-radar:hover .px-radar-data { fill-opacity: unset; }
+  .px-scorebar-fill { animation: none; width: var(--px-bar-fill); }
 }
