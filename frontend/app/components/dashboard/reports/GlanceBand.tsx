@@ -1,0 +1,107 @@
+import type { ReportRead, SignalAssessmentOut } from '@/lib/api/reports'
+import { ScoreBar } from './ScoreBar'
+import { confidenceLabel, TONE_INK, verdictMeta } from './report-format'
+import './report.css'
+
+const DIMS: { key: string; label: string }[] = [
+  { key: 'technical', label: 'Technical' },
+  { key: 'behavioral', label: 'Behavioral' },
+  { key: 'communication', label: 'Communication' },
+]
+
+/** Highest weight first; stable tiebreak by name. */
+function byWeightDesc(a: SignalAssessmentOut, b: SignalAssessmentOut): number {
+  if (b.weight !== a.weight) return b.weight - a.weight
+  return a.signal.localeCompare(b.signal)
+}
+
+function Chip({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[9px] uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>{label}</div>
+      <div className="text-[12px] font-semibold" style={{ color: 'var(--px-fg)' }}>{value}</div>
+    </div>
+  )
+}
+
+export function GlanceBand({ report }: { report: ReportRead }): React.ReactElement {
+  const overall = report.scores.overall
+  const meta = verdictMeta(report.verdict)
+  const dims = DIMS.filter(({ key }) => report.scores[key]?.score != null)
+
+  const mustHaves = report.signal_assessments.filter((a) => a.knockout).sort(byWeightDesc)
+  const others = report.signal_assessments.filter((a) => !a.knockout).sort(byWeightDesc)
+  const hasSignals = report.signal_assessments.length > 0
+
+  return (
+    <section
+      aria-label="Candidate at a glance"
+      className="px-card rounded-2xl border bg-white p-5"
+      style={{ borderColor: 'var(--px-hairline)' }}
+    >
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(260px,1fr)_1.1fr_1.3fr]">
+        {/* Tier A — Verdict + Overall */}
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-fg-3)' }}>
+            AI recommendation
+          </div>
+          <div className="mt-1 text-[24px] font-extrabold tracking-tight" style={{ color: TONE_INK[meta.tone] }}>
+            {meta.label}
+          </div>
+          <p className="mb-3 mt-1.5 text-[12.5px] leading-relaxed" style={{ color: 'var(--px-fg-2)' }}>
+            {report.decision.headline}
+          </p>
+          <ScoreBar score={overall?.score ?? null} label="Overall" variant="hero" toneOverride={meta.tone} />
+          <div className="mt-3 flex gap-4">
+            <Chip label="Coverage" value={(overall?.coverage ?? 0).toFixed(2)} />
+            <Chip label="Confidence" value={confidenceLabel(overall?.confidence ?? 'low')} />
+          </div>
+        </div>
+
+        {/* Tier B — Dimensions */}
+        <div>
+          <div className="mb-2 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-fg-3)' }}>
+            Dimensions
+          </div>
+          <div className="flex flex-col gap-3">
+            {dims.map(({ key, label }) => (
+              <ScoreBar key={key} score={report.scores[key]?.score ?? null} label={label} variant="row" />
+            ))}
+          </div>
+        </div>
+
+        {/* Tier C — Competencies */}
+        {hasSignals && (
+          <div>
+            {mustHaves.length > 0 && (
+              <>
+                <div className="mb-2 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-fg-3)' }}>
+                  Must-have competencies
+                </div>
+                <div className="flex flex-col gap-3">
+                  {mustHaves.map((a) => (
+                    <ScoreBar key={a.signal} score={a.score} label={a.signal} variant="row"
+                      mustHave notReached={a.provenance === 'not_reached'} />
+                  ))}
+                </div>
+              </>
+            )}
+            {others.length > 0 && (
+              <>
+                <div className="mb-2 mt-4 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-fg-3)' }}>
+                  Other competencies
+                </div>
+                <div className="grid grid-cols-1 gap-x-5 gap-y-2 sm:grid-cols-2">
+                  {others.map((a) => (
+                    <ScoreBar key={a.signal} score={a.score} label={a.signal} variant="compact"
+                      notReached={a.provenance === 'not_reached'} />
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
