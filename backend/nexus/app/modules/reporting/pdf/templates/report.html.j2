@@ -2,111 +2,122 @@
 <html><head><meta charset="utf-8"><style>
   @page { size: A4; margin: 0; }
   * { box-sizing: border-box; }
-  body { margin:0; font-family:"Liberation Sans",Arial,sans-serif; color:#16181d;
-         -webkit-print-color-adjust:exact; print-color-adjust:exact; font-size:12px; }
-  .serif { font-family:"Liberation Serif",Georgia,serif; }
+  body { margin:0; font-family:"Liberation Sans",Arial,sans-serif; color:#0C2A38;
+         -webkit-print-color-adjust:exact; print-color-adjust:exact; font-size:12px;
+         background:#F4F6F8; }
 
-  /* dark hero — flush to the top of the page (no white bar above it) */
-  .hero { background:linear-gradient(120deg,#1a1b38,#33356b); color:#fff; padding:22px 34px 34px; }
-  .herotop { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
-  .wordmark-w { height:30px; width:auto; display:block; filter:brightness(0) invert(1); }
+  /* ── Hero (matches web ImmersiveHeader) ───────────────────────────────────── */
+  .hero { position:relative; color:#fff; padding:26px 34px 30px; overflow:hidden;
+          background:
+            radial-gradient(620px circle at 12% 8%, rgba(111,104,240,.55), transparent 42%),
+            radial-gradient(520px circle at 92% 96%, rgba(54,208,127,.20), transparent 46%),
+            linear-gradient(120deg,#141531,#2b2d62); }
+  .herotop { position:relative; display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:22px; }
+  .wordmark-w { height:26px; width:auto; display:block; filter:brightness(0) invert(1); }
   .bmeta-light { font-size:9px; letter-spacing:2px; text-transform:uppercase; color:#9b9cc4;
-                 text-align:right; line-height:1.8; }
-  .hgrid { display:flex; gap:28px; align-items:center; }
-  .photo { height:170px; width:170px; border-radius:20px; flex:none; overflow:hidden;
-           border:3px solid rgba(255,255,255,.18); box-shadow:0 10px 28px rgba(0,0,0,.32); }
-  .photo img { width:100%; height:100%; object-fit:cover; display:block; }
-  .mono { height:170px; width:170px; border-radius:20px; flex:none;
-          background:linear-gradient(135deg,#6f68f0,#4f46e5); display:flex;
-          align-items:center; justify-content:center; font-weight:800; font-size:62px;
-          color:#fff; border:3px solid rgba(255,255,255,.18); }
-  .who { flex:1; }
-  .hname { font-size:30px; font-weight:600; margin:0 0 4px; letter-spacing:.2px; }
-  .hrole { font-size:13.5px; color:#bcbdda; }
-  .stub { display:inline-block; margin-top:16px; border:1px solid rgba(255,255,255,.30);
-          color:#fff; font-size:11.5px; border-radius:9px; padding:8px 14px; text-decoration:none; }
-  .stampwrap { flex:none; }
+                 text-align:right; line-height:1.9; }
+  .hgrid { position:relative; display:flex; gap:26px; align-items:center; }
 
-  /* gauges band */
-  .gauges { display:flex; justify-content:center; align-items:flex-start; gap:48px;
-            padding:30px 34px; border-bottom:1px solid #ececf1; background:#fcfcfe; }
+  .photo-wrap { position:relative; flex:none; }
+  .photo-glow { position:absolute; inset:-16px; border-radius:30px;
+                background:radial-gradient(circle at 50% 45%, var(--glow), transparent 72%);
+                filter:blur(13px); z-index:0; }
+  .photo, .mono { position:relative; z-index:1; height:164px; width:164px; border-radius:20px;
+          flex:none; border:3px solid rgba(255,255,255,.22);
+          box-shadow:0 0 0 5px var(--ring), 0 0 30px 2px var(--glow), 0 14px 34px rgba(0,0,0,.4); }
+  .photo { overflow:hidden; } .photo img { width:100%; height:100%; object-fit:cover; display:block; }
+  .mono { background:linear-gradient(135deg,#6f68f0,#4f46e5); display:flex; align-items:center;
+          justify-content:center; font-weight:800; font-size:60px; color:#fff; }
+  .vbadge { position:absolute; top:-9px; right:-9px; z-index:2; line-height:0;
+            filter:drop-shadow(0 1px 0 rgba(255,255,255,.35)) drop-shadow(0 4px 7px rgba(8,47,110,.55)); }
+
+  .who { flex:1; min-width:0; }
+  .hname { font-size:30px; font-weight:700; margin:0 0 3px; line-height:1.05; }
+  .hsub  { font-size:13px; color:#c7c8e4; margin:0; }
+  .hsub2 { font-size:12.5px; color:#b9bae0; margin:3px 0 0; }
+  .hmeta { display:flex; flex-wrap:wrap; gap:6px 22px; margin-top:11px; font-size:12.5px; color:#cfd0ea; }
+  .hmeta strong { color:#fff; }
+  .hskills { display:flex; flex-wrap:wrap; gap:5px; margin-top:13px; }
+  .hskill { background:rgba(255,255,255,.12); color:#e7e8fb; font-size:11px; font-weight:600;
+            border:1px solid rgba(255,255,255,.16); border-radius:999px; padding:4px 11px; }
+  .stub { display:inline-flex; align-items:center; margin-top:14px; background:rgba(255,255,255,.08);
+          border:1px solid rgba(255,255,255,.18); color:rgba(220,220,240,.85); font-size:12px;
+          border-radius:11px; padding:8px 15px; text-decoration:none; }
+  .stampwrap { flex:none; align-self:center; }
+
+  /* ── Cards / sections ─────────────────────────────────────────────────────── */
+  .wrap { padding:18px 30px 4px; }
+  .card { background:#fff; border:1px solid rgba(12,42,56,.08); border-radius:16px;
+          padding:18px 20px; margin-bottom:16px; box-shadow:0 2px 12px rgba(20,20,40,.04);
+          break-inside:avoid; }
+  .lbl { font-size:11px; font-weight:700; letter-spacing:1.3px; text-transform:uppercase;
+         color:#5C6B73; margin:0 0 12px; }
+  .body { font-size:13.5px; line-height:1.7; color:#34454E; white-space:pre-wrap; }
+
+  /* ── Glance band ──────────────────────────────────────────────────────────── */
+  .glance-top { display:flex; align-items:center; gap:10px; }
+  .gauges { flex:1; display:flex; align-items:center; justify-content:space-around; gap:8px; }
   .gz { text-align:center; }
-  .gz-l { font-size:11px; letter-spacing:.6px; text-transform:uppercase; color:#3a3d45;
-          font-weight:700; margin-top:10px; }
-  .gz-t { font-size:9.5px; letter-spacing:.4px; text-transform:uppercase; color:#9a9aa6; margin-top:2px; }
+  .gz-l { font-size:11px; letter-spacing:.4px; text-transform:uppercase; color:#5C6B73; font-weight:600; margin-top:6px; }
+  .gdiv { width:1px; height:92px; background:rgba(12,42,56,.10); }
+  .reco { flex:1; border-left:1px solid rgba(12,42,56,.08); padding-left:26px; }
+  .reco-label { font-size:27px; font-weight:800; letter-spacing:-.3px; line-height:1.1; margin-top:2px; }
+  .reco-head { font-size:13.5px; line-height:1.6; color:#34454E; margin:8px 0 0; }
 
-  /* sections */
-  .sec { padding:22px 34px 0; }
-  .keep { break-inside:avoid; }
-  .secnum { display:flex; align-items:center; gap:13px; margin:0 0 14px; }
-  .secnum .e { font-size:10px; letter-spacing:2.6px; text-transform:uppercase;
-               font-weight:700; color:#6b6f7a; }
-  .secnum .ln { flex:1; height:1px; background:#ececf1; }
-  .body { font-size:12.5px; line-height:1.85; color:#3a3d45; }
+  .comp-group { margin-top:18px; }
+  .bar { margin-bottom:13px; }
+  .bar:last-child { margin-bottom:0; }
+  .bar-top { display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:5px; }
+  .bar-label { font-size:13.5px; font-weight:600; color:#34454E; }
+  .bar-star { color:#6C5CD0; }
+  .bar-val { font-size:15px; font-weight:700; white-space:nowrap; }
+  .bar-track { position:relative; height:13px; width:100%; border-radius:999px; background:#E7EBEE; overflow:hidden; }
+  .zone { position:absolute; top:0; bottom:0; }
+  .bar-fill { position:absolute; top:0; bottom:0; left:0; border-radius:999px; }
+  .bar-marker { position:absolute; top:0; bottom:0; width:2px; background:#5C6B73; opacity:.55; transform:translateX(-1px); }
+  .bar-dashed { position:absolute; inset:0; border:1px dashed #93A0A6; border-radius:999px; opacity:.5; }
 
-  .why { display:flex; gap:18px; }
-  .wcard { border:1px solid #ececf1; border-radius:14px; padding:18px 19px; flex:1;
-           box-shadow:0 2px 12px rgba(20,20,40,.04); }
-  .wcard.pos { border-top:3px solid #0e7a45; }
-  .wcard.neg { border-top:3px solid #b4791a; }
-  .wtitle { font-weight:700; font-size:12.5px; margin-bottom:8px; line-height:1.4; }
-  .wbody { font-size:11.5px; line-height:1.7; color:#54565f; }
+  /* ── Why this verdict ─────────────────────────────────────────────────────── */
+  .why { display:flex; gap:12px; }
+  .wcard { border-radius:10px; padding:13px 14px; flex:1; }
+  .wtitle { font-weight:700; font-size:13.5px; margin-bottom:4px; line-height:1.4; }
+  .wbody { font-size:13px; line-height:1.6; color:#34454E; }
 
+  /* ── Strengths & Concerns ─────────────────────────────────────────────────── */
   .twocol { display:flex; gap:24px; align-items:flex-start; }
   .twocol > div { flex:1; min-width:0; }
-  .colh { font-size:11px; letter-spacing:.8px; text-transform:uppercase; font-weight:800;
-          padding-bottom:10px; margin-bottom:4px; border-bottom:2px solid; }
-  .colh-s { color:#0e7a45; border-color:#cdeede; }
-  .colh-c { color:#b4791a; border-color:#f3e2c2; }
-  .srow { display:flex; gap:12px; padding:14px 0; border-bottom:1px solid #f2f2f6; break-inside:avoid; }
-  .sico { width:24px; height:24px; border-radius:8px; display:flex; align-items:center;
-          justify-content:center; font-size:13px; font-weight:800; flex:none; }
-  .sico.s { background:#e7f7ee; color:#0e7a45; }
-  .sico.c { background:#fbf1de; color:#b4791a; }
-  .stitle { font-weight:700; font-size:12px; margin-bottom:4px; line-height:1.4; }
-  .sdetail { font-size:11px; color:#54565f; line-height:1.7; }
-  .sev { font-size:8px; font-weight:700; border-radius:5px; padding:2px 7px; background:#fbf1de;
-         color:#b4791a; text-transform:uppercase; letter-spacing:.6px; margin-left:7px; white-space:nowrap; }
+  .colh { font-size:11px; letter-spacing:.8px; text-transform:uppercase; font-weight:700; margin-bottom:9px; }
+  .sc-item { margin-bottom:10px; break-inside:avoid; }
+  .sc-title { font-weight:600; font-size:13.5px; color:#0C2A38; }
+  .sc-detail { font-size:12.5px; color:#5C6B73; line-height:1.6; margin-top:1px; }
+  .sev { font-size:9px; font-weight:700; border-radius:5px; padding:2px 6px; text-transform:uppercase;
+         letter-spacing:.4px; margin-left:6px; white-space:nowrap; vertical-align:middle; }
 
-  .qcard { border:1px solid #ececf1; border-radius:14px; padding:17px 19px; margin-bottom:14px;
-           box-shadow:0 2px 12px rgba(20,20,40,.04); break-inside:avoid; }
-  .qhead { display:flex; justify-content:space-between; gap:14px; align-items:flex-start; }
-  .qnum { font-family:"Liberation Serif",Georgia,serif; color:#c9cad4; font-size:23px;
-          font-weight:600; margin-right:12px; line-height:1; }
-  .qtitle { font-weight:700; font-size:12.5px; line-height:1.45; }
-  .chip { font-size:8.5px; font-weight:700; border-radius:6px; padding:3px 9px; letter-spacing:.5px;
-          text-transform:uppercase; white-space:nowrap; }
-  .chip-ok { background:#e7f7ee; color:#0e7a45; }
-  .chip-caution { background:#fbf1de; color:#b4791a; }
-  .chip-danger { background:#fdeceb; color:#c0392b; }
-  .chip-neutral { background:#f1f1f5; color:#7c7c88; }
-  .chip-diff { background:#f1f1f5; color:#7c7c88; }
-  .qquote { border-left:2px solid #e3e3ea; padding-left:14px; color:#52535d; font-size:11.5px;
-            font-style:italic; line-height:1.75; margin-top:13px; }
-  .qread { font-size:11.5px; color:#3a3d45; line-height:1.7; margin-top:10px; }
-  .pad-bottom { height:30px; }
+  /* ── Question by question ─────────────────────────────────────────────────── */
+  .qrow { padding:13px 0; border-top:1px solid rgba(12,42,56,.08); break-inside:avoid; }
+  .qrow:first-child { border-top:0; padding-top:2px; }
+  .qhead { display:flex; gap:11px; align-items:flex-start; }
+  .qseq { width:26px; height:26px; border-radius:8px; flex:none; display:flex; align-items:center;
+          justify-content:center; font-size:12px; font-weight:800;
+          background:rgba(108,92,208,.12); color:#6C5CD0; }
+  .qtext { flex:1; font-size:14px; font-weight:600; line-height:1.35; color:#0C2A38; }
+  .qstars { flex:none; text-align:center; padding-left:8px; }
+  .qstar-l { font-size:11px; font-weight:800; color:#5C6B73; }
+  .qna { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.4px;
+         background:#F4F6F8; color:#93A0A6; border-radius:4px; padding:2px 6px; }
+  .qchips { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:7px 0 0 37px; }
+  .chip { font-size:10px; font-weight:700; border-radius:5px; padding:2px 7px;
+          text-transform:uppercase; letter-spacing:.4px; white-space:nowrap; }
+  .qprobe { font-size:11px; color:#93A0A6; }
+  .qquote { margin:6px 0 0 37px; border-left:2px solid rgba(12,42,56,.14); padding-left:9px;
+            font-style:italic; font-size:13px; color:#5C6B73; line-height:1.6; }
+  .qread { margin:6px 0 0 37px; font-size:12.5px; color:#34454E; line-height:1.6; }
+  .qread b { color:#5C6B73; font-weight:600; }
+  .qpills { display:flex; flex-wrap:wrap; gap:6px; margin:7px 0 0 37px; }
+  .pill { display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:600;
+          border-radius:999px; padding:2px 9px; }
 
-  /* header additions */
-  .hemail { font-size:11px; color:#9b9cc4; margin:3px 0 0; }
-  .hmeta { font-size:11px; color:#bcbdda; margin:6px 0 0; line-height:1.6; }
-  .hskills { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
-  .hskill { background:rgba(255,255,255,.13); color:#e0e0f0; font-size:9.5px;
-             font-weight:600; border-radius:6px; padding:3px 9px; letter-spacing:.4px; }
-
-  /* radar section */
-  .atglance { display:flex; gap:32px; align-items:flex-start; padding:22px 34px 0; }
-  .radar-wrap { flex:none; }
-  .radar-bar { display:flex; flex-direction:column; gap:8px; min-width:160px; }
-  .rbar-row { display:flex; align-items:center; gap:8px; }
-  .rbar-label { font-size:10px; font-weight:700; color:#3a3d45; flex:1; min-width:0;
-                white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .rbar-track { flex:1; height:5px; background:#ececf1; border-radius:3px; overflow:hidden; }
-  .rbar-fill { height:100%; background:#6f68f0; border-radius:3px; }
-  .rbar-score { font-size:10px; font-weight:700; color:#3a3d45; width:22px; text-align:right; }
-
-  /* star row */
-  .qscore { display:flex; align-items:center; gap:8px; margin-top:8px; }
-  .qlabel { font-size:10px; color:#6b6f7a; font-weight:600; }
+  .pad-bottom { height:20px; }
 </style></head>
 <body>
   <svg width="0" height="0" style="position:absolute"><defs>
@@ -119,52 +130,96 @@
     </filter>
   </defs></svg>
 
-  {%- macro gauge(label, score, color, tier, size, stroke, numsize) -%}
+  {%- set TONE_BG = {'ok':'rgba(174,227,217,0.20)','caution':'rgba(232,147,12,0.12)','danger':'rgba(229,85,107,0.10)','neutral':'#F4F6F8','human':'rgba(216,206,244,0.28)'} -%}
+  {%- set TONE_INK = {'ok':'#0B3D34','caution':'#7A4A08','danger':'#8A2733','neutral':'#93A0A6','human':'#4A3E7A'} -%}
+  {%- set STATUS_LABEL = {'passed':'Passed','partial':'Partial','failed_required':'Failed — required skill','not_demonstrated':'Not demonstrated','not_attempted':'Not attempted','not_fully_assessed':'Not fully assessed'} -%}
+  {%- set STATUS_META_TONE = {'passed':'ok','partial':'caution','failed_required':'danger','not_demonstrated':'danger','not_attempted':'neutral','not_fully_assessed':'neutral'} -%}
+  {%- set DIFF_TONE = {'easy':'ok','medium':'caution','hard':'danger'} -%}
+
+  {%- macro gauge(g, size, numsize) -%}
+    {%- set stroke = (size * 0.085) -%}
     {%- set r = (size / 2) - stroke -%}
     {%- set circ = 6.2831853 * r -%}
-    {%- set pct = (score if score is not none else 0) / 10 -%}
+    {%- set pct = (g.score if g.score is not none else 0) / 10 -%}
     {%- set off = circ * (1 - pct) -%}
     <div class="gz">
       <svg width="{{ size }}" height="{{ size }}" viewBox="0 0 {{ size }} {{ size }}">
-        <circle cx="{{ size/2 }}" cy="{{ size/2 }}" r="{{ r }}" fill="none" stroke="#eef0f4" stroke-width="{{ stroke }}"/>
-        <circle cx="{{ size/2 }}" cy="{{ size/2 }}" r="{{ r }}" fill="none" stroke="{{ color }}"
+        <circle cx="{{ size/2 }}" cy="{{ size/2 }}" r="{{ r }}" fill="none" stroke="#E7EBEE" stroke-width="{{ stroke }}"/>
+        {% if g.score is not none %}
+        <circle cx="{{ size/2 }}" cy="{{ size/2 }}" r="{{ r }}" fill="none" stroke="{{ g.color }}"
                 stroke-width="{{ stroke }}" stroke-linecap="round" stroke-dasharray="{{ circ }}"
                 stroke-dashoffset="{{ off }}" transform="rotate(-90 {{ size/2 }} {{ size/2 }})"/>
+        {% endif %}
         <text x="{{ size/2 }}" y="{{ (size/2) + (numsize * 0.34) }}" text-anchor="middle"
-              font-size="{{ numsize }}" font-weight="700" fill="#16181d"
-              font-family="Liberation Serif,Georgia,serif">{{ score if score is not none else '&mdash;' }}</text>
+              font-size="{{ numsize }}" font-weight="800" fill="#0C2A38">{{ ('%.1f'|format(g.score)) if g.score is not none else 'n/a' }}</text>
       </svg>
-      <div class="gz-l">{{ label }}</div>
-      {% if tier %}<div class="gz-t">{{ tier }}</div>{% endif %}
+      <div class="gz-l">{{ g.name }}</div>
     </div>
   {%- endmacro -%}
 
+  {%- macro bar(b) -%}
+    <div class="bar">
+      <div class="bar-top">
+        <span class="bar-label">{% if b.must_have %}<span class="bar-star">★</span> {% endif %}{{ b.label }}</span>
+        <span class="bar-val" style="color:{{ '#0C2A38' if b.assessed else '#93A0A6' }}">
+          {%- if b.assessed -%}{{ b.value }}<span style="color:{{ b.glyph_color }};margin-left:4px">{{ b.glyph }}</span>{%- else -%}n/a{%- endif -%}
+        </span>
+      </div>
+      <div class="bar-track">
+        {% if b.assessed %}
+        <div class="zone" style="left:0;width:{{ bands.reject_pct }}%;background:rgba(138,39,51,.12)"></div>
+        <div class="zone" style="left:{{ bands.reject_pct }}%;width:{{ bands.advance_pct - bands.reject_pct }}%;background:rgba(122,74,8,.12)"></div>
+        <div class="zone" style="left:{{ bands.advance_pct }}%;right:0;background:rgba(11,61,52,.12)"></div>
+        <div class="bar-fill" style="width:{{ b.fill_pct }}%;background:{{ b.fill_color }}"></div>
+        <div class="bar-marker" style="left:{{ bands.advance_pct }}%"></div>
+        {% else %}
+        <div class="bar-dashed"></div>
+        {% endif %}
+      </div>
+    </div>
+  {%- endmacro -%}
+
+  <!-- ── HERO ──────────────────────────────────────────────────────────────── -->
   <div class="hero">
     <div class="herotop">
       {% if logo_src %}<img class="wordmark-w" src="{{ logo_src }}" alt="BinQle">{% else %}<div style="font-weight:800;font-size:16px;color:#fff">BinQle<span style="color:#a7a3f5">.ai</span></div>{% endif %}
       <div class="bmeta-light">Candidate Evaluation<br>{{ stage_label }} &middot; {{ generated_on }} &middot; Confidential</div>
     </div>
     <div class="hgrid">
-      {% if reference_photo_url %}<div class="photo"><img src="{{ reference_photo_url }}" alt=""></div>
-      {% else %}<div class="mono">{{ monogram }}</div>{% endif %}
-      <div class="who">
-        <div class="hname serif">{{ candidate_name }}</div>
-        {% if header.candidate_email %}<div class="hemail">{{ header.candidate_email }}</div>{% endif %}
-        <div class="hmeta">
-          {{ header.job_title or job_title }}
-          {%- if header.stage_label %} &middot; {{ header.stage_label }}{% endif %}
-          {%- if header.session_date %} &middot; {{ header.session_date }}{% endif %}
-          {%- if header.duration %} &middot; {{ header.duration }}{% endif %}
+      <div class="photo-wrap" style="--glow:{{ glow.glow }};--ring:{{ glow.ring }}">
+        <div class="photo-glow"></div>
+        {% if reference_photo_url %}<div class="photo"><img src="{{ reference_photo_url }}" alt=""></div>
+        {% else %}<div class="mono">{{ monogram }}</div>{% endif %}
+        <div class="vbadge">
+          <svg width="36" height="36" viewBox="0 0 100 100">
+            <defs><linearGradient id="vbg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#5cb3ff"/><stop offset="52%" stop-color="#2b8ff0"/><stop offset="100%" stop-color="#1466d6"/>
+            </linearGradient></defs>
+            <path d="{{ verified_seal_path }}" fill="url(#vbg)" stroke="url(#vbg)" stroke-width="17" stroke-linejoin="round" stroke-linecap="round"/>
+            <path d="M36 50.5 L46 60.5 L67 38.5" fill="none" stroke="#0c4ea8" stroke-opacity="0.5" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" transform="translate(0,1.6)"/>
+            <path d="M36 50.5 L46 60.5 L67 38.5" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
         </div>
-        {% if header.skills %}
-        <div class="hskills">
-          {% for sk in header.skills %}<span class="hskill">{{ sk }}</span>{% endfor %}
-        </div>
-        {% endif %}
-        <a class="stub" href="{{ full_session_url }}" style="margin-top:14px;display:inline-block">&#9654; See full session recording</a>
       </div>
+
+      <div class="who">
+        <div class="hname">{{ header.candidate_name }}</div>
+        {% if header.candidate_email %}<p class="hsub">{{ header.candidate_email }}</p>{% endif %}
+        {% if header.candidate_title or header.candidate_location %}
+        <p class="hsub2">{{ header.candidate_title or '' }}{% if header.candidate_title and header.candidate_location %}   &middot;   {% endif %}{% if header.candidate_location %}📍 {{ header.candidate_location }}{% endif %}</p>
+        {% endif %}
+        <div class="hmeta">
+          <span>💼 <strong>{{ header.job_title or job_title }}</strong>{% if header.company_name %} &middot; {{ header.company_name }}{% endif %}{% if header.stage_label %} &middot; {{ header.stage_label }}{% endif %}</span>
+          {% if header.work_arrangement or header.job_location %}<span>🌐 {{ header.work_arrangement or '' }}{% if header.work_arrangement and header.job_location %} &middot; {% endif %}{{ header.job_location or '' }}</span>{% endif %}
+          {% if header.session_date %}<span>🗓 {{ header.session_date }}</span>{% endif %}
+          {% if header.duration %}<span>⏱ {{ header.duration }}</span>{% endif %}
+        </div>
+        {% if header.skills %}<div class="hskills">{% for sk in header.skills %}<span class="hskill">{{ sk }}</span>{% endfor %}</div>{% endif %}
+        <a class="stub" href="{{ full_session_url }}">&#9654;&nbsp; See full session recording</a>
+      </div>
+
       <div class="stampwrap">
-        <svg width="196" height="98" viewBox="0 0 200 100">
+        <svg width="244" height="122" viewBox="0 0 200 100" style="filter:drop-shadow(0 0 16px {{ stamp.color }}55)">
           <g filter="url(#worn)" transform="rotate(-8 100 50)" fill="none" stroke="{{ stamp.color }}">
             <rect x="10" y="18" width="180" height="64" rx="9" stroke-width="5"/>
             <rect x="17" y="25" width="166" height="50" rx="6" stroke-width="2.2"/>
@@ -177,149 +232,123 @@
     </div>
   </div>
 
-  <div class="gauges">
-    {{ gauge('Overall', overall_score, overall_color, overall_tier, 106, 9, 30) }}
-    {% for d in dimensions %}{{ gauge(d.name, d.score, d.color, d.tier, 106, 9, 30) }}{% endfor %}
-  </div>
+  <div class="wrap">
+    <!-- ── GLANCE BAND ─────────────────────────────────────────────────────── -->
+    <div class="card">
+      <div class="glance-top">
+        <div class="gauges">
+          {{ gauge(gauges[0], 132, 30) }}
+          {% if gauges|length > 1 %}<div class="gdiv"></div>{% endif %}
+          {% for g in gauges[1:] %}{{ gauge(g, 104, 26) }}{% endfor %}
+        </div>
+        <div class="reco">
+          <div class="lbl" style="margin-bottom:4px">AI recommendation</div>
+          <div class="reco-label" style="color:{{ recommendation.ink }}">{{ recommendation.label }}</div>
+          <p class="reco-head">{{ recommendation.headline }}</p>
+        </div>
+      </div>
 
-  {% if radar_geom %}
-  <div class="atglance">
-    <div class="radar-wrap">
-      <svg width="{{ radar_geom.size }}" height="{{ radar_geom.size }}" viewBox="0 0 {{ radar_geom.size }} {{ radar_geom.size }}">
-        <!-- grid polygons -->
-        <polygon points="{{ radar_geom.grid_points }}" fill="none" stroke="#e3e3ea" stroke-width="1"/>
-        <polygon points="{{ radar_geom.mid_points }}" fill="none" stroke="#e3e3ea" stroke-width="0.7" stroke-dasharray="3,3"/>
-        <!-- axis lines -->
-        {% for ax in radar_geom.axes %}
-        <line x1="{{ ax.x1 }}" y1="{{ ax.y1 }}" x2="{{ ax.x2 }}" y2="{{ ax.y2 }}" stroke="#e3e3ea" stroke-width="0.7"/>
-        {% endfor %}
-        <!-- data polygon -->
-        <polygon points="{{ radar_geom.data_points }}" fill="rgba(111,104,240,0.18)" stroke="#6f68f0" stroke-width="2" stroke-linejoin="round"/>
-        <!-- axis labels -->
-        {% for lb in radar_geom.labels %}
-        <text x="{{ lb.x }}" y="{{ lb.y }}" text-anchor="{{ lb.anchor }}"
-              font-family="Liberation Sans,Arial,sans-serif" font-size="8" fill="#54565f"
-              font-weight="600">{{ lb.name }}</text>
-        {% endfor %}
-      </svg>
+      {% if competencies.must_haves %}
+      <div class="comp-group">
+        <div class="lbl">Must-have competencies</div>
+        {% for b in competencies.must_haves %}{{ bar(b) }}{% endfor %}
+      </div>
+      {% endif %}
+      {% if competencies.others %}
+      <div class="comp-group">
+        <div class="lbl">Other competencies</div>
+        {% for b in competencies.others %}{{ bar(b) }}{% endfor %}
+      </div>
+      {% endif %}
     </div>
-  </div>
-  {% elif radar %}
-  <div class="sec keep">
-    <div class="radar-bar">
-      {% for ax in radar %}
-      <div class="rbar-row">
-        <span class="rbar-label">{{ ax.name }}</span>
-        <div class="rbar-track"><div class="rbar-fill" style="width:{{ (ax.score / 10 * 100)|int }}%"></div></div>
-        <span class="rbar-score">{{ ax.score }}</span>
+
+    <!-- ── QUICK SUMMARY ───────────────────────────────────────────────────── -->
+    {% if quick_summary %}
+    <div class="card">
+      <div class="lbl">Quick summary</div>
+      <p class="body">{{ quick_summary }}</p>
+    </div>
+    {% endif %}
+
+    <!-- ── WHY THIS VERDICT ────────────────────────────────────────────────── -->
+    <div class="card">
+      <div class="lbl">Why this verdict</div>
+      <div class="why">
+        <div class="wcard" style="background:rgba(174,227,217,.20)">
+          <div class="wtitle" style="color:#0B3D34">{{ decision.why_positive.title }}</div>
+          <div class="wbody">{{ decision.why_positive.body }}</div>
+        </div>
+        <div class="wcard" style="background:rgba(232,147,12,.12)">
+          <div class="wtitle" style="color:#7A4A08">{{ decision.why_negative.title }}</div>
+          <div class="wbody">{{ decision.why_negative.body }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── STRENGTHS & CONCERNS ────────────────────────────────────────────── -->
+    {% if strengths or concerns %}
+    <div class="card">
+      <div class="twocol">
+        <div>
+          <div class="colh" style="color:#0B3D34">Strengths {{ strengths|length }}</div>
+          {% for s in strengths %}
+          <div class="sc-item"><div class="sc-title">{{ s.title }}</div><div class="sc-detail">{{ s.detail }}</div></div>
+          {% else %}<div class="sc-detail">None recorded.</div>{% endfor %}
+        </div>
+        <div>
+          <div class="colh" style="color:#8A2733">Concerns {{ concerns|length }}</div>
+          {% for c in concerns %}
+          <div class="sc-item">
+            <div class="sc-title">{{ c.title }}<span class="sev" style="background:{{ TONE_BG['caution'] if c.severity != 'deal_breaker' else TONE_BG['danger'] }};color:{{ TONE_INK['caution'] if c.severity != 'deal_breaker' else TONE_INK['danger'] }}">{{ c.severity|replace('_',' ') }}</span></div>
+            <div class="sc-detail">{{ c.detail }}</div>
+          </div>
+          {% else %}<div class="sc-detail">None recorded.</div>{% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- ── QUESTION BY QUESTION ────────────────────────────────────────────── -->
+    {% if questions %}
+    <div class="card">
+      <div class="lbl">Question by question</div>
+      {% for q in questions %}
+      {%- set btone = q.status_tone if (q.status_tone and q.status_tone != 'neutral') else STATUS_META_TONE.get(q.status_badge, 'neutral') -%}
+      <div class="qrow">
+        <div class="qhead">
+          <div class="qseq">{{ q.seq }}</div>
+          <div class="qtext">{{ q.question_text or q.title }}</div>
+          <div class="qstars">
+            {% if q.score is not none %}
+            <svg width="80" height="16" viewBox="0 0 80 16">
+              {% for i in range(5) %}{%- set f = q.stars[i] -%}{%- set sx = i * 16 -%}
+              <polygon points="{{ sx+8 }},1 {{ sx+10 }},6 {{ sx+15 }},6 {{ sx+11 }},9 {{ sx+12 }},14 {{ sx+8 }},11 {{ sx+4 }},14 {{ sx+5 }},9 {{ sx+1 }},6 {{ sx+6 }},6" fill="#E7EBEE"/>
+              {% if f >= 1.0 %}<polygon points="{{ sx+8 }},1 {{ sx+10 }},6 {{ sx+15 }},6 {{ sx+11 }},9 {{ sx+12 }},14 {{ sx+8 }},11 {{ sx+4 }},14 {{ sx+5 }},9 {{ sx+1 }},6 {{ sx+6 }},6" fill="#E8930C"/>
+              {% elif f >= 0.5 %}<defs><clipPath id="hc{{ loop.index }}"><rect x="{{ sx }}" y="0" width="8" height="16"/></clipPath></defs>
+              <polygon points="{{ sx+8 }},1 {{ sx+10 }},6 {{ sx+15 }},6 {{ sx+11 }},9 {{ sx+12 }},14 {{ sx+8 }},11 {{ sx+4 }},14 {{ sx+5 }},9 {{ sx+1 }},6 {{ sx+6 }},6" fill="#E8930C" clip-path="url(#hc{{ loop.index }})"/>{% endif %}
+              {% endfor %}
+            </svg>
+            <div class="qstar-l">{{ "%.1f"|format(q.score / 2) }} / 5</div>
+            {% else %}<span class="qna">Not assessed</span>{% endif %}
+          </div>
+        </div>
+        <div class="qchips">
+          {% if q.difficulty %}{%- set dt = DIFF_TONE.get(q.difficulty, 'neutral') -%}<span class="chip" style="background:{{ TONE_BG[dt] }};color:{{ TONE_INK[dt] }}">{{ q.difficulty }}</span>{% endif %}
+          <span class="chip" style="background:{{ TONE_BG[btone] }};color:{{ TONE_INK[btone] }}">{{ STATUS_LABEL.get(q.status_badge, q.status_badge|replace('_',' ')) }}</span>
+          {% if q.probes_available and q.probes_available > 0 %}<span class="qprobe">{{ q.probes_used or 0 }}/{{ q.probes_available }} probes</span>{% endif %}
+        </div>
+        {% if q.candidate_quote %}<div class="qquote">&ldquo;{{ q.candidate_quote }}&rdquo;</div>{% endif %}
+        {% if q.our_read %}<div class="qread"><b>Our read:</b> {{ q.our_read }}</div>{% endif %}
+        {% if q.listen_for_hits or q.red_flags_tripped %}
+        <div class="qpills">
+          {% for hit in q.listen_for_hits or [] %}<span class="pill" style="background:rgba(174,227,217,.20);color:#0B3D34">✓ {{ hit }}</span>{% endfor %}
+          {% for flag in q.red_flags_tripped or [] %}<span class="pill" style="background:rgba(229,85,107,.10);color:#8A2733">! {{ flag }}</span>{% endfor %}
+        </div>
+        {% endif %}
       </div>
       {% endfor %}
     </div>
+    {% endif %}
   </div>
-  {% endif %}
-
-  {% if strengths_pills or watchout_pills %}
-  <div class="sec keep" style="padding-top:14px;padding-bottom:6px">
-    <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
-      {% if strengths_pills %}
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span style="font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#0e7a45">Top strengths</span>
-        {% for name in strengths_pills %}
-        <span class="chip" style="background:#e7f7ee;color:#0e7a45">{{ name }}</span>
-        {% endfor %}
-      </div>
-      {% endif %}
-      {% if watchout_pills %}
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span style="font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#b4791a">Watch-outs</span>
-        {% for name in watchout_pills %}
-        <span class="chip" style="background:#fbf1de;color:#b4791a">{{ name }}</span>
-        {% endfor %}
-      </div>
-      {% endif %}
-    </div>
-  </div>
-  {% endif %}
-
-  <div class="sec">
-    <div class="secnum"><span class="e">01 &mdash; Summary</span><span class="ln"></span></div>
-    <p class="body">{{ quick_summary }}</p>
-  </div>
-
-  <div class="sec">
-    <div class="secnum"><span class="e">02 &mdash; Why this verdict</span><span class="ln"></span></div>
-    <div class="why">
-      <div class="wcard pos"><div class="wtitle">{{ decision.why_positive.title }}</div>
-        <div class="wbody">{{ decision.why_positive.body }}</div></div>
-      <div class="wcard neg"><div class="wtitle">{{ decision.why_negative.title }}</div>
-        <div class="wbody">{{ decision.why_negative.body }}</div></div>
-    </div>
-  </div>
-
-  {% if strengths or concerns %}
-  <div class="sec keep">
-    <div class="secnum"><span class="e">03 &mdash; Strengths &amp; Concerns</span><span class="ln"></span></div>
-    <div class="twocol">
-      <div>
-        <div class="colh colh-s">Strengths</div>
-        {% for s in strengths %}
-        <div class="srow"><div class="sico s">&#10003;</div><div>
-          <div class="stitle">{{ s.title }}</div><div class="sdetail">{{ s.detail }}</div></div></div>
-        {% else %}
-        <div class="sdetail" style="padding-top:12px">None recorded.</div>
-        {% endfor %}
-      </div>
-      <div>
-        <div class="colh colh-c">Concerns</div>
-        {% for c in concerns %}
-        <div class="srow"><div class="sico c">!</div><div>
-          <div class="stitle">{{ c.title }}<span class="sev">{{ c.severity|replace('_',' ') }}</span></div>
-          <div class="sdetail">{{ c.detail }}</div></div></div>
-        {% else %}
-        <div class="sdetail" style="padding-top:12px">None recorded.</div>
-        {% endfor %}
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
-  {% if questions %}
-  <div class="sec">
-    <div class="secnum"><span class="e">04 &mdash; Question by question</span><span class="ln"></span></div>
-    {% for q in questions %}
-    <div class="qcard"><div class="qhead">
-      <div style="display:flex"><span class="qnum">{{ q.seq }}</span><span class="qtitle">{{ q.question_text or q.title }}</span></div>
-      <div style="white-space:nowrap"><span class="chip chip-{{ q.status_tone or 'neutral' }}">{{ q.status_badge|replace('_',' ') }}</span>
-        {% if q.difficulty %}<span class="chip chip-diff">{{ q.difficulty }}</span>{% endif %}</div></div>
-      {% if q.stars is defined and q.score is not none %}
-      <div class="qscore">
-        <svg width="80" height="16" viewBox="0 0 80 16">
-          {% for i in range(5) %}
-          {%- set f = q.stars[i] -%}
-          {%- set sx = i * 16 -%}
-          <!-- empty star outline -->
-          <polygon points="{{ sx+8 }},1 {{ sx+10 }},6 {{ sx+15 }},6 {{ sx+11 }},9 {{ sx+12 }},14 {{ sx+8 }},11 {{ sx+4 }},14 {{ sx+5 }},9 {{ sx+1 }},6 {{ sx+6 }},6"
-                   fill="#f0f0f4" stroke="#d0d0d8" stroke-width="0.5"/>
-          {% if f >= 1.0 %}
-          <!-- full fill -->
-          <polygon points="{{ sx+8 }},1 {{ sx+10 }},6 {{ sx+15 }},6 {{ sx+11 }},9 {{ sx+12 }},14 {{ sx+8 }},11 {{ sx+4 }},14 {{ sx+5 }},9 {{ sx+1 }},6 {{ sx+6 }},6"
-                   fill="#f5a623"/>
-          {% elif f >= 0.5 %}
-          <!-- half fill via clip -->
-          <defs><clipPath id="hc{{ loop.index }}"><rect x="{{ sx }}" y="0" width="8" height="16"/></clipPath></defs>
-          <polygon points="{{ sx+8 }},1 {{ sx+10 }},6 {{ sx+15 }},6 {{ sx+11 }},9 {{ sx+12 }},14 {{ sx+8 }},11 {{ sx+4 }},14 {{ sx+5 }},9 {{ sx+1 }},6 {{ sx+6 }},6"
-                   fill="#f5a623" clip-path="url(#hc{{ loop.index }})"/>
-          {% endif %}
-          {% endfor %}
-        </svg>
-        <span class="qlabel">{{ "%.1f"|format(q.score / 2) }} / 5</span>
-      </div>
-      {% endif %}
-      {% if q.candidate_quote %}<div class="qquote">&ldquo;{{ q.candidate_quote }}&rdquo;</div>{% endif %}
-      {% if q.our_read %}<div class="qread">{{ q.our_read }}</div>{% endif %}
-    </div>
-    {% endfor %}
-  </div>
-  {% endif %}
   <div class="pad-bottom"></div>
 </body></html>
