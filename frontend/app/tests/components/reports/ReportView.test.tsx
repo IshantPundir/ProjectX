@@ -38,8 +38,9 @@ describe('ReportView — Layout II', () => {
     renderView()
     // Glance band
     expect(screen.getByRole('region', { name: /Candidate at a glance/ })).toBeInTheDocument()
-    expect(screen.getByText('Dimensions')).toBeInTheDocument()
     expect(screen.getByRole('img', { name: /Overall score 4.1 out of 10/ })).toBeInTheDocument()
+    // Dimension gauges (Technical assessed in fixture; Behavioral is null → absent)
+    expect(screen.getByRole('img', { name: /Technical score 4.1 out of 10/ })).toBeInTheDocument()
     // Left column
     expect(screen.getByText('Why this verdict')).toBeInTheDocument()
     expect(screen.getByText('Quick summary')).toBeInTheDocument()

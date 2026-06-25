@@ -1,5 +1,6 @@
 import type { ReportRead, SignalAssessmentOut } from '@/lib/api/reports'
 import { ScoreBar } from './ScoreBar'
+import { ScoreGauge } from './ScoreGauge'
 import { confidenceLabel, TONE_INK, verdictMeta } from './report-format'
 import './report.css'
 
@@ -47,29 +48,21 @@ export function GlanceBand({ report }: { report: ReportRead }): React.ReactEleme
       className="px-card rounded-2xl border bg-white p-5 sm:p-6"
       style={{ borderColor: 'var(--px-hairline)' }}
     >
-      {/* Every score bar gets its own full-width line — no side-by-side cramming,
-          so long competency labels never truncate. */}
       <div className="flex flex-col gap-6">
-        {/* Overall */}
-        <div>
-          <SectionLabel>Overall</SectionLabel>
-          {/* Overall is toned by the verdict (not the raw score band): the verdict
-              is the authoritative read, so an advance-verdict bar stays positive even
-              if a ceiling-cap/holistic adjustment leaves the raw score near the marker. */}
-          <ScoreBar score={overall?.score ?? null} label="Overall" variant="hero" toneOverride={meta.tone} />
+        {/* Overall + dimension gauges — side by side, color-coded by value, with
+            Overall the largest and most prominent. */}
+        <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-5 sm:justify-start">
+          <ScoreGauge score={overall?.score ?? null} label="Overall" size={140} />
+          {dims.length > 0 && (
+            <div className="hidden h-[88px] w-px self-center sm:block" style={{ background: 'var(--px-hairline)' }} aria-hidden />
+          )}
+          {dims.map(({ key, label }) => (
+            <ScoreGauge key={key} score={report.scores[key]?.score ?? null} label={label} size={94} />
+          ))}
         </div>
 
-        {/* Dimensions */}
-        {dims.length > 0 && (
-          <div>
-            <SectionLabel>Dimensions</SectionLabel>
-            <div className="flex flex-col gap-3.5">
-              {dims.map(({ key, label }) => (
-                <ScoreBar key={key} score={report.scores[key]?.score ?? null} label={label} variant="row" />
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Competency bars get their own full-width line each — no side-by-side
+            cramming, so long competency labels never truncate. */}
 
         {/* Must-have competencies */}
         {hasSignals && mustHaves.length > 0 && (
