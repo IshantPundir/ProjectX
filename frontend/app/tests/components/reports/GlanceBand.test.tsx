@@ -48,11 +48,9 @@ describe('GlanceBand', () => {
     expect(screen.queryByText('Other competencies')).not.toBeInTheDocument()
   })
 
-  it('renders coverage and confidence chips', () => {
+  it('does not render coverage or confidence (removed — caused recruiter confusion)', () => {
     render(<GlanceBand report={makeReport()} />)
-    expect(screen.getByText('Coverage')).toBeInTheDocument()
-    expect(screen.getByText('Confidence')).toBeInTheDocument()
-    expect(screen.getByText('0.47')).toBeInTheDocument()
-    expect(screen.getByText('Medium')).toBeInTheDocument()
+    expect(screen.queryByText('Coverage')).not.toBeInTheDocument()
+    expect(screen.queryByText('Confidence')).not.toBeInTheDocument()
   })
 })

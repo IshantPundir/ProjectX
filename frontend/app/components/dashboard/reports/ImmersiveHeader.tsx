@@ -1,7 +1,16 @@
+import type { CSSProperties } from 'react'
 import { Play } from 'lucide-react'
 import './report.css'
 import type { ReportHeader, Verdict } from '@/lib/api/reports'
 import { VerdictStamp } from './VerdictStamp'
+
+// ─── Verdict-based glow around the candidate photo ─────────────────────────────
+// glow = soft radial halo behind the photo; ring = the photo's edge ring.
+const VERDICT_GLOW: Record<Verdict, { glow: string; ring: string }> = {
+  advance: { glow: 'rgba(54,208,127,0.60)', ring: 'rgba(54,208,127,0.55)' },
+  borderline: { glow: 'rgba(245,176,69,0.60)', ring: 'rgba(245,176,69,0.55)' },
+  reject: { glow: 'rgba(239,68,68,0.58)', ring: 'rgba(239,68,68,0.52)' },
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -76,18 +85,26 @@ export function ImmersiveHeader({
 
         {/* ── Main row: photo + identity + stamp ── */}
         <div className="relative flex items-center gap-[26px]">
-          {/* Photo / monogram */}
-          {header.reference_photo_url ? (
-            <img
-              src={header.reference_photo_url}
-              alt={header.candidate_name}
-              className="rh-photo"
-            />
-          ) : (
-            <div className="rh-photo rh-monogram" aria-label={`${header.candidate_name} initials`}>
-              {initials(header.candidate_name)}
-            </div>
-          )}
+          {/* Photo / monogram — wrapped with a verdict-colored gradient glow */}
+          <div
+            className="rh-photo-wrap"
+            style={{
+              '--rh-glow': VERDICT_GLOW[verdict].glow,
+              '--rh-ring': VERDICT_GLOW[verdict].ring,
+            } as CSSProperties}
+          >
+            {header.reference_photo_url ? (
+              <img
+                src={header.reference_photo_url}
+                alt={header.candidate_name}
+                className="rh-photo"
+              />
+            ) : (
+              <div className="rh-photo rh-monogram" aria-label={`${header.candidate_name} initials`}>
+                {initials(header.candidate_name)}
+              </div>
+            )}
+          </div>
 
           {/* Identity block */}
           <div className="flex-1">

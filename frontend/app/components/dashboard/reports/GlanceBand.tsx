@@ -1,7 +1,7 @@
 import type { ReportRead, SignalAssessmentOut } from '@/lib/api/reports'
 import { ScoreBar } from './ScoreBar'
 import { ScoreGauge } from './ScoreGauge'
-import { confidenceLabel, TONE_INK, verdictMeta } from './report-format'
+import { TONE_INK, verdictMeta } from './report-format'
 import './report.css'
 
 const DIMS: { key: string; label: string }[] = [
@@ -20,15 +20,6 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div className="mb-2.5 text-[12px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-fg-3)' }}>
       {children}
-    </div>
-  )
-}
-
-function Chip({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-[9px] uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>{label}</div>
-      <div className="text-[12px] font-semibold" style={{ color: 'var(--px-fg)' }}>{value}</div>
     </div>
   )
 }
@@ -73,10 +64,6 @@ export function GlanceBand({ report }: { report: ReportRead }): React.ReactEleme
             <p className="mt-2 text-[14px] leading-relaxed" style={{ color: 'var(--px-fg-2)' }}>
               {report.decision.headline}
             </p>
-            <div className="mt-3.5 flex gap-6">
-              <Chip label="Coverage" value={(overall?.coverage ?? 0).toFixed(2)} />
-              <Chip label="Confidence" value={confidenceLabel(overall?.confidence ?? 'low')} />
-            </div>
           </div>
         </div>
 

@@ -127,14 +127,39 @@
   pointer-events: none;
 }
 
+/* photo wrapper — hosts the verdict-colored gradient glow behind the photo */
+.rh-photo-wrap {
+  position: relative;
+  flex: none;
+}
+.rh-photo-wrap::before {
+  content: '';
+  position: absolute;
+  inset: -18px;
+  border-radius: 32px;
+  background: radial-gradient(circle at 50% 45%, var(--rh-glow, transparent), transparent 72%);
+  filter: blur(14px);
+  z-index: 0;
+  pointer-events: none;
+  animation: rh-glow-pulse 3.6s var(--px-ease, ease-in-out) infinite;
+}
+@keyframes rh-glow-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.97); }
+  50%      { opacity: 1;    transform: scale(1.03); }
+}
+
 /* photo / monogram */
 .rh-photo {
+  position: relative;
+  z-index: 1;
   height: 164px;
   width: 164px;
   flex: none;
   border-radius: 20px;
   border: 3px solid rgba(255,255,255,.22);
-  box-shadow: 0 0 0 6px rgba(111,104,240,.18), 0 14px 34px rgba(0,0,0,.4);
+  box-shadow: 0 0 0 5px var(--rh-ring, rgba(111,104,240,.18)),
+              0 0 30px 2px var(--rh-glow, transparent),
+              0 14px 34px rgba(0,0,0,.4);
   object-fit: cover;
 }
 .rh-monogram {
@@ -235,4 +260,5 @@
   .px-radar, .px-radar:hover { transform: none; filter: none; }
   .px-radar-data, .px-radar:hover .px-radar-data { fill-opacity: unset; }
   .px-scorebar-fill { animation: none; width: var(--px-bar-fill); }
+  .rh-photo-wrap::before { animation: none; opacity: 0.7; transform: none; }
 }
