@@ -13,7 +13,7 @@ import { QuestionByQuestion } from './QuestionByQuestion'
 import { QuickSummary } from './QuickSummary'
 import { ReportMethodologyFooter } from './ReportMethodologyFooter'
 import './report.css'
-import { ScoresCard } from './ScoresCard'
+import { GlanceBand } from './GlanceBand'
 import { ShareReportDialog } from './ShareReportDialog'
 import { SignalAuditTable } from './SignalAuditTable'
 import { StrengthsConcerns } from './StrengthsConcerns'
@@ -98,6 +98,11 @@ export function ReportView({
         </div>
       )}
 
+      {/* ── At-a-glance band ── */}
+      <div className="mb-5 px-reveal" style={{ '--px-stagger': 1 } as CSSProperties}>
+        <GlanceBand report={report} />
+      </div>
+
       {/* ── Two-column body ── */}
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.7fr_1fr]">
         {/* LEFT — main content */}
@@ -117,7 +122,6 @@ export function ReportView({
         <div>
           <div className="sticky top-4 space-y-4">
             {[
-              <ScoresCard key="scores" report={report} />,
               <ProctoringIntegrityPanel key="proctoring" sessionId={report.session_id ?? sessionId} onSeek={(ms) => openTheater(ms)} />,
               <HumanDecisionPanel key="decision" verdict={report.verdict} decision={report.human_decision} onSubmit={onDecision} isSubmitting={isSubmitting} />,
             ].map((node, i) => (
