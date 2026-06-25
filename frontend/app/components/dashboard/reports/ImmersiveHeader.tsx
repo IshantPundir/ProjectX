@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { Play } from 'lucide-react'
+import { Check, Play } from 'lucide-react'
 import './report.css'
 import type { ReportHeader, Verdict } from '@/lib/api/reports'
 import { VerdictStamp } from './VerdictStamp'
@@ -104,6 +104,11 @@ export function ImmersiveHeader({
                 {initials(header.candidate_name)}
               </div>
             )}
+
+            {/* Verified badge — identity confirmed (OTP + consent) for this session */}
+            <span className="rh-verified" role="img" aria-label="Identity verified" title="Identity verified">
+              <Check size={15} strokeWidth={3.5} aria-hidden />
+            </span>
           </div>
 
           {/* Identity block */}
