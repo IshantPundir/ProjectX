@@ -39,7 +39,7 @@ export function GlanceBand({ report }: { report: ReportRead }): React.ReactEleme
       className="px-card rounded-2xl border bg-white p-5"
       style={{ borderColor: 'var(--px-hairline)' }}
     >
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(260px,1fr)_1.1fr_1.3fr]">
+      <div className={`grid grid-cols-1 gap-6 ${hasSignals ? 'xl:grid-cols-[minmax(260px,1fr)_1.1fr_1.3fr]' : 'xl:grid-cols-[minmax(260px,1fr)_1.1fr]'}`}>
         {/* Tier A — Verdict + Overall */}
         <div>
           <div className="text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--px-fg-3)' }}>
@@ -51,6 +51,9 @@ export function GlanceBand({ report }: { report: ReportRead }): React.ReactEleme
           <p className="mb-3 mt-1.5 text-[12.5px] leading-relaxed" style={{ color: 'var(--px-fg-2)' }}>
             {report.decision.headline}
           </p>
+          {/* Overall is toned by the verdict (not the raw score band): the verdict
+              is the authoritative read, so an advance-verdict bar stays positive even
+              if a ceiling-cap/holistic adjustment leaves the raw score near the marker. */}
           <ScoreBar score={overall?.score ?? null} label="Overall" variant="hero" toneOverride={meta.tone} />
           <div className="mt-3 flex gap-4">
             <Chip label="Coverage" value={(overall?.coverage ?? 0).toFixed(2)} />
