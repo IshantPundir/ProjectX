@@ -9,7 +9,6 @@ vision image.
 from __future__ import annotations
 
 import html
-import os
 
 from app.modules.reel import cards
 
@@ -78,7 +77,6 @@ def render_question_banner(*, text: str, out_path: str,
     prefix = "Q"
     asc, desc = qfont.getmetrics()
     lh = asc + desc + 8
-    block_h = lh * len(lines)
     top = 34
     pw = text_w(prefix + "  ", pre_font)
     # center the (prefix + widest line) block horizontally
