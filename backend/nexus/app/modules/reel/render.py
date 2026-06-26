@@ -19,7 +19,7 @@ import os
 from app.modules.reel import cards, clips, tts
 
 # Render-side minimum card hold times (s) — a card lasts max(floor, narration+tail).
-_CARD_FLOOR_S = {"title": 3.0, "match": 4.0, "point": 3.0, "outro": 4.0}
+_CARD_FLOOR_S = {"point": 3.0, "outro": 4.0}
 _NARRATION_TAIL_S = 0.5
 
 
@@ -97,7 +97,7 @@ async def card_segment(*, image_path: str, out_path: str, duration_ms: int,
     return out_path
 
 
-_CARD_KINDS = ("title", "match", "point", "outro")
+_CARD_KINDS = ("point", "outro")
 
 
 async def probe_duration_ms(path: str) -> int:
@@ -112,6 +112,14 @@ async def probe_duration_ms(path: str) -> int:
         return int(float(out.decode().strip()) * 1000)
     except (ValueError, AttributeError):
         return 0
+
+
+def first_point_index(beats: list) -> int | None:
+    """Index of the first ``point`` beat (gets the identity subtitle), or None."""
+    for i, b in enumerate(beats):
+        if b.kind == "point":
+            return i
+    return None
 
 
 def _chapter_label(beat) -> str:
@@ -136,7 +144,8 @@ def _clip_to_video(beat, offset_ms: int) -> tuple[int, int]:
 
 
 async def render_reel(*, beats: list, recording_path: str, offset_ms: int,
-                      tmp_dir: str, out_path: str, tts_enabled: bool = True
+                      tmp_dir: str, out_path: str, tts_enabled: bool = True,
+                      identity_tag: str | None = None
                       ) -> tuple[str, list[dict]]:
     """Render a validated EDL into one MP4 + chapter metadata.
 
@@ -147,12 +156,14 @@ async def render_reel(*, beats: list, recording_path: str, offset_ms: int,
     rendered segment.
     """
     rendered: list[tuple[str, object]] = []   # (segment_path, beat)
+    subtitle_idx = first_point_index(beats)
     for i, b in enumerate(beats):
         seg = os.path.join(tmp_dir, f"seg_{i:02d}.mp4")
         if b.kind in _CARD_KINDS:
             png = os.path.join(tmp_dir, f"card_{i:02d}.png")
             cards.render_card(kind=b.kind, out_path=png,
-                              on_screen_text=b.on_screen_text or "")
+                              on_screen_text=b.on_screen_text or "",
+                              subtitle=identity_tag if i == subtitle_idx else None)
             audio_path, audio_dur = None, 0
             if tts_enabled and b.narration_text:
                 res = await tts.synthesize_to_wav(

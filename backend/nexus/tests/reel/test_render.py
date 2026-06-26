@@ -3,7 +3,28 @@ from app.modules.reel.render import (
     _clip_to_video,
     build_card_segment_cmd,
     build_concat_cmd,
+    first_point_index,
 )
+
+
+class _KindBeat:
+    def __init__(self, kind):
+        self.kind = kind
+
+
+def test_first_point_index_finds_first_point():
+    beats = [_KindBeat("point"), _KindBeat("clip"), _KindBeat("point"), _KindBeat("outro")]
+    assert first_point_index(beats) == 0
+
+
+def test_first_point_index_skips_leading_non_points():
+    beats = [_KindBeat("clip"), _KindBeat("point"), _KindBeat("outro")]
+    assert first_point_index(beats) == 1
+
+
+def test_first_point_index_none_when_no_point():
+    beats = [_KindBeat("clip"), _KindBeat("outro")]
+    assert first_point_index(beats) is None
 
 
 class _Beat:
