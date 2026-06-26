@@ -573,6 +573,156 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
+### Task 5b: Ground the question label in the real interviewer question
+
+**Why:** The director's document (`_build_document`) does NOT include the agent's spoken questions — only the candidate's answer words + the report's per-question `title`/`our_read`/`candidate_quote` (which are often empty). So a `question_label` would be fabricated from the answer. This task threads the interviewer's actual spoken question into the document per answer-run, and points the prompt at it, so the label paraphrases the REAL question.
+
+**Files:**
+- Modify: `app/modules/reel/transcript.py` (new pure helper)
+- Modify: `app/modules/reel/director.py` (`_build_document` adds an `asked:` line)
+- Modify: `prompts/v3/reel/director.txt` (point the QUESTION LABEL block at the `asked:` field)
+- Test: `tests/reel/test_transcript.py`, `tests/reel/test_director.py`
+
+**Interfaces:**
+- Produces: `questions_by_run(transcript: list[dict]) -> list[str | None]` — the interviewer's question text immediately preceding each answer run, in run order (index aligns with `answer_runs(...)` `ref`). Consecutive agent turns before a run are joined; a run with no preceding agent turn yields `None`.
+- `_build_document` emits an `asked: <question>` line (truncated to 280 chars) under each answer that has one.
+
+- [ ] **Step 1: Write failing tests for `questions_by_run`**
+
+Add to `tests/reel/test_transcript.py` (extend the existing import; the `_cand`/`_agent` helpers already exist in that file — `_agent(text="...")` sets the agent turn's `text`):
+
+```python
+from app.modules.reel.transcript import answer_runs, questions_by_run
+
+
+def test_questions_by_run_captures_preceding_agent_question():
+    tr = [_agent("What is your Intune triage?"), _cand("t-1", 100, [("a", 0, 1)])]
+    assert questions_by_run(tr) == ["What is your Intune triage?"]
+
+
+def test_questions_by_run_joins_consecutive_agent_turns():
+    tr = [_agent("Sure —"), _agent("Walk me through enrollment."),
+          _cand("t-1", 100, [("a", 0, 1)])]
+    assert questions_by_run(tr) == ["Sure — Walk me through enrollment."]
+
+
+def test_questions_by_run_one_entry_per_run_in_order():
+    tr = [_agent("Q1?"), _cand("t-1", 100, [("a", 0, 1)]),
+          _cand("t-2", 200, [("b", 0, 1)]),         # continuation -> same run
+          _agent("Q2?"), _cand("t-3", 300, [("c", 0, 1)])]
+    assert questions_by_run(tr) == ["Q1?", "Q2?"]
+    assert len(questions_by_run(tr)) == len(answer_runs(tr))
+
+
+def test_questions_by_run_none_when_no_preceding_agent():
+    assert questions_by_run([_cand("t-1", 100, [("a", 0, 1)])]) == [None]
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `docker compose exec -T nexus python -m pytest tests/reel/test_transcript.py -q`
+Expected: FAIL — `ImportError: cannot import name 'questions_by_run'`.
+
+- [ ] **Step 3: Add `questions_by_run` to `transcript.py`**
+
+Add this pure function to `app/modules/reel/transcript.py` (next to `answer_runs`):
+
+```python
+def questions_by_run(transcript: list[dict]) -> list[str | None]:
+    """Interviewer question text immediately preceding each answer run, in run
+    order (aligned to ``answer_runs`` ``ref``). Consecutive agent turns before a
+    run are joined; a run with no preceding agent turn yields ``None``."""
+    out: list[str | None] = []
+    pending: list[str] = []
+    in_run = False
+    for turn in transcript:
+        if turn.get("speaker") != "candidate":
+            txt = (turn.get("text") or
+                   " ".join(str(w.get("text", "")) for w in (turn.get("words") or []))).strip()
+            if txt:
+                pending.append(txt)
+            in_run = False
+            continue
+        if turn.get("turn_ref") is None:
+            continue
+        if not in_run:
+            out.append(" ".join(pending).strip() or None)
+            pending = []
+            in_run = True
+    return out
+```
+
+- [ ] **Step 4: Write a failing test for the document `asked:` line**
+
+Add to `tests/reel/test_director.py`:
+
+```python
+def test_document_includes_asked_question_line():
+    from app.modules.reel.director import _build_document
+    tr = [
+        {"speaker": "agent", "turn_ref": "a", "span": {"start_ms": 0, "end_ms": 1},
+         "text": "Walk me through enrollment.", "words": []},
+        {"speaker": "candidate", "turn_ref": "t-1", "question_id": "q1",
+         "span": {"start_ms": 100, "end_ms": 101},
+         "words": [{"text": "first", "start_ms": 0, "end_ms": 100}]},
+    ]
+    doc = _build_document(candidate_name="A", role_title="R", verdict="advance",
+                          verdict_reason=None, why_positive=None, strengths=[],
+                          question_scorecards=[], signal_scorecards=[], transcript=tr)
+    assert "asked: Walk me through enrollment." in doc
+```
+
+- [ ] **Step 5: Run to verify it fails**
+
+Run: `docker compose exec -T nexus python -m pytest tests/reel/test_director.py::test_document_includes_asked_question_line -q`
+Expected: FAIL — the document has no `asked:` line yet.
+
+- [ ] **Step 6: Wire `asked:` into `_build_document`**
+
+In `app/modules/reel/director.py`, the `_build_document` import of transcript helpers (the `answer_runs` / `is_pause_before` import at the top of the file) — add `questions_by_run` to it. Then in `_build_document`, just before the `lines.append("<answers>")` line, compute:
+
+```python
+    questions = questions_by_run(transcript)
+```
+
+And inside the `for run in answer_runs(transcript):` loop (the block that currently appends `answer ref=... | question_id=...` then `words: ...`), add the `asked:` line right after the `answer ref=...` line:
+
+```python
+        lines.append(f"answer ref={run.ref} | question_id={run.question_id}")
+        asked = questions[run.ref] if run.ref < len(questions) else None
+        if asked:
+            lines.append(f"asked: {asked[:280]}")
+        lines.append("words: " + " ".join(parts))
+```
+
+- [ ] **Step 7: Run both test files green**
+
+Run: `docker compose exec -T nexus python -m pytest tests/reel/test_transcript.py tests/reel/test_director.py -q`
+Expected: PASS.
+
+- [ ] **Step 8: Point the prompt at the `asked:` field**
+
+In `prompts/v3/reel/director.txt`, find the `QUESTION LABEL:` block (added in Task 5). It currently says to base the label on "what the interviewer actually asked leading into this answer (the agent's question, not the candidate's words)." Replace that sentence so it references the new field explicitly:
+
+```
+Base it on the `asked:` line of THIS answer in <answers> — that is the
+interviewer's actual question. (If an answer has no `asked:` line, infer the
+question from the answer.) Do NOT restate the candidate's answer.
+```
+
+Keep the rest of the block (6-10 words, phrased as a question, no question id, same label for clips on the same question) intact.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add app/modules/reel/transcript.py app/modules/reel/director.py prompts/v3/reel/director.txt tests/reel/test_transcript.py tests/reel/test_director.py
+git commit -m "feat(reel): ground the clip question label in the real interviewer question
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
 ### Task 6: Full suite + live regen + frame verification
 
 **Files:** none (verification only).
