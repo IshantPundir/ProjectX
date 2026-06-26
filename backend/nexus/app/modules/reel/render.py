@@ -1,6 +1,6 @@
 """Assemble the reel: render each EDL beat to a normalized segment, then concat.
 
-Cards (title/match/point/outro) become a still image under Arjun narration; clips
+Cards (point/outro) become a still image under Arjun narration; clips
 (experience/clip) are cut from the recording. Every segment is normalized to
 identical codec/params (1280x720, 30fps CFR, H.264 yuv420p, AAC 48k stereo) AND
 A/V-duration-locked, so the re-timing concat FILTER joins them with re-encode --
@@ -16,10 +16,10 @@ from __future__ import annotations
 import asyncio
 import os
 
-from app.modules.reel import cards, clips, tts
+from app.modules.reel import cards, clips, overlays, tts
 
 # Render-side minimum card hold times (s) — a card lasts max(floor, narration+tail).
-_CARD_FLOOR_S = {"title": 3.0, "match": 4.0, "point": 3.0, "outro": 4.0}
+_CARD_FLOOR_S = {"point": 3.0, "outro": 4.0}
 _NARRATION_TAIL_S = 0.5
 
 
@@ -97,7 +97,7 @@ async def card_segment(*, image_path: str, out_path: str, duration_ms: int,
     return out_path
 
 
-_CARD_KINDS = ("title", "match", "point", "outro")
+_CARD_KINDS = ("point", "outro")
 
 
 async def probe_duration_ms(path: str) -> int:
@@ -112,6 +112,25 @@ async def probe_duration_ms(path: str) -> int:
         return int(float(out.decode().strip()) * 1000)
     except (ValueError, AttributeError):
         return 0
+
+
+def first_point_index(beats: list) -> int | None:
+    """Index of the first ``point`` beat (gets the identity subtitle), or None."""
+    for i, b in enumerate(beats):
+        if b.kind == "point":
+            return i
+    return None
+
+
+def banner_texts_by_index(beats: list) -> dict[int, str]:
+    """Map each clip beat's index -> the banner text to SHOW (suppressed clips
+    and card beats are absent). Clip beats are the non-card beats carrying words;
+    here identified by having a ``question_label`` attribute and not being a card."""
+    clip_positions = [i for i, b in enumerate(beats) if b.kind not in _CARD_KINDS]
+    pairs = [(getattr(beats[i], "question_id", None),
+              getattr(beats[i], "question_label", None)) for i in clip_positions]
+    texts = overlays.plan_banner_texts(pairs)
+    return {i: t for i, t in zip(clip_positions, texts) if t}
 
 
 def _chapter_label(beat) -> str:
@@ -136,7 +155,8 @@ def _clip_to_video(beat, offset_ms: int) -> tuple[int, int]:
 
 
 async def render_reel(*, beats: list, recording_path: str, offset_ms: int,
-                      tmp_dir: str, out_path: str, tts_enabled: bool = True
+                      tmp_dir: str, out_path: str, tts_enabled: bool = True,
+                      identity_tag: str | None = None
                       ) -> tuple[str, list[dict]]:
     """Render a validated EDL into one MP4 + chapter metadata.
 
@@ -147,12 +167,15 @@ async def render_reel(*, beats: list, recording_path: str, offset_ms: int,
     rendered segment.
     """
     rendered: list[tuple[str, object]] = []   # (segment_path, beat)
+    subtitle_idx = first_point_index(beats)
+    banner_by_idx = banner_texts_by_index(beats)
     for i, b in enumerate(beats):
         seg = os.path.join(tmp_dir, f"seg_{i:02d}.mp4")
         if b.kind in _CARD_KINDS:
             png = os.path.join(tmp_dir, f"card_{i:02d}.png")
             cards.render_card(kind=b.kind, out_path=png,
-                              on_screen_text=b.on_screen_text or "")
+                              on_screen_text=b.on_screen_text or "",
+                              subtitle=identity_tag if i == subtitle_idx else None)
             audio_path, audio_dur = None, 0
             if tts_enabled and b.narration_text:
                 res = await tts.synthesize_to_wav(
@@ -167,9 +190,18 @@ async def render_reel(*, beats: list, recording_path: str, offset_ms: int,
             rendered.append((seg, b))
         else:  # clip / experience
             video_start, video_end = _clip_to_video(b, offset_ms)
+            overlay_png = None
+            banner_text = banner_by_idx.get(i)
+            if banner_text:
+                try:
+                    overlay_png = os.path.join(tmp_dir, f"banner_{i:02d}.png")
+                    overlays.render_question_banner(text=banner_text, out_path=overlay_png)
+                except Exception:  # best-effort: never fail the reel over a banner
+                    overlay_png = None
             await clips.cut_clip(
                 recording_path=recording_path, out_path=seg,
-                start_ms=video_start, end_ms=video_end, offset_ms=0)
+                start_ms=video_start, end_ms=video_end, offset_ms=0,
+                overlay_png=overlay_png)
             rendered.append((seg, b))
 
     if not rendered:

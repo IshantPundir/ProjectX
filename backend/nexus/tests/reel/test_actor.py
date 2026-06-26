@@ -87,7 +87,7 @@ def _patched(monkeypatch):
         # The actor reads `out_path` bytes off disk → create the file.
         with open(kwargs["out_path"], "wb") as fh:
             fh.write(b"\x00mp4")
-        return (kwargs["out_path"], [{"kind": "title", "start_ms": 0}])
+        return (kwargs["out_path"], [{"kind": "point", "start_ms": 0}])
 
     async def _fake_probe_duration_ms(path):
         return 42_000
@@ -169,6 +169,15 @@ async def test_build_raises_when_started_at_missing(_patched):
     _patched["inputs"] = _inputs(ev, recording_started_at=rec_start)
     with pytest.raises(RuntimeError, match="session evidence not ready"):
         await actors._build_and_upload(uuid4(), uuid4(), "c", actors.logger.bind())
+
+
+@pytest.mark.asyncio
+async def test_identity_tag_passed_to_render(_patched):
+    rec_start = datetime(2026, 6, 14, 10, 0, 0, 0, tzinfo=UTC)
+    _patched["inputs"] = _inputs(_evidence("2026-06-14T10:00:00.500000Z"),
+                                 recording_started_at=rec_start)
+    await actors._build_and_upload(uuid4(), uuid4(), "corr-1", actors.logger.bind())
+    assert _patched["render_kwargs"]["identity_tag"] == "Asha · Backend Engineer"
 
 
 @pytest.mark.asyncio

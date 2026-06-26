@@ -9,28 +9,20 @@ The report below already analysed the candidate and argued their fit (verdict_re
 strengths, and the role's jd_signals). Your job is to VOICE that fit-case as a video — not to
 re-analyse, and never to invent a "why" the report didn't make. Structure it as a pitch:
 
-    title → §1 match → §2 (point → clip[+clip]) × N → outro
+    §1 strengths: (point → clip[+clip]) × N  →  outro
 
-- title  — opening card. on_screen_text = the candidate's NAME + role + a 3-5 word hook
-           (e.g. "Rahul Sharma · Jr. Forward Deployed Engineer · Safe AI workflows").
-           narration_text = ONE short, warm spoken line that names the candidate
-           (e.g. "Let me walk you through why Rahul stood out.").
-
-- §1 MATCH — exactly ONE `match` card: the consolidated "why this is a great match", the FIRST thing
-           the recruiter hears. Synthesize the role's most important jd_signals (highest weight) the
-           candidate satisfied into a confident framing that paints the full picture of fit. Do NOT
-           enumerate every requirement as its own beat. on_screen_text = a short headline (e.g.
-           "Strong match: 5 yrs · Workato · AI workflows"); narration_text = AT MOST 2 short sentences
-           (~22 words total). You MAY add ONE short `experience` clip right after, of the candidate
-           stating a core qualification (e.g. their experience or core stack), if a clean one exists.
-
-- §2 STRENGTHS — the DIFFERENTIATING strengths from the report (the ones that make this candidate
-           stand out, beyond just meeting the bar). Emit ~3 strengths (this is the heart of the
+- §1 STRENGTHS — the reel OPENS here, on the candidate's DIFFERENTIATING strengths
+           (the ones that make this candidate stand out). There is NO title or
+           intro card — the first thing the recruiter sees is a strength and then
+           the candidate's own words. Emit ~3 strengths (this is the heart of the
            reel). For each, a `point` card then 1-2 `clip` beats:
-             • point.on_screen_text = "★ " + a short strength phrase; point.narration_text = ONE
-               short sentence (~14 words) — see <narration>.
-             • clip = the candidate's real words evidencing it (see <selecting_clips>). Use a second
-               clip only when a different moment genuinely strengthens the same point.
+             • point.on_screen_text = "★ " + a short strength phrase; point.narration_text
+               = ONE short sentence (~14 words) — see <narration>. The FIRST point's
+               narration may name the candidate to orient the viewer (e.g. "Watch how
+               Punar begins with the right controls…").
+             • clip = the candidate's real words evidencing it (see <selecting_clips>).
+               Use a second clip only when a different moment genuinely strengthens
+               the same point.
 
 - outro  — closing card: a confident CALL TO ACTION, not a verdict stamp. on_screen_text = e.g.
            "See Ishant's full report & interview" (use the first name). narration_text = ONE short,
@@ -62,6 +54,15 @@ The validator resolves these to exact word-boundary timings and cuts one contigu
     `candidate_quote` in a question is a CLEANED paraphrase — use it as a HINT for which answer/moment
     to feature, then locate the real words by index (do not expect a verbatim match).
   • Never feature the same moment twice.
+
+QUESTION LABEL: every clip/experience beat MUST carry a `question_label` — a
+SHORT paraphrase (6-10 words) of the question THIS clip answers, phrased as a
+question (e.g. "New iPhones missing expected settings — where do you start?").
+Base it on the `asked:` line of THIS answer in <answers> — that is the
+interviewer's actual question. (If an answer has no `asked:` line, infer the
+question from the answer.) Do NOT restate the candidate's answer, do NOT
+include a question id, and keep it tight enough to read in one glance on screen.
+If two clips answer the same question, give them the same label.
 </selecting_clips>
 
 <narration>
@@ -78,12 +79,10 @@ pointing out why he rated this candidate. It is NOT a spec sheet. Make it sound 
   • ROBOTIC (avoid): "He validates agent plans with permission, schema, and rate-limit checks before execution."
   • BAD (hedged): "He sounds organised and seems to understand reliability."
   • BAD (domain, not him): "Agentic systems need careful planning."
-The match narration follows the same voice: warm, names the candidate, concrete, no hedging.
 </narration>
 
 <rules>
-- DO NOT REPEAT: a point made in §1 must not reappear as a §2 strength, and no two §2 points may make
-  the same argument. DO NOT SKIP: cover the candidate's genuinely strong, differentiating strengths
+- DO NOT REPEAT: no two §1 points may make the same argument. DO NOT SKIP: cover the candidate's genuinely strong, differentiating strengths
   (choose the best ~3 for the time budget; fewer strong points beat more weak ones).
 - POSITIVE BUT GROUNDED: this reel SELLS the candidate — the full report + recording ship alongside
   it and carry every caveat — so lead with strengths and frame them confidently. BUT every claim must
@@ -94,4 +93,5 @@ The match narration follows the same voice: warm, names the candidate, concrete,
   in the warm, professional voice of the interviewer "Arjun".
 - Never put a raw question id or any internal id in on_screen_text or narration_text.
 - Output at least one clip (or experience) beat, or the reel cannot be built.
+- Every clip/experience beat carries a `question_label` (see <selecting_clips>).
 </rules>

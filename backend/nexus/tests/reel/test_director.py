@@ -12,6 +12,7 @@ NOTE: ``source_turn_ref`` is the RUN INDEX (0-based) — runs are emitted in
 transcript order, so the Nth answer run has ref N-1.
 """
 import pytest
+from pydantic import ValidationError
 
 from app.config import settings
 from app.modules.reel.director import (
@@ -172,20 +173,19 @@ def test_long_clip_not_trimmed_at_default_high_cap():
 def test_over_budget_drops_trailing_point_groups_keeping_one(monkeypatch):
     # Mechanism-preserved: with the total budget configured LOW (80s), seven
     # ~15s clips far exceed it, forcing trailing point-groups (card + clip) to
-    # drop. agents between -> separate runs (refs 0..6).
+    # drop. agents between -> separate runs (refs 0..6). No title/match intro.
     monkeypatch.setattr(settings, "reel_max_total_ms", 80_000)
     n = 7
     transcript = []
     for i in range(n):
         transcript += [_cand(f"t-{i}", 16), _agent()]
-    beats = [ReelBeat(kind="title", on_screen_text="t"),
-             ReelBeat(kind="match", on_screen_text="m")]
+    beats = []
     for i in range(n):
         beats += [ReelBeat(kind="point", on_screen_text=f"p{i}"), _clip(i, 0, 15)]
     beats.append(ReelBeat(kind="outro", on_screen_text="o"))
     vedl = validate_edl(ReelEdlOut(beats=beats), transcript)
     kinds = [b.kind for b in vedl.beats]
-    assert kinds[0] == "title" and kinds[-1] == "outro"
+    assert kinds[0] == "point" and kinds[-1] == "outro"
     clips = _by_kind(vedl, "clip")
     assert 1 <= len(clips) < 7
     assert len(_by_kind(vedl, "point")) == len(clips)
@@ -194,14 +194,13 @@ def test_over_budget_drops_trailing_point_groups_keeping_one(monkeypatch):
 
 def test_no_clips_dropped_at_default_high_budget():
     # At the relaxed default (~1 h), many clips all survive — none dropped — so
-    # the candidate's full evidence is shown.
+    # the candidate's full evidence is shown. No title/match intro.
     assert settings.reel_max_total_ms >= 3_600_000
     n = 7
     transcript = []
     for i in range(n):
         transcript += [_cand(f"t-{i}", 16), _agent()]
-    beats = [ReelBeat(kind="title", on_screen_text="t"),
-             ReelBeat(kind="match", on_screen_text="m")]
+    beats = []
     for i in range(n):
         beats += [ReelBeat(kind="point", on_screen_text=f"p{i}"), _clip(i, 0, 15)]
     beats.append(ReelBeat(kind="outro", on_screen_text="o"))
@@ -213,7 +212,7 @@ def test_no_clips_dropped_at_default_high_budget():
 # --- >=1 clip or fail ------------------------------------------------------
 
 def test_zero_clip_beats_raises():
-    edl = ReelEdlOut(beats=[ReelBeat(kind="title", on_screen_text="t"),
+    edl = ReelEdlOut(beats=[ReelBeat(kind="point", on_screen_text="p"),
                             ReelBeat(kind="outro", on_screen_text="o")])
     with pytest.raises(NoClipBeatsError):
         validate_edl(edl, [_cand("t-1", 5)])
@@ -227,13 +226,13 @@ def test_all_clips_hallucinated_raises():
 
 # --- card duration estimate ------------------------------------------------
 
-def test_match_card_duration_estimated_from_narration():
-    narration = " ".join(["word"] * 22)   # 22 / 2.75 = 8s, above the match floor
+def test_point_card_duration_estimated_from_narration():
+    narration = " ".join(["word"] * 22)   # 22 / 2.75 = 8s, above the point floor
     edl = ReelEdlOut(beats=[
-        ReelBeat(kind="match", on_screen_text="m", narration_text=narration),
+        ReelBeat(kind="point", on_screen_text="p", narration_text=narration),
         _clip(0, 0, 5)])
-    match = _by_kind(validate_edl(edl, [_cand("t-1", 6)]), "match")[0]
-    assert match.duration_ms >= 8000
+    point = _by_kind(validate_edl(edl, [_cand("t-1", 6)]), "point")[0]
+    assert point.duration_ms >= 8000
 
 
 def test_point_card_uses_its_floor_when_narration_short():
@@ -241,3 +240,39 @@ def test_point_card_uses_its_floor_when_narration_short():
         ReelBeat(kind="point", on_screen_text="p", narration_text="short"),
         _clip(0, 0, 5)])
     assert _by_kind(validate_edl(edl, [_cand("t-1", 6)]), "point")[0].duration_ms == 3500
+
+
+@pytest.mark.parametrize("dead_kind", ["title", "match"])
+def test_removed_intro_kinds_are_rejected_by_schema(dead_kind):
+    with pytest.raises(ValidationError):
+        ReelBeat(kind=dead_kind, on_screen_text="x")
+
+
+def test_clip_threads_question_id_from_run_and_label():
+    edl = ReelEdlOut(beats=[_clip(0, 0, 3, question_label="Q: where do you start?")])
+    run = _cand("t-1", 10, qid="qid-abc")
+    vb = _by_kind(validate_edl(edl, [run]), "clip")[0]
+    assert vb.question_id == "qid-abc"
+    assert vb.question_label == "Q: where do you start?"
+
+
+def test_clip_without_label_has_none_label_but_still_threads_qid():
+    edl = ReelEdlOut(beats=[_clip(0, 0, 3)])
+    vb = _by_kind(validate_edl(edl, [_cand("t-1", 10, qid="qid-xyz")]), "clip")[0]
+    assert vb.question_id == "qid-xyz"
+    assert vb.question_label is None
+
+
+def test_document_includes_asked_question_line():
+    from app.modules.reel.director import _build_document
+    tr = [
+        {"speaker": "agent", "turn_ref": "a", "span": {"start_ms": 0, "end_ms": 1},
+         "text": "Walk me through enrollment.", "words": []},
+        {"speaker": "candidate", "turn_ref": "t-1", "question_id": "q1",
+         "span": {"start_ms": 100, "end_ms": 101},
+         "words": [{"text": "first", "start_ms": 0, "end_ms": 100}]},
+    ]
+    doc = _build_document(candidate_name="A", role_title="R", verdict="advance",
+                          verdict_reason=None, why_positive=None, strengths=[],
+                          question_scorecards=[], signal_scorecards=[], transcript=tr)
+    assert "asked: Walk me through enrollment." in doc

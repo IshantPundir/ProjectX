@@ -1,9 +1,31 @@
 """Render arg builders — pure tests (lean nexus image; ffmpeg shelled out)."""
 from app.modules.reel.render import (
     _clip_to_video,
+    banner_texts_by_index,
     build_card_segment_cmd,
     build_concat_cmd,
+    first_point_index,
 )
+
+
+class _KindBeat:
+    def __init__(self, kind):
+        self.kind = kind
+
+
+def test_first_point_index_finds_first_point():
+    beats = [_KindBeat("point"), _KindBeat("clip"), _KindBeat("point"), _KindBeat("outro")]
+    assert first_point_index(beats) == 0
+
+
+def test_first_point_index_skips_leading_non_points():
+    beats = [_KindBeat("clip"), _KindBeat("point"), _KindBeat("outro")]
+    assert first_point_index(beats) == 1
+
+
+def test_first_point_index_none_when_no_point():
+    beats = [_KindBeat("clip"), _KindBeat("outro")]
+    assert first_point_index(beats) is None
 
 
 class _Beat:
@@ -78,3 +100,26 @@ def test_card_segment_cmd_without_narration_uses_silent_audio():
     assert "-af" not in cmd                      # silent source already matches -t
     assert cmd[cmd.index("-t") + 1] == "3.000"
     assert "-vsync" in cmd and cmd[cmd.index("-vsync") + 1] == "cfr"
+
+
+class _ClipBeat:
+    def __init__(self, kind, question_id=None, question_label=None):
+        self.kind = kind
+        self.question_id = question_id
+        self.question_label = question_label
+
+
+def test_banner_texts_by_index_maps_only_shown_clips():
+    beats = [
+        _ClipBeat("point"),                                  # 0: card, ignored
+        _ClipBeat("clip", "q1", "Q: a?"),                    # 1: show
+        _ClipBeat("point"),                                  # 2: card, ignored
+        _ClipBeat("clip", "q1", "Q: a again?"),              # 3: same q -> suppress
+        _ClipBeat("clip", "q2", "Q: b?"),                    # 4: show
+        _ClipBeat("outro"),                                  # 5: card, ignored
+    ]
+    assert banner_texts_by_index(beats) == {1: "Q: a?", 4: "Q: b?"}
+
+
+def test_banner_texts_by_index_empty_when_no_clips():
+    assert banner_texts_by_index([_ClipBeat("point"), _ClipBeat("outro")]) == {}

@@ -29,7 +29,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.config import settings
-from app.modules.reel.transcript import AnswerRun, answer_runs, is_pause_before
+from app.modules.reel.transcript import AnswerRun, answer_runs, is_pause_before, questions_by_run
 
 # --- tuning constants (transcript-space; ms) ------------------------------
 # The per-clip soft cap (CLIP_SOFT_CAP_MS) and total budget (MAX_TOTAL_MS) are
@@ -40,7 +40,7 @@ from app.modules.reel.transcript import AnswerRun, answer_runs, is_pause_before
 TARGET_MS = 60_000           # aim for ~60s
 EST_BOUNDARY_PAUSE_MS = 500  # estimated inter-turn pause inside a multi-turn clip
 SPEAK_WPS = 2.75             # ~165 wpm, Arjun narration, for card duration estimate
-_CARD_FLOOR_MS = {"title": 3_000, "match": 4_000, "point": 3_500, "outro": 4_000}
+_CARD_FLOOR_MS = {"point": 3_500, "outro": 4_000}
 
 # Edge-only disfluency/discourse tokens trimmed off a clip's IN/OUT.
 # This is lexical edge cleanup, NOT semantic intent classification.
@@ -48,8 +48,8 @@ _EDGE_TRIM = {"um", "uh", "uhh", "umm", "mm", "mmm", "er", "ah", "hmm", "so",
               "like", "yeah", "okay", "ok", "sure", "well", "right"}
 
 TIMED_KINDS = {"clip", "experience"}   # beats cut from the recording (carry timing)
-LEAD_CARDS = {"match", "point"}        # a card that leads a drop-group of clips
-BeatKind = Literal["title", "match", "experience", "point", "clip", "outro"]
+LEAD_CARDS = {"point"}                  # a card that leads a drop-group of clips
+BeatKind = Literal["experience", "point", "clip", "outro"]
 
 
 class NoClipBeatsError(Exception):
@@ -62,8 +62,9 @@ class ReelBeat(BaseModel):
     source_turn_ref: int | None = None   # answer-run index; clip/experience only
     in_word: int | None = None           # index into the run's words[]
     out_word: int | None = None
-    on_screen_text: str | None = None    # card copy (title/ask/credit/outro)
+    on_screen_text: str | None = None    # card copy (point/outro)
     narration_text: str | None = None    # Arjun TTS script for card beats
+    question_label: str | None = None    # clip/experience: short question paraphrase (overlay)
 
 
 class ReelEdlOut(BaseModel):
@@ -82,6 +83,8 @@ class ValidatedBeat:
     words: list[dict] = field(default_factory=list)
     on_screen_text: str | None = None
     narration_text: str | None = None
+    question_id: str | None = None        # the run's question_id (for banner dedup)
+    question_label: str | None = None     # short question paraphrase (clip overlay)
 
 
 @dataclass
@@ -151,6 +154,7 @@ def _resolve_clip(beat: ReelBeat, runs_by_ref: dict[int, AnswerRun]) -> Validate
         kind=beat.kind, duration_ms=_estimate_clip_duration(words),
         source_turn_ref=ref, words=words, on_screen_text=beat.on_screen_text,
         narration_text=beat.narration_text,
+        question_id=run.question_id, question_label=beat.question_label,
     )
 
 
@@ -203,7 +207,7 @@ def _fit_budget(beats: list[ValidatedBeat]) -> list[ValidatedBeat]:
     guaranteed by validate_edl).
     """
     max_total_ms = settings.reel_max_total_ms
-    title = [beats[0]] if beats and beats[0].kind == "title" else []
+    title: list = []
     outro = [beats[-1]] if beats and beats[-1].kind == "outro" else []
     body = beats[len(title): len(beats) - len(outro)]
     groups = _group_body(body)
@@ -304,6 +308,7 @@ def _build_document(*, candidate_name: str | None, role_title: str | None,
     # The document: each ANSWER (a contiguous run of the candidate's turns) with a
     # continuous word index. ``//`` marks a natural pause (a clean in/out point).
     # A clip references an answer by ref + [in_word, out_word] over its word index.
+    questions = questions_by_run(transcript)
     lines.append("<answers>")
     for run in answer_runs(transcript):
         if not run.words:
@@ -314,6 +319,9 @@ def _build_document(*, candidate_name: str | None, role_title: str | None,
                 parts.append("//")
             parts.append(f"{w.idx}:{w.text}")
         lines.append(f"answer ref={run.ref} | question_id={run.question_id}")
+        asked = questions[run.ref] if run.ref < len(questions) else None
+        if asked:
+            lines.append(f"asked: {asked[:280]}")
         lines.append("words: " + " ".join(parts))
         lines.append("---")
     lines.append("</answers>")
