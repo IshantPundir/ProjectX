@@ -261,3 +261,18 @@ def test_clip_without_label_has_none_label_but_still_threads_qid():
     vb = _by_kind(validate_edl(edl, [_cand("t-1", 10, qid="qid-xyz")]), "clip")[0]
     assert vb.question_id == "qid-xyz"
     assert vb.question_label is None
+
+
+def test_document_includes_asked_question_line():
+    from app.modules.reel.director import _build_document
+    tr = [
+        {"speaker": "agent", "turn_ref": "a", "span": {"start_ms": 0, "end_ms": 1},
+         "text": "Walk me through enrollment.", "words": []},
+        {"speaker": "candidate", "turn_ref": "t-1", "question_id": "q1",
+         "span": {"start_ms": 100, "end_ms": 101},
+         "words": [{"text": "first", "start_ms": 0, "end_ms": 100}]},
+    ]
+    doc = _build_document(candidate_name="A", role_title="R", verdict="advance",
+                          verdict_reason=None, why_positive=None, strengths=[],
+                          question_scorecards=[], signal_scorecards=[], transcript=tr)
+    assert "asked: Walk me through enrollment." in doc

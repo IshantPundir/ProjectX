@@ -58,11 +58,11 @@ The validator resolves these to exact word-boundary timings and cuts one contigu
 QUESTION LABEL: every clip/experience beat MUST carry a `question_label` — a
 SHORT paraphrase (6-10 words) of the question THIS clip answers, phrased as a
 question (e.g. "New iPhones missing expected settings — where do you start?").
-Base it on what the interviewer actually asked leading into this answer (the
-agent's question, not the candidate's words). Do NOT restate the candidate's
-answer, do NOT include a question id, and keep it tight enough to read in one
-glance on screen. If two clips answer the same question, give them the same
-label.
+Base it on the `asked:` line of THIS answer in <answers> — that is the
+interviewer's actual question. (If an answer has no `asked:` line, infer the
+question from the answer.) Do NOT restate the candidate's answer, do NOT
+include a question id, and keep it tight enough to read in one glance on screen.
+If two clips answer the same question, give them the same label.
 </selecting_clips>
 
 <narration>

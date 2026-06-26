@@ -29,7 +29,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.config import settings
-from app.modules.reel.transcript import AnswerRun, answer_runs, is_pause_before
+from app.modules.reel.transcript import AnswerRun, answer_runs, is_pause_before, questions_by_run
 
 # --- tuning constants (transcript-space; ms) ------------------------------
 # The per-clip soft cap (CLIP_SOFT_CAP_MS) and total budget (MAX_TOTAL_MS) are
@@ -308,6 +308,7 @@ def _build_document(*, candidate_name: str | None, role_title: str | None,
     # The document: each ANSWER (a contiguous run of the candidate's turns) with a
     # continuous word index. ``//`` marks a natural pause (a clean in/out point).
     # A clip references an answer by ref + [in_word, out_word] over its word index.
+    questions = questions_by_run(transcript)
     lines.append("<answers>")
     for run in answer_runs(transcript):
         if not run.words:
@@ -318,6 +319,9 @@ def _build_document(*, candidate_name: str | None, role_title: str | None,
                 parts.append("//")
             parts.append(f"{w.idx}:{w.text}")
         lines.append(f"answer ref={run.ref} | question_id={run.question_id}")
+        asked = questions[run.ref] if run.ref < len(questions) else None
+        if asked:
+            lines.append(f"asked: {asked[:280]}")
         lines.append("words: " + " ".join(parts))
         lines.append("---")
     lines.append("</answers>")

@@ -5,7 +5,7 @@ Gen-3 transcript turns carry ``speaker`` ("agent"/"candidate"), ``turn_ref`` (st
 ``AnswerRun.ref`` is now a sequential RUN INDEX; each ``RunWord`` carries its turn's
 ``turn_ref`` + ``turn_start_ms`` so a multi-turn clip maps to one contiguous cut.
 """
-from app.modules.reel.transcript import answer_runs
+from app.modules.reel.transcript import answer_runs, questions_by_run
 
 
 def _cand(turn_ref, start_ms, words, qid="q1"):
@@ -91,3 +91,26 @@ def test_empty_word_candidate_turn_does_not_break_run_or_add_words():
 
 def test_no_candidate_turns_yields_no_runs():
     assert answer_runs([_agent(), _agent()]) == []
+
+
+def test_questions_by_run_captures_preceding_agent_question():
+    tr = [_agent("What is your Intune triage?"), _cand("t-1", 100, [("a", 0, 1)])]
+    assert questions_by_run(tr) == ["What is your Intune triage?"]
+
+
+def test_questions_by_run_joins_consecutive_agent_turns():
+    tr = [_agent("Sure —"), _agent("Walk me through enrollment."),
+          _cand("t-1", 100, [("a", 0, 1)])]
+    assert questions_by_run(tr) == ["Sure — Walk me through enrollment."]
+
+
+def test_questions_by_run_one_entry_per_run_in_order():
+    tr = [_agent("Q1?"), _cand("t-1", 100, [("a", 0, 1)]),
+          _cand("t-2", 200, [("b", 0, 1)]),         # continuation -> same run
+          _agent("Q2?"), _cand("t-3", 300, [("c", 0, 1)])]
+    assert questions_by_run(tr) == ["Q1?", "Q2?"]
+    assert len(questions_by_run(tr)) == len(answer_runs(tr))
+
+
+def test_questions_by_run_none_when_no_preceding_agent():
+    assert questions_by_run([_cand("t-1", 100, [("a", 0, 1)])]) == [None]

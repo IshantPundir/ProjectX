@@ -91,3 +91,27 @@ def answer_runs(transcript: list[dict]) -> list[AnswerRun]:
             first_in_turn = False
 
     return runs
+
+
+def questions_by_run(transcript: list[dict]) -> list[str | None]:
+    """Interviewer question text immediately preceding each answer run, in run
+    order (aligned to ``answer_runs`` ``ref``). Consecutive agent turns before a
+    run are joined; a run with no preceding agent turn yields ``None``."""
+    out: list[str | None] = []
+    pending: list[str] = []
+    in_run = False
+    for turn in transcript:
+        if turn.get("speaker") != "candidate":
+            txt = (turn.get("text") or
+                   " ".join(str(w.get("text", "")) for w in (turn.get("words") or []))).strip()
+            if txt:
+                pending.append(txt)
+            in_run = False
+            continue
+        if turn.get("turn_ref") is None:
+            continue
+        if not in_run:
+            out.append(" ".join(pending).strip() or None)
+            pending = []
+            in_run = True
+    return out
