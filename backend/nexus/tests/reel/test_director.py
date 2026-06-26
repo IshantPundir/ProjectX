@@ -246,3 +246,18 @@ def test_point_card_uses_its_floor_when_narration_short():
 def test_removed_intro_kinds_are_rejected_by_schema(dead_kind):
     with pytest.raises(ValidationError):
         ReelBeat(kind=dead_kind, on_screen_text="x")
+
+
+def test_clip_threads_question_id_from_run_and_label():
+    edl = ReelEdlOut(beats=[_clip(0, 0, 3, question_label="Q: where do you start?")])
+    run = _cand("t-1", 10, qid="qid-abc")
+    vb = _by_kind(validate_edl(edl, [run]), "clip")[0]
+    assert vb.question_id == "qid-abc"
+    assert vb.question_label == "Q: where do you start?"
+
+
+def test_clip_without_label_has_none_label_but_still_threads_qid():
+    edl = ReelEdlOut(beats=[_clip(0, 0, 3)])
+    vb = _by_kind(validate_edl(edl, [_cand("t-1", 10, qid="qid-xyz")]), "clip")[0]
+    assert vb.question_id == "qid-xyz"
+    assert vb.question_label is None

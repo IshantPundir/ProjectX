@@ -64,6 +64,7 @@ class ReelBeat(BaseModel):
     out_word: int | None = None
     on_screen_text: str | None = None    # card copy (point/outro)
     narration_text: str | None = None    # Arjun TTS script for card beats
+    question_label: str | None = None    # clip/experience: short question paraphrase (overlay)
 
 
 class ReelEdlOut(BaseModel):
@@ -82,6 +83,8 @@ class ValidatedBeat:
     words: list[dict] = field(default_factory=list)
     on_screen_text: str | None = None
     narration_text: str | None = None
+    question_id: str | None = None        # the run's question_id (for banner dedup)
+    question_label: str | None = None     # short question paraphrase (clip overlay)
 
 
 @dataclass
@@ -151,6 +154,7 @@ def _resolve_clip(beat: ReelBeat, runs_by_ref: dict[int, AnswerRun]) -> Validate
         kind=beat.kind, duration_ms=_estimate_clip_duration(words),
         source_turn_ref=ref, words=words, on_screen_text=beat.on_screen_text,
         narration_text=beat.narration_text,
+        question_id=run.question_id, question_label=beat.question_label,
     )
 
 
