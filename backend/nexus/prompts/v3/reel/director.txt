@@ -54,6 +54,15 @@ The validator resolves these to exact word-boundary timings and cuts one contigu
     `candidate_quote` in a question is a CLEANED paraphrase — use it as a HINT for which answer/moment
     to feature, then locate the real words by index (do not expect a verbatim match).
   • Never feature the same moment twice.
+
+QUESTION LABEL: every clip/experience beat MUST carry a `question_label` — a
+SHORT paraphrase (6-10 words) of the question THIS clip answers, phrased as a
+question (e.g. "New iPhones missing expected settings — where do you start?").
+Base it on what the interviewer actually asked leading into this answer (the
+agent's question, not the candidate's words). Do NOT restate the candidate's
+answer, do NOT include a question id, and keep it tight enough to read in one
+glance on screen. If two clips answer the same question, give them the same
+label.
 </selecting_clips>
 
 <narration>
@@ -84,4 +93,5 @@ pointing out why he rated this candidate. It is NOT a spec sheet. Make it sound 
   in the warm, professional voice of the interviewer "Arjun".
 - Never put a raw question id or any internal id in on_screen_text or narration_text.
 - Output at least one clip (or experience) beat, or the reel cannot be built.
+- Every clip/experience beat carries a `question_label` (see <selecting_clips>).
 </rules>
