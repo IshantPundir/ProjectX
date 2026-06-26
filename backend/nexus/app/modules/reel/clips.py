@@ -20,7 +20,8 @@ TAIL_PAD_MS = 400  # larger trail pad so the last word always finishes (+ a brea
 
 def build_cut_cmd(*, recording_path: str, out_path: str,
                   start_ms: int, end_ms: int, offset_ms: int,
-                  pad_ms: int = PAD_MS, tail_pad_ms: int = TAIL_PAD_MS) -> list[str]:
+                  pad_ms: int = PAD_MS, tail_pad_ms: int = TAIL_PAD_MS,
+                  overlay_png: str | None = None) -> list[str]:
     """Pure: the ffmpeg argv for one normalized, A/V-duration-locked clip.
 
     video window = [source_start - offset - pad, source_end - offset + tail_pad].
@@ -39,11 +40,16 @@ def build_cut_cmd(*, recording_path: str, out_path: str,
         f"pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,"
         f"setsar=1,fps={FPS}"
     )
-    return [
-        "ffmpeg", "-y",
-        "-ss", f"{ss:.3f}", "-i", recording_path,
+    cmd = ["ffmpeg", "-y", "-ss", f"{ss:.3f}", "-i", recording_path]
+    if overlay_png:
+        # Composite the transparent banner PNG over the normalized video.
+        cmd += ["-i", overlay_png,
+                "-filter_complex", f"[0:v]{vf}[base];[base][1:v]overlay=0:0[v]",
+                "-map", "[v]", "-map", "0:a"]
+    else:
+        cmd += ["-vf", vf]
+    cmd += [
         "-t", f"{dur:.3f}",
-        "-vf", vf,
         "-vsync", "cfr",
         "-af", "aresample=async=1:first_pts=0",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
@@ -52,16 +58,18 @@ def build_cut_cmd(*, recording_path: str, out_path: str,
         "-movflags", "+faststart",
         out_path,
     ]
+    return cmd
 
 
 async def cut_clip(*, recording_path: str, out_path: str,
                    start_ms: int, end_ms: int, offset_ms: int,
-                   pad_ms: int = PAD_MS, tail_pad_ms: int = TAIL_PAD_MS) -> str:
+                   pad_ms: int = PAD_MS, tail_pad_ms: int = TAIL_PAD_MS,
+                   overlay_png: str | None = None) -> str:
     """Write a normalized, A/V-locked clip for [start_ms, end_ms] (source clock)."""
     cmd = build_cut_cmd(
         recording_path=recording_path, out_path=out_path,
         start_ms=start_ms, end_ms=end_ms, offset_ms=offset_ms,
-        pad_ms=pad_ms, tail_pad_ms=tail_pad_ms,
+        pad_ms=pad_ms, tail_pad_ms=tail_pad_ms, overlay_png=overlay_png,
     )
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,

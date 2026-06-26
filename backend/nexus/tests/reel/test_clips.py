@@ -50,3 +50,29 @@ def test_cut_cmd_offset_shifts_window_back():
     # v_start = 5000-1000-0 = 4000 -> 4.000 ; dur = 1.000
     assert cmd[cmd.index("-ss") + 1] == "4.000"
     assert cmd[cmd.index("-t") + 1] == "1.000"
+
+
+def test_cut_cmd_without_overlay_uses_vf_and_no_extra_input():
+    cmd = build_cut_cmd(recording_path="rec.mp4", out_path="o.mp4",
+                        start_ms=1000, end_ms=2000, offset_ms=0)
+    # exactly one input, classic -vf path, no filter_complex/overlay
+    assert cmd.count("-i") == 1
+    assert "-vf" in cmd
+    assert "-filter_complex" not in cmd
+    assert "overlay" not in " ".join(cmd)
+
+
+def test_cut_cmd_with_overlay_adds_input_and_overlay_filter():
+    cmd = build_cut_cmd(recording_path="rec.mp4", out_path="o.mp4",
+                        start_ms=1000, end_ms=2000, offset_ms=0,
+                        overlay_png="banner.png")
+    assert cmd.count("-i") == 2
+    assert "banner.png" in cmd
+    assert "-filter_complex" in cmd
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert "overlay" in fc
+    # the video map is the filter output, audio comes from the source
+    assert "-map" in cmd
+    j = " ".join(cmd)
+    assert "[v]" in j and "0:a" in j
+    assert "-vf" not in cmd   # mutually exclusive with filter_complex here
