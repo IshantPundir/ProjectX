@@ -1,6 +1,6 @@
 """Brand cards for the reel (Pillow) — 1280x720 dark-cinematic, violet accent.
 
-Card beats (title/match/point/outro) render to a PNG that the renderer turns into
+Card beats (point/outro) render to a PNG that the renderer turns into
 a video segment under Arjun's narration. Clips (candidate footage) are NOT cards.
 
 Pillow is imported lazily inside ``render_card`` so the pure ``wrap_to_width``
@@ -52,7 +52,21 @@ def wrap_to_width(text: str, max_width: float, measure: Callable[[str], float]) 
     return lines
 
 
+def format_identity_tag(candidate_name: str | None, role_title: str | None) -> str | None:
+    """Build the first-card identity subtitle: ``"FirstName · Role Title"``.
+
+    Pure + deterministic — identity is a known fact, never LLM-authored. Degrades
+    gracefully: only one part present → just that part; neither → ``None``.
+    """
+    first = (candidate_name or "").strip().split()
+    name = first[0] if first else ""
+    role = (role_title or "").strip()
+    parts = [p for p in (name, role) if p]
+    return " · ".join(parts) if parts else None
+
+
 def render_card(*, kind: str, out_path: str, on_screen_text: str | None = None,
+                subtitle: str | None = None,
                 width: int = CARD_W, height: int = CARD_H) -> str:
     """Render one card beat to ``out_path`` (PNG). Returns the path."""
     from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -81,20 +95,14 @@ def render_card(*, kind: str, out_path: str, on_screen_text: str | None = None,
 
     # Unescape HTML entities the LLM sometimes emits (e.g. "&amp;" -> "&").
     text = html.unescape((on_screen_text or "").strip())
-    if kind == "title":
-        _paste_wordmark(Image, img, y=120, target_w=300)
-        centered_block(text, font(_FONT_BOLD, 62), top=300, fill=_INK)
-        _accent_rule(draw, width, y=560)
-    elif kind == "match":
-        _eyebrow(draw, font(_FONT_BOLD, 26), "WHY THEY MATCH", width, y=210)
-        centered_block(text, font(_FONT_BOLD, 56), top=290, fill=_INK)
-        _accent_rule(draw, width, y=520)
-    elif kind == "point":
+    if kind == "point":
         star = font(_FONT_BOLD, 96)
         sw = text_w("★", star)
         draw.text(((width - sw) / 2, 170), "★", font=star, fill=_ACCENT_SOFT)
         phrase = text.lstrip("★ ").strip() or text
-        centered_block(phrase, font(_FONT_BOLD, 54), top=320, fill=_INK)
+        y = centered_block(phrase, font(_FONT_BOLD, 54), top=320, fill=_INK)
+        if subtitle:
+            centered_block(subtitle, font(_FONT_REG, 30), top=y + 22, fill=_INK_SOFT)
     elif kind == "outro":
         centered_block(text, font(_FONT_BOLD, 50), top=230, fill=_INK)
         _cta_pill(draw, font(_FONT_BOLD, 30), "▶  Watch full interview", width, y=470)
@@ -133,17 +141,6 @@ def _paste_wordmark(Image, img, *, y: int, target_w: int) -> None:
     light = Image.new("RGBA", mark.size, (*_WORDMARK_INK, 255))
     light.putalpha(mark.getchannel("A"))
     img.paste(light, ((img.width - target_w) // 2, y), light)
-
-
-def _eyebrow(draw, f, s: str, width: int, *, y: int) -> None:
-    spaced = "   ".join(list(s))   # letter-spaced caps eyebrow
-    w = draw.textlength(spaced, font=f)
-    draw.text(((width - w) / 2, y), spaced, font=f, fill=_ACCENT_SOFT)
-
-
-def _accent_rule(draw, width: int, *, y: int, half: int = 70) -> None:
-    cx = width // 2
-    draw.rectangle([cx - half, y, cx + half, y + 5], fill=_ACCENT)
 
 
 def _cta_pill(draw, f, s: str, width: int, *, y: int) -> None:
