@@ -87,7 +87,7 @@ def _patched(monkeypatch):
         # The actor reads `out_path` bytes off disk → create the file.
         with open(kwargs["out_path"], "wb") as fh:
             fh.write(b"\x00mp4")
-        return (kwargs["out_path"], [{"kind": "title", "start_ms": 0}])
+        return (kwargs["out_path"], [{"kind": "point", "start_ms": 0}])
 
     async def _fake_probe_duration_ms(path):
         return 42_000

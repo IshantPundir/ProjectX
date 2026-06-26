@@ -62,7 +62,7 @@ class ReelBeat(BaseModel):
     source_turn_ref: int | None = None   # answer-run index; clip/experience only
     in_word: int | None = None           # index into the run's words[]
     out_word: int | None = None
-    on_screen_text: str | None = None    # card copy (title/ask/credit/outro)
+    on_screen_text: str | None = None    # card copy (point/outro)
     narration_text: str | None = None    # Arjun TTS script for card beats
 
 
@@ -203,7 +203,7 @@ def _fit_budget(beats: list[ValidatedBeat]) -> list[ValidatedBeat]:
     guaranteed by validate_edl).
     """
     max_total_ms = settings.reel_max_total_ms
-    title = [beats[0]] if beats and beats[0].kind == "title" else []
+    title: list = []
     outro = [beats[-1]] if beats and beats[-1].kind == "outro" else []
     body = beats[len(title): len(beats) - len(outro)]
     groups = _group_body(body)

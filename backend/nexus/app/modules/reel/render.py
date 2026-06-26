@@ -1,6 +1,6 @@
 """Assemble the reel: render each EDL beat to a normalized segment, then concat.
 
-Cards (title/match/point/outro) become a still image under Arjun narration; clips
+Cards (point/outro) become a still image under Arjun narration; clips
 (experience/clip) are cut from the recording. Every segment is normalized to
 identical codec/params (1280x720, 30fps CFR, H.264 yuv420p, AAC 48k stereo) AND
 A/V-duration-locked, so the re-timing concat FILTER joins them with re-encode --
