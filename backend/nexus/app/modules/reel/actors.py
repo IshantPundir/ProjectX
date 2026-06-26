@@ -31,7 +31,7 @@ from sqlalchemy import select, text
 
 from app.config import settings
 from app.database import get_bypass_session
-from app.modules.reel import render, timing
+from app.modules.reel import cards, render, timing
 from app.modules.reel.director import edl_to_dict, generate_edl, validate_edl
 from app.modules.reel.models import SessionReel
 from app.storage import get_object_storage
@@ -178,10 +178,12 @@ async def _build_and_upload(session_id: UUID, tenant_id: UUID,
                         error_type=type(exc).__name__, error_message=str(exc)[:300],
                         static_offset_ms=offset_ms)
 
+        identity_tag = cards.format_identity_tag(
+            inp["candidate_name"], inp["role_title"])
         out_path = os.path.join(tmp, "reel.mp4")
         _, chapters = await render.render_reel(
             beats=vedl.beats, recording_path=rec_path, offset_ms=final_offset,
-            tmp_dir=tmp, out_path=out_path,
+            tmp_dir=tmp, out_path=out_path, identity_tag=identity_tag,
         )
         duration_ms = await render.probe_duration_ms(out_path)
         data = await asyncio.to_thread(Path(out_path).read_bytes)
