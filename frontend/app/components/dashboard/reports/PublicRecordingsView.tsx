@@ -1,6 +1,7 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
+import { useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 
 import { BrandLogo, Skeleton } from '@/components/px'
@@ -20,6 +21,11 @@ type Mode = 'reel' | 'full'
  * proctoring + scores + transcript + decision). When there is no reel, the
  * switch is omitted and the page shows Full session directly.
  *
+ * Deep-linking: a `?view=reel` or `?view=full` query param picks the initial
+ * view (the shared PDF's "Candidate highlight" and "Full session" buttons use
+ * this). Absent/invalid → the reel-first default. A `?view=reel` request with no
+ * reel available falls back to Full session (see activeMode below).
+ *
  * The recruiter REPORT page stays private — this only plays back the videos a
  * shared PDF points at.
  */
@@ -29,9 +35,13 @@ export function PublicRecordingsView({ token }: { token: string }) {
     queryFn: ({ signal }) => reportsApi.getPublicRecordings(token, { signal }),
     retry: false,
   })
-  // null = "not chosen yet" → derive the default from the data once it loads
-  // (reel-first), without a flash or a stale initial value.
-  const [mode, setMode] = useState<Mode | null>(null)
+  // Seed from ?view= when the PDF deep-links a specific view; otherwise null =
+  // "not chosen yet" → derive the default from the data once it loads (reel-first),
+  // without a flash or a stale initial value.
+  const viewParam = useSearchParams().get('view')
+  const initialMode: Mode | null =
+    viewParam === 'reel' || viewParam === 'full' ? viewParam : null
+  const [mode, setMode] = useState<Mode | null>(initialMode)
 
   if (isLoading) {
     return (
@@ -55,7 +65,9 @@ export function PublicRecordingsView({ token }: { token: string }) {
   }
 
   const reelReady = data.reel.status === 'ready'
-  const activeMode: Mode = mode ?? (reelReady ? 'reel' : 'full')
+  // No reel → always Full session (guards a ?view=reel deep-link with no reel,
+  // which would otherwise open neither theater).
+  const activeMode: Mode = reelReady ? (mode ?? 'reel') : 'full'
   const subtitle = `${data.job_title} · ${data.stage_label}`
 
   return (

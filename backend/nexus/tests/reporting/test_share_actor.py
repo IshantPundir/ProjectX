@@ -111,7 +111,8 @@ async def test_share_actor_mints_token_and_sets_recordings_url(
     url = captured["full_session_url"]
     assert "/recordings/" in url
     assert "/shared-session/coming-soon" not in url
-    token = url.rsplit("/recordings/", 1)[1]
+    assert url.endswith("?view=full")   # session button deep-links to the full view
+    token = url.rsplit("/recordings/", 1)[1].split("?", 1)[0]
     assert token  # non-empty
 
     await db_session.refresh(seeded_share)

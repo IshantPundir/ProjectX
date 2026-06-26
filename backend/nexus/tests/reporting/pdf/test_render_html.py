@@ -16,7 +16,7 @@ def test_build_pdf_html_contains_key_content():
     assert "Technical" in html
     assert "Behavioral" not in html    # un-assessed dim omitted
     assert "Solid screen." in html     # summary
-    assert "See full session" in html
+    assert "Full session" in html      # session-recording CTA
 
 
 def test_build_pdf_html_uses_photo_when_present():

@@ -7,10 +7,30 @@ exercises the real DB + FK chain the actor reads.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
+import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+@pytest.fixture(autouse=True)
+def _stub_signal_labels(monkeypatch):
+    """build_report generates short competency labels via an LLM. Stub it across
+    the reporting suite so report tests stay deterministic and offline; the label
+    generator has its own mocked unit tests in test_signal_labels.py."""
+    monkeypatch.setattr(
+        "app.modules.reporting.service.generate_signal_labels",
+        AsyncMock(return_value={}),
+        raising=False,
+    )
+    # Share actor backfills labels for legacy reports via the same generator.
+    monkeypatch.setattr(
+        "app.modules.reporting.actors.generate_signal_labels",
+        AsyncMock(return_value={}),
+        raising=False,
+    )
 
 from app.modules.candidates.models import Candidate, CandidateJobAssignment
 from app.modules.reporting.models import ReportShare, SessionReport

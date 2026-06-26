@@ -26,9 +26,12 @@ def test_verdict_stamp_mapping():
 
 
 def test_recommendation_meta():
-    assert recommendation_meta("advance") == {"label": "Recommended", "ink": "#0B3D34"}
-    assert recommendation_meta("borderline") == {"label": "Borderline", "ink": "#4A3E7A"}
-    assert recommendation_meta("reject") == {"label": "Not Recommended", "ink": "#8A2733"}
+    assert recommendation_meta("advance") == {
+        "label": "Recommended", "ink": "#134E42", "accent": "#2C8472", "bg": "#EAF3F0"}
+    assert recommendation_meta("borderline") == {
+        "label": "Borderline", "ink": "#7A4A08", "accent": "#E8930C", "bg": "#FBF3E3"}
+    assert recommendation_meta("reject") == {
+        "label": "Not Recommended", "ink": "#A8344A", "accent": "#E5556B", "bg": "#FBEAEC"}
 
 
 def test_verdict_glow():
@@ -50,11 +53,11 @@ def test_monogram_initials():
 
 
 def test_gauge_color_bands():
-    assert gauge_color(8.0) == "#AEE3D9"   # >= 6.5 ok
-    assert gauge_color(6.5) == "#AEE3D9"
+    assert gauge_color(8.0) == "#2C8472"   # >= 6.5 ok (confident brand teal-green)
+    assert gauge_color(6.5) == "#2C8472"
     assert gauge_color(5.0) == "#E8930C"   # >= 4.0 caution
     assert gauge_color(3.9) == "#E5556B"   # danger
-    assert gauge_color(None) == "#E7EBEE"
+    assert gauge_color(None) == "#E8ECEF"
 
 
 def test_assessed_dimensions_drops_unassessed_and_colors():
@@ -66,7 +69,7 @@ def test_assessed_dimensions_drops_unassessed_and_colors():
     }
     dims = assessed_dimensions(scores)
     assert [d["name"] for d in dims] == ["Technical", "Communication"]   # overall + behavioral excluded
-    assert dims[0]["color"] == "#AEE3D9"   # 8.9 → ok
+    assert dims[0]["color"] == "#2C8472"   # 8.9 → ok
     assert dims[1]["color"] == "#E8930C"   # 5.0 → caution
 
 
@@ -124,7 +127,8 @@ def _report_full() -> ReportRead:
                        "listen_for_hits": ["scaling"], "red_flags_tripped": []}],
         "methodology": {"note": "", "charity_flags": []},
         "signal_assessments": [
-            {"signal": "System Design", "score": 9.0, "weight": 3, "provenance": "asked_directly",
+            {"signal": "System Design", "signal_label": "Sys Design", "score": 9.0, "weight": 3,
+             "provenance": "asked_directly",
              "level": "strong", "type": "skill", "knockout": True, "priority": "required",
              "level_basis": "dedicated: strong"},
             {"signal": "Problem Solving", "score": 5.5, "weight": 2, "provenance": "probed_absent",
@@ -143,11 +147,13 @@ def _report_full() -> ReportRead:
     })
 
 
-def _ctx(report):
+def _ctx(report, *, has_reel=False, reel_url="https://x/recordings/tok?view=reel"):
     return build_pdf_context(
         report, candidate_name="Ishant Pundir", job_title="Engineer",
         stage_label="New Stage", generated_on="Jun 14, 2026",
-        reference_photo_url=None, full_session_url="https://x/recordings/tok",
+        reference_photo_url=None,
+        full_session_url="https://x/recordings/tok?view=full",
+        reel_url=reel_url, has_reel=has_reel,
     )
 
 
@@ -165,6 +171,10 @@ def test_build_pdf_context_shape():
     assert [g["name"] for g in ctx["gauges"]] == ["Overall", "Technical", "Communication"]
     assert ctx["gauges"][0]["is_overall"] is True
     assert "glow" in ctx and "verified_seal_path" in ctx
+    # both recording entry points are carried, plus the reel-availability flag
+    assert ctx["full_session_url"] == "https://x/recordings/tok?view=full"
+    assert ctx["reel_url"] == "https://x/recordings/tok?view=reel"
+    assert ctx["has_reel"] is False
     assert ctx["competencies"] == {"must_haves": [], "others": []}   # no signals
     # Dead radar/pill fields are gone.
     assert "radar" not in ctx and "radar_geom" not in ctx
@@ -183,11 +193,15 @@ def test_build_competencies_split_sort_and_fields():
 
     must = comp["must_haves"][0]
     assert must["cleared"] is True and must["glyph"] == "✓" and must["value"] == "9.0"
-    assert must["fill_color"] == "#AEE3D9" and must["must_have"] is True
+    assert must["fill_color"] == "#2C8472" and must["must_have"] is True
     assert must["hint"] == "dedicated: strong"
+    # two-line glance hierarchy: short title + verbose subtitle
+    assert must["title"] == "Sys Design" and must["subtitle"] == "System Design"
 
     sol = comp["others"][0]
     assert sol["cleared"] is False and sol["glyph"] == "⚠" and sol["fill_color"] == "#E8930C"
+    # no generated label → title falls back to the full string, no subtitle
+    assert sol["title"] == "Problem Solving" and sol["subtitle"] is None
 
     lead = comp["others"][1]
     assert lead["not_reached"] is True and lead["assessed"] is False and lead["value"] is None
@@ -226,7 +240,31 @@ def test_rendered_html_has_glance_and_competencies():
     for token in ("AI recommendation", "Must-have competencies", "Other competencies",
                   "System Design", "Quick summary", "Why this verdict",
                   "Question by question", "Acme Corp", "Senior Engineer",
-                  "riya@example.com", "bar-track", "photo-glow", "vbadge"):
+                  "riya@example.com", "bar-track", "photo-glow", "vbadge",
+                  # two-line competency: short title + verbose subtitle
+                  "Sys Design", "bar-title", "bar-sub",
+                  # color-coding legend
+                  "Clears bar", "Well below", "Not assessed"):
         assert token in html, f"missing: {token}"
     # radar artifacts gone
     assert "radar" not in html
+
+
+# ---------------------------------------------------------------------------
+# Header CTAs — "Candidate highlight" (USP, reel-gated) + "Full session"
+# ---------------------------------------------------------------------------
+
+
+def test_highlight_button_shows_only_when_reel_ready():
+    # reel ready → both buttons, primary highlight deep-links to ?view=reel
+    html = build_pdf_html(_ctx(_report_full(), has_reel=True))
+    assert "Candidate highlight" in html
+    assert "https://x/recordings/tok?view=reel" in html
+    assert "Full session" in html
+    assert "https://x/recordings/tok?view=full" in html
+
+    # no reel → highlight anchor hidden (reel deep-link absent), full-session stays
+    html_noreel = build_pdf_html(_ctx(_report_full(), has_reel=False))
+    assert "?view=reel" not in html_noreel          # the reel CTA anchor is gone
+    assert "Full session" in html_noreel
+    assert "https://x/recordings/tok?view=full" in html_noreel

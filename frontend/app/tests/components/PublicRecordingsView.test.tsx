@@ -2,7 +2,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// Controllable ?view= deep-link param (the shared PDF buttons use this).
+let searchParamsValue = ''
+vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(searchParamsValue),
+}))
 
 // Lightweight stubs for the heavy theater modals — we only assert which one is
 // "open" and that the toggle drives it. Their internals have their own tests.
@@ -46,6 +52,7 @@ function renderView() {
   return render(<PublicRecordingsView token="tok" />, { wrapper })
 }
 
+beforeEach(() => { searchParamsValue = '' })
 afterEach(() => vi.restoreAllMocks())
 
 describe('PublicRecordingsView', () => {
@@ -71,6 +78,39 @@ describe('PublicRecordingsView', () => {
 
     expect(screen.getByTestId('review-theater')).toHaveAttribute('data-open', 'true')
     expect(screen.getByTestId('reel-theater')).toHaveAttribute('data-open', 'false')
+  })
+
+  it('deep-links to Full session when ?view=full (reel still available)', async () => {
+    searchParamsValue = 'view=full'
+    vi.spyOn(reportsApi, 'getPublicRecordings').mockResolvedValue(envelope('ready') as never)
+    renderView()
+
+    await waitFor(() =>
+      expect(screen.getByTestId('review-theater')).toHaveAttribute('data-open', 'true'),
+    )
+    expect(screen.getByTestId('reel-theater')).toHaveAttribute('data-open', 'false')
+  })
+
+  it('deep-links to the reel when ?view=reel', async () => {
+    searchParamsValue = 'view=reel'
+    vi.spyOn(reportsApi, 'getPublicRecordings').mockResolvedValue(envelope('ready') as never)
+    renderView()
+
+    await waitFor(() =>
+      expect(screen.getByTestId('reel-theater')).toHaveAttribute('data-open', 'true'),
+    )
+    expect(screen.getByTestId('review-theater')).toHaveAttribute('data-open', 'false')
+  })
+
+  it('falls back to Full session when ?view=reel but no reel exists', async () => {
+    searchParamsValue = 'view=reel'
+    vi.spyOn(reportsApi, 'getPublicRecordings').mockResolvedValue(envelope('absent') as never)
+    renderView()
+
+    await waitFor(() =>
+      expect(screen.getByTestId('review-theater')).toHaveAttribute('data-open', 'true'),
+    )
+    expect(screen.queryByTestId('reel-theater')).toBeNull()
   })
 
   it('shows Full session with NO switch when there is no reel', async () => {

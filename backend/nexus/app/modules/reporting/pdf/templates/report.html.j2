@@ -2,19 +2,23 @@
 <html><head><meta charset="utf-8"><style>
   @page { size: A4; margin: 0; }
   * { box-sizing: border-box; }
-  body { margin:0; font-family:"Liberation Sans",Arial,sans-serif; color:#0C2A38;
+  body { margin:0; font-family:"Liberation Sans",Arial,sans-serif; color:#14242B;
          -webkit-print-color-adjust:exact; print-color-adjust:exact; font-size:12px;
          background:#F4F6F8; }
 
-  /* ── Hero (matches web ImmersiveHeader) ───────────────────────────────────── */
+  /* ── Hero — FLAT brand navy-slate ──────────────────────────────────────────── */
+  /* CEO ask (2026-06-26): gradients read as unprofessional, so the hero paints a
+     single solid navy-slate. The verdict-tinted gradient is PRESERVED in code
+     (both here and via the hero_tint() context helper) for a one-line restore —
+     just swap `background` back to the gradient below.
+     PRESERVED GRADIENT (intentionally NOT applied):
+       background: radial-gradient(700px circle at 86% 6%, <hero_tint>, transparent 56%),
+                   linear-gradient(135deg,#101E24 0%,#16282F 52%,#22343C 100%); */
   .hero { position:relative; color:#fff; padding:26px 34px 30px; overflow:hidden;
-          background:
-            radial-gradient(620px circle at 12% 8%, rgba(111,104,240,.55), transparent 42%),
-            radial-gradient(520px circle at 92% 96%, rgba(54,208,127,.20), transparent 46%),
-            linear-gradient(120deg,#141531,#2b2d62); }
+          background:#16282F; }
   .herotop { position:relative; display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:22px; }
   .wordmark-w { height:26px; width:auto; display:block; filter:brightness(0) invert(1); }
-  .bmeta-light { font-size:9px; letter-spacing:2px; text-transform:uppercase; color:#9b9cc4;
+  .bmeta-light { font-size:9px; letter-spacing:2px; text-transform:uppercase; color:#90A2AB;
                  text-align:right; line-height:1.9; }
   .hgrid { position:relative; display:flex; gap:26px; align-items:center; }
 
@@ -24,58 +28,85 @@
                 filter:blur(13px); z-index:0; }
   .photo, .mono { position:relative; z-index:1; height:164px; width:164px; border-radius:20px;
           flex:none; border:3px solid rgba(255,255,255,.22);
-          box-shadow:0 0 0 5px var(--ring), 0 0 30px 2px var(--glow), 0 14px 34px rgba(0,0,0,.4); }
+          box-shadow:0 0 0 3px var(--ring), 0 0 16px 0 var(--glow), 0 14px 34px rgba(0,0,0,.4); }
   .photo { overflow:hidden; } .photo img { width:100%; height:100%; object-fit:cover; display:block; }
-  .mono { background:linear-gradient(135deg,#6f68f0,#4f46e5); display:flex; align-items:center;
-          justify-content:center; font-weight:800; font-size:60px; color:#fff; }
+  .mono { background:linear-gradient(135deg,#2A3940,#46565F); display:flex; align-items:center;
+          justify-content:center; font-weight:800; font-size:60px; color:#E4EAED; }
   .vbadge { position:absolute; top:-9px; right:-9px; z-index:2; line-height:0;
             filter:drop-shadow(0 1px 0 rgba(255,255,255,.35)) drop-shadow(0 4px 7px rgba(8,47,110,.55)); }
 
   .who { flex:1; min-width:0; }
   .hname { font-size:30px; font-weight:700; margin:0 0 3px; line-height:1.05; }
-  .hsub  { font-size:13px; color:#c7c8e4; margin:0; }
-  .hsub2 { font-size:12.5px; color:#b9bae0; margin:3px 0 0; }
-  .hmeta { display:flex; flex-wrap:wrap; gap:6px 22px; margin-top:11px; font-size:12.5px; color:#cfd0ea; }
+  .hsub  { font-size:13px; color:#C3CBCE; margin:0; }
+  .hsub2 { font-size:12.5px; color:#AEBBC1; margin:3px 0 0; }
+  .hmeta { display:flex; flex-wrap:wrap; gap:6px 22px; margin-top:11px; font-size:12.5px; color:#BCC8CE; }
   .hmeta strong { color:#fff; }
-  .hskills { display:flex; flex-wrap:wrap; gap:5px; margin-top:13px; }
-  .hskill { background:rgba(255,255,255,.12); color:#e7e8fb; font-size:11px; font-weight:600;
-            border:1px solid rgba(255,255,255,.16); border-radius:999px; padding:4px 11px; }
-  .stub { display:inline-flex; align-items:center; margin-top:14px; background:rgba(255,255,255,.08);
-          border:1px solid rgba(255,255,255,.18); color:rgba(220,220,240,.85); font-size:12px;
-          border-radius:11px; padding:8px 15px; text-decoration:none; }
+  /* ── Recording CTAs — primary reel highlight (USP) + glass session button ──── */
+  .ctas { display:flex; gap:9px; margin-top:14px; }
+  .cta { display:inline-flex; align-items:center; gap:7px; font-size:12.5px; font-weight:600;
+         border-radius:12px; padding:9px 17px; text-decoration:none; white-space:nowrap; }
+  /* Primary — accent-tinted highlight (mirrors web .rh-btn-reel); the USP gets the weight */
+  .cta-reel { background:rgba(124,116,242,.24); color:#fff;
+              border:1px solid rgba(124,116,242,.62); box-shadow:0 0 0 1px rgba(124,116,242,.30); }
+  /* Secondary — glass session button (mirrors web .rh-btn-sec) */
+  .cta-sec { background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18);
+             color:rgba(220,220,240,.85); }
   .stampwrap { flex:none; align-self:center; }
 
   /* ── Cards / sections ─────────────────────────────────────────────────────── */
   .wrap { padding:18px 30px 4px; }
-  .card { background:#fff; border:1px solid rgba(12,42,56,.08); border-radius:16px;
-          padding:18px 20px; margin-bottom:16px; box-shadow:0 2px 12px rgba(20,20,40,.04);
+  .card { background:#fff; border:1px solid #E3E8EB; border-radius:14px;
+          padding:18px 20px; margin-bottom:14px; box-shadow:0 1px 3px rgba(20,40,50,.05);
           break-inside:avoid; }
   .lbl { font-size:11px; font-weight:700; letter-spacing:1.3px; text-transform:uppercase;
          color:#5C6B73; margin:0 0 12px; }
-  .body { font-size:13.5px; line-height:1.7; color:#34454E; white-space:pre-wrap; }
+  .body { font-size:13.5px; line-height:1.7; color:#3A4A52; white-space:pre-wrap; }
 
-  /* ── Glance band ──────────────────────────────────────────────────────────── */
-  .glance-top { display:flex; align-items:center; gap:10px; }
-  .gauges { flex:1; display:flex; align-items:center; justify-content:space-around; gap:8px; }
+  /* ── Glance band — gauges + bars only (visuals, no verdict prose) ──────────── */
+  .glance-head { display:flex; justify-content:space-between; align-items:flex-start;
+                 gap:18px; margin:0 0 16px; }
+  .glance-eyebrow { font-size:11px; font-weight:700; letter-spacing:1.3px; text-transform:uppercase; color:#5C6B73; padding-top:2px; }
+  .glance-meta { display:flex; flex-direction:column; align-items:flex-end; gap:7px; }
+  .glance-scale { font-size:10px; font-weight:700; letter-spacing:1px; text-transform:uppercase; color:#9CABB2; }
+  /* Color-coding legend — defines what every gauge ring + bar fill means ───── */
+  .legend { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:5px 13px; max-width:380px; }
+  .lg { display:inline-flex; align-items:center; gap:5px; font-size:9px; font-weight:700;
+        letter-spacing:.3px; text-transform:uppercase; color:#5C6B73; white-space:nowrap; }
+  .lg i { width:9px; height:9px; border-radius:2.5px; flex:none; display:inline-block; }
+  .lg i.na { background:#fff; border:1.4px solid #C3CBCE; }
+  .gauges { display:flex; align-items:center; justify-content:space-around; gap:8px;
+            padding:2px 0 4px; }
   .gz { text-align:center; }
-  .gz-l { font-size:11px; letter-spacing:.4px; text-transform:uppercase; color:#5C6B73; font-weight:600; margin-top:6px; }
-  .gdiv { width:1px; height:92px; background:rgba(12,42,56,.10); }
-  .reco { flex:1; border-left:1px solid rgba(12,42,56,.08); padding-left:26px; }
-  .reco-label { font-size:27px; font-weight:800; letter-spacing:-.3px; line-height:1.1; margin-top:2px; }
-  .reco-head { font-size:13.5px; line-height:1.6; color:#34454E; margin:8px 0 0; }
+  .gz-l { font-size:11px; letter-spacing:.5px; text-transform:uppercase; color:#5C6B73; font-weight:700; margin-top:7px; }
+  .gz-tier { font-size:10px; font-weight:600; color:#9CABB2; margin-top:1px; }
+  .gdiv { width:1px; height:96px; background:#E3E8EB; }
 
   .comp-group { margin-top:18px; }
-  .bar { margin-bottom:13px; }
+  .comp-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:11px; }
+  .comp-legend { display:flex; align-items:center; gap:5px; font-size:9.5px; font-weight:600;
+                 letter-spacing:.3px; text-transform:uppercase; color:#9CABB2; }
+  .comp-legend .tick { display:inline-block; width:2px; height:11px; background:#7E8F97; border-radius:1px; }
+  .bar { margin-bottom:16px; }
   .bar:last-child { margin-bottom:0; }
-  .bar-top { display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:5px; }
-  .bar-label { font-size:13.5px; font-weight:600; color:#34454E; }
-  .bar-star { color:#6C5CD0; }
-  .bar-val { font-size:15px; font-weight:700; white-space:nowrap; }
-  .bar-track { position:relative; height:13px; width:100%; border-radius:999px; background:#E7EBEE; overflow:hidden; }
-  .zone { position:absolute; top:0; bottom:0; }
+  .bar-top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:6px; }
+  .bar-id { min-width:0; }
+  .bar-title { font-size:14px; font-weight:700; color:#1C2B33; line-height:1.25; }
+  .bar-sub { font-size:10px; font-weight:400; color:#93A0A6; line-height:1.35; margin-top:1px; }
+  .bar-star { color:#C07A0A; }
+  .bar-val { font-size:16px; font-weight:800; white-space:nowrap; padding-top:1px; }
+  .bar-track { position:relative; height:14px; width:100%; border-radius:999px; background:#EAEEF0; overflow:hidden; }
   .bar-fill { position:absolute; top:0; bottom:0; left:0; border-radius:999px; }
-  .bar-marker { position:absolute; top:0; bottom:0; width:2px; background:#5C6B73; opacity:.55; transform:translateX(-1px); }
-  .bar-dashed { position:absolute; inset:0; border:1px dashed #93A0A6; border-radius:999px; opacity:.5; }
+  .bar-marker { position:absolute; top:0; bottom:0; width:2px; background:#5C6B73; opacity:.7; transform:translateX(-1px); z-index:2; }
+  .bar-dashed { position:absolute; inset:0; border:1px dashed #C3CBCE; border-radius:999px; }
+
+  /* ── Verdict banner — moved BELOW the visuals (glance-decidable first) ──────── */
+  .verdict { display:flex; align-items:flex-start; gap:16px; border-radius:12px;
+             padding:15px 18px; border:1px solid #E3E8EB; }
+  .verdict-rule { flex:none; width:4px; align-self:stretch; border-radius:999px; }
+  .verdict-body { flex:1; min-width:0; }
+  .verdict-eyebrow { font-size:10px; font-weight:700; letter-spacing:1.4px; text-transform:uppercase; }
+  .verdict-label { font-size:25px; font-weight:800; letter-spacing:-.4px; line-height:1.08; margin:2px 0 0; }
+  .verdict-head { font-size:13px; line-height:1.6; color:#3A4A52; margin:7px 0 0; }
 
   /* ── Why this verdict ─────────────────────────────────────────────────────── */
   .why { display:flex; gap:12px; }
@@ -99,7 +130,7 @@
   .qhead { display:flex; gap:11px; align-items:flex-start; }
   .qseq { width:26px; height:26px; border-radius:8px; flex:none; display:flex; align-items:center;
           justify-content:center; font-size:12px; font-weight:800;
-          background:rgba(108,92,208,.12); color:#6C5CD0; }
+          background:#E8ECEF; color:#435059; }
   .qtext { flex:1; font-size:14px; font-weight:600; line-height:1.35; color:#0C2A38; }
   .qstars { flex:none; text-align:center; padding-left:8px; }
   .qstar-l { font-size:11px; font-weight:800; color:#5C6B73; }
@@ -130,46 +161,47 @@
     </filter>
   </defs></svg>
 
-  {%- set TONE_BG = {'ok':'rgba(174,227,217,0.20)','caution':'rgba(232,147,12,0.12)','danger':'rgba(229,85,107,0.10)','neutral':'#F4F6F8','human':'rgba(216,206,244,0.28)'} -%}
-  {%- set TONE_INK = {'ok':'#0B3D34','caution':'#7A4A08','danger':'#8A2733','neutral':'#93A0A6','human':'#4A3E7A'} -%}
+  {%- set TONE_BG = {'ok':'rgba(44,132,114,0.12)','caution':'rgba(232,147,12,0.13)','danger':'rgba(229,85,107,0.12)','neutral':'#EEF1F3','human':'rgba(143,157,165,0.16)'} -%}
+  {%- set TONE_INK = {'ok':'#134E42','caution':'#7A4A08','danger':'#A8344A','neutral':'#5C6B73','human':'#435059'} -%}
   {%- set STATUS_LABEL = {'passed':'Passed','partial':'Partial','failed_required':'Failed — required skill','not_demonstrated':'Not demonstrated','not_attempted':'Not attempted','not_fully_assessed':'Not fully assessed'} -%}
   {%- set STATUS_META_TONE = {'passed':'ok','partial':'caution','failed_required':'danger','not_demonstrated':'danger','not_attempted':'neutral','not_fully_assessed':'neutral'} -%}
   {%- set DIFF_TONE = {'easy':'ok','medium':'caution','hard':'danger'} -%}
 
-  {%- macro gauge(g, size, numsize) -%}
-    {%- set stroke = (size * 0.085) -%}
+  {%- macro gauge(g, size, numsize, tier='') -%}
+    {%- set stroke = (size * 0.088) -%}
     {%- set r = (size / 2) - stroke -%}
     {%- set circ = 6.2831853 * r -%}
     {%- set pct = (g.score if g.score is not none else 0) / 10 -%}
     {%- set off = circ * (1 - pct) -%}
     <div class="gz">
       <svg width="{{ size }}" height="{{ size }}" viewBox="0 0 {{ size }} {{ size }}">
-        <circle cx="{{ size/2 }}" cy="{{ size/2 }}" r="{{ r }}" fill="none" stroke="#E7EBEE" stroke-width="{{ stroke }}"/>
+        <circle cx="{{ size/2 }}" cy="{{ size/2 }}" r="{{ r }}" fill="none" stroke="#EAEEF0" stroke-width="{{ stroke }}"/>
         {% if g.score is not none %}
         <circle cx="{{ size/2 }}" cy="{{ size/2 }}" r="{{ r }}" fill="none" stroke="{{ g.color }}"
                 stroke-width="{{ stroke }}" stroke-linecap="round" stroke-dasharray="{{ circ }}"
                 stroke-dashoffset="{{ off }}" transform="rotate(-90 {{ size/2 }} {{ size/2 }})"/>
         {% endif %}
         <text x="{{ size/2 }}" y="{{ (size/2) + (numsize * 0.34) }}" text-anchor="middle"
-              font-size="{{ numsize }}" font-weight="800" fill="#0C2A38">{{ ('%.1f'|format(g.score)) if g.score is not none else 'n/a' }}</text>
+              font-size="{{ numsize }}" font-weight="800" fill="#14242B">{{ ('%.1f'|format(g.score)) if g.score is not none else 'n/a' }}</text>
       </svg>
       <div class="gz-l">{{ g.name }}</div>
+      {% if tier %}<div class="gz-tier">{{ tier }}</div>{% endif %}
     </div>
   {%- endmacro -%}
 
   {%- macro bar(b) -%}
     <div class="bar">
       <div class="bar-top">
-        <span class="bar-label">{% if b.must_have %}<span class="bar-star">★</span> {% endif %}{{ b.label }}</span>
+        <div class="bar-id">
+          <div class="bar-title">{% if b.must_have %}<span class="bar-star">★</span> {% endif %}{{ b.title }}</div>
+          {% if b.subtitle %}<div class="bar-sub">{{ b.subtitle }}</div>{% endif %}
+        </div>
         <span class="bar-val" style="color:{{ '#0C2A38' if b.assessed else '#93A0A6' }}">
           {%- if b.assessed -%}{{ b.value }}<span style="color:{{ b.glyph_color }};margin-left:4px">{{ b.glyph }}</span>{%- else -%}n/a{%- endif -%}
         </span>
       </div>
       <div class="bar-track">
         {% if b.assessed %}
-        <div class="zone" style="left:0;width:{{ bands.reject_pct }}%;background:rgba(138,39,51,.12)"></div>
-        <div class="zone" style="left:{{ bands.reject_pct }}%;width:{{ bands.advance_pct - bands.reject_pct }}%;background:rgba(122,74,8,.12)"></div>
-        <div class="zone" style="left:{{ bands.advance_pct }}%;right:0;background:rgba(11,61,52,.12)"></div>
         <div class="bar-fill" style="width:{{ b.fill_pct }}%;background:{{ b.fill_color }}"></div>
         <div class="bar-marker" style="left:{{ bands.advance_pct }}%"></div>
         {% else %}
@@ -179,7 +211,7 @@
     </div>
   {%- endmacro -%}
 
-  <!-- ── HERO ──────────────────────────────────────────────────────────────── -->
+  <!-- ── HERO — flat navy-slate (gradient preserved in CSS, not painted) ─────── -->
   <div class="hero">
     <div class="herotop">
       {% if logo_src %}<img class="wordmark-w" src="{{ logo_src }}" alt="BinQle">{% else %}<div style="font-weight:800;font-size:16px;color:#fff">BinQle<span style="color:#a7a3f5">.ai</span></div>{% endif %}
@@ -214,12 +246,17 @@
           {% if header.session_date %}<span>🗓 {{ header.session_date }}</span>{% endif %}
           {% if header.duration %}<span>⏱ {{ header.duration }}</span>{% endif %}
         </div>
-        {% if header.skills %}<div class="hskills">{% for sk in header.skills %}<span class="hskill">{{ sk }}</span>{% endfor %}</div>{% endif %}
-        <a class="stub" href="{{ full_session_url }}">&#9654;&nbsp; See full session recording</a>
+        {#- Skills pills intentionally omitted: header.skills are the demonstrated
+            competency names, already listed in full as the "Other competencies"
+            bars in the glance band below — rendering them here just duplicates. -#}
+        <div class="ctas">
+          {% if has_reel and reel_url %}<a class="cta cta-reel" href="{{ reel_url }}">&#9654;&nbsp; Candidate highlight</a>{% endif %}
+          <a class="cta cta-sec" href="{{ full_session_url }}">&#9654;&nbsp; Full session</a>
+        </div>
       </div>
 
       <div class="stampwrap">
-        <svg width="244" height="122" viewBox="0 0 200 100" style="filter:drop-shadow(0 0 16px {{ stamp.color }}55)">
+        <svg width="244" height="122" viewBox="0 0 200 100" style="filter:drop-shadow(0 0 6px {{ stamp.color }}1f)">
           <g filter="url(#worn)" transform="rotate(-8 100 50)" fill="none" stroke="{{ stamp.color }}">
             <rect x="10" y="18" width="180" height="64" rx="9" stroke-width="5"/>
             <rect x="17" y="25" width="166" height="50" rx="6" stroke-width="2.2"/>
@@ -233,33 +270,59 @@
   </div>
 
   <div class="wrap">
-    <!-- ── GLANCE BAND ─────────────────────────────────────────────────────── -->
+    <!-- ── GLANCE BAND — visuals only (gauges + competency bars) ─────────────── -->
+    {%- set has_bars = competencies.must_haves or competencies.others -%}
     <div class="card">
-      <div class="glance-top">
-        <div class="gauges">
-          {{ gauge(gauges[0], 132, 30) }}
-          {% if gauges|length > 1 %}<div class="gdiv"></div>{% endif %}
-          {% for g in gauges[1:] %}{{ gauge(g, 104, 26) }}{% endfor %}
-        </div>
-        <div class="reco">
-          <div class="lbl" style="margin-bottom:4px">AI recommendation</div>
-          <div class="reco-label" style="color:{{ recommendation.ink }}">{{ recommendation.label }}</div>
-          <p class="reco-head">{{ recommendation.headline }}</p>
+      <div class="glance-head">
+        <span class="glance-eyebrow">Evaluation scores</span>
+        <div class="glance-meta">
+          <span class="glance-scale">Out of 10</span>
+          <div class="legend">
+            <span class="lg"><i style="background:{{ fills.ok }}"></i>Clears bar</span>
+            <span class="lg"><i style="background:{{ fills.caution }}"></i>Below bar</span>
+            <span class="lg"><i style="background:{{ fills.danger }}"></i>Well below</span>
+            <span class="lg"><i class="na"></i>Not assessed</span>
+          </div>
         </div>
       </div>
+      <div class="gauges">
+        {{ gauge(gauges[0], 138, 31, overall_tier) }}
+        {% if gauges|length > 1 %}<div class="gdiv"></div>{% endif %}
+        {% for g in gauges[1:] %}{{ gauge(g, 108, 27) }}{% endfor %}
+      </div>
 
+      {% if has_bars %}
       {% if competencies.must_haves %}
       <div class="comp-group">
-        <div class="lbl">Must-have competencies</div>
+        <div class="comp-head">
+          <div class="lbl" style="margin:0">Must-have competencies</div>
+          <div class="comp-legend"><span class="tick"></span> Hiring bar</div>
+        </div>
         {% for b in competencies.must_haves %}{{ bar(b) }}{% endfor %}
       </div>
       {% endif %}
       {% if competencies.others %}
       <div class="comp-group">
-        <div class="lbl">Other competencies</div>
+        <div class="comp-head">
+          <div class="lbl" style="margin:0">Other competencies</div>
+          {% if not competencies.must_haves %}<div class="comp-legend"><span class="tick"></span> Hiring bar</div>{% endif %}
+        </div>
         {% for b in competencies.others %}{{ bar(b) }}{% endfor %}
       </div>
       {% endif %}
+      {% endif %}
+    </div>
+
+    <!-- ── VERDICT BANNER — the AI recommendation, now below the visuals ─────── -->
+    <div class="card" style="padding:0">
+      <div class="verdict" style="background:{{ recommendation.bg }}">
+        <div class="verdict-rule" style="background:{{ recommendation.accent }}"></div>
+        <div class="verdict-body">
+          <div class="verdict-eyebrow" style="color:{{ recommendation.accent }}">AI recommendation</div>
+          <div class="verdict-label" style="color:{{ recommendation.ink }}">{{ recommendation.label }}</div>
+          {% if recommendation.headline %}<p class="verdict-head">{{ recommendation.headline }}</p>{% endif %}
+        </div>
+      </div>
     </div>
 
     <!-- ── QUICK SUMMARY ───────────────────────────────────────────────────── -->
@@ -274,8 +337,8 @@
     <div class="card">
       <div class="lbl">Why this verdict</div>
       <div class="why">
-        <div class="wcard" style="background:rgba(174,227,217,.20)">
-          <div class="wtitle" style="color:#0B3D34">{{ decision.why_positive.title }}</div>
+        <div class="wcard" style="background:rgba(44,132,114,.10)">
+          <div class="wtitle" style="color:#134E42">{{ decision.why_positive.title }}</div>
           <div class="wbody">{{ decision.why_positive.body }}</div>
         </div>
         <div class="wcard" style="background:rgba(232,147,12,.12)">
@@ -290,13 +353,13 @@
     <div class="card">
       <div class="twocol">
         <div>
-          <div class="colh" style="color:#0B3D34">Strengths {{ strengths|length }}</div>
+          <div class="colh" style="color:#134E42">Strengths {{ strengths|length }}</div>
           {% for s in strengths %}
           <div class="sc-item"><div class="sc-title">{{ s.title }}</div><div class="sc-detail">{{ s.detail }}</div></div>
           {% else %}<div class="sc-detail">None recorded.</div>{% endfor %}
         </div>
         <div>
-          <div class="colh" style="color:#8A2733">Concerns {{ concerns|length }}</div>
+          <div class="colh" style="color:#A8344A">Concerns {{ concerns|length }}</div>
           {% for c in concerns %}
           <div class="sc-item">
             <div class="sc-title">{{ c.title }}<span class="sev" style="background:{{ TONE_BG['caution'] if c.severity != 'deal_breaker' else TONE_BG['danger'] }};color:{{ TONE_INK['caution'] if c.severity != 'deal_breaker' else TONE_INK['danger'] }}">{{ c.severity|replace('_',' ') }}</span></div>
@@ -341,8 +404,8 @@
         {% if q.our_read %}<div class="qread"><b>Our read:</b> {{ q.our_read }}</div>{% endif %}
         {% if q.listen_for_hits or q.red_flags_tripped %}
         <div class="qpills">
-          {% for hit in q.listen_for_hits or [] %}<span class="pill" style="background:rgba(174,227,217,.20);color:#0B3D34">✓ {{ hit }}</span>{% endfor %}
-          {% for flag in q.red_flags_tripped or [] %}<span class="pill" style="background:rgba(229,85,107,.10);color:#8A2733">! {{ flag }}</span>{% endfor %}
+          {% for hit in q.listen_for_hits or [] %}<span class="pill" style="background:rgba(44,132,114,.12);color:#134E42">✓ {{ hit }}</span>{% endfor %}
+          {% for flag in q.red_flags_tripped or [] %}<span class="pill" style="background:rgba(229,85,107,.12);color:#A8344A">! {{ flag }}</span>{% endfor %}
         </div>
         {% endif %}
       </div>

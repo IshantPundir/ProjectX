@@ -39,18 +39,29 @@ _STAMP = {
     "reject": ("REJECTED", "#ff6b6b"),
 }
 
-# ── Verdict → AI-recommendation label + ink color (web verdictMeta / TONE_INK) ─
+# ── Verdict → AI-recommendation label + ink/accent/soft-bg (verdict banner) ────
+# ink = headline color, accent = left rule + label, bg = soft tinted panel.
 _RECOMMENDATION = {
-    "advance": ("Recommended", "#0B3D34"),
-    "borderline": ("Borderline", "#4A3E7A"),
-    "reject": ("Not Recommended", "#8A2733"),
+    "advance": ("Recommended", "#134E42", "#2C8472", "#EAF3F0"),
+    "borderline": ("Borderline", "#7A4A08", "#E8930C", "#FBF3E3"),
+    "reject": ("Not Recommended", "#A8344A", "#E5556B", "#FBEAEC"),
 }
 
-# ── Verdict → photo glow + ring (web ImmersiveHeader VERDICT_GLOW) ─────────────
+# ── Verdict → photo glow + ring ────────────────────────────────────────────────
+# Deliberately muted (alpha ~0.18 glow / ~0.30 ring) so the verdict colour reads
+# as a subtle frame tint, not a saturated halo. (Lower than the web's VERDICT_GLOW
+# by design — the print hero is flat/understated; the corner stamp carries verdict.)
 _GLOW = {
-    "advance": ("rgba(54,208,127,0.60)", "rgba(54,208,127,0.55)"),
-    "borderline": ("rgba(245,176,69,0.60)", "rgba(245,176,69,0.55)"),
-    "reject": ("rgba(239,68,68,0.58)", "rgba(239,68,68,0.52)"),
+    "advance": ("rgba(54,208,127,0.18)", "rgba(54,208,127,0.30)"),
+    "borderline": ("rgba(245,176,69,0.18)", "rgba(245,176,69,0.30)"),
+    "reject": ("rgba(239,68,68,0.18)", "rgba(239,68,68,0.28)"),
+}
+
+# ── Verdict → soft verdict-tinted glow over the deep navy-slate hero ───────────
+_HERO_TINT = {
+    "advance": "rgba(44,132,114,0.40)",
+    "borderline": "rgba(232,147,12,0.34)",
+    "reject": "rgba(229,85,107,0.34)",
 }
 
 # ── Score-band thresholds (single source of truth, mirrors web report-format) ──
@@ -59,14 +70,16 @@ ADVANCE_BAND = 6.5
 REJECT_PCT = REJECT_BAND / 10 * 100      # 40
 ADVANCE_PCT = ADVANCE_BAND / 10 * 100    # 65 (the hiring-bar marker)
 
-# ── Tone fills (saturated) — web TONE_FILL, used for gauge rings + bar fills ───
-_FILL_OK = "#AEE3D9"
+# ── Tone fills (saturated, brand) — gauge rings + bar fills ────────────────────
+# Pass uses the confident brand teal-green (#2C8472) — NOT the old washed-out
+# mint (#AEE3D9), which made strong scores read as weak/grey on print.
+_FILL_OK = "#2C8472"
 _FILL_CAUTION = "#E8930C"
 _FILL_DANGER = "#E5556B"
-_FILL_NEUTRAL = "#E7EBEE"
+_FILL_NEUTRAL = "#E8ECEF"
 
-# ── Tone inks — web TONE_INK, used for the ✓/⚠ glyphs ──────────────────────────
-_INK_OK = "#0B3D34"
+# ── Tone inks — used for the ✓/⚠ glyphs + verdict text ─────────────────────────
+_INK_OK = "#134E42"
 _INK_CAUTION = "#7A4A08"
 
 # Dimension key -> display name. "overall" is rendered as its own gauge first.
@@ -164,8 +177,13 @@ def _build_bar(sa, *, must_have: bool) -> dict:
     cleared = assessed and score >= ADVANCE_BAND
     fill_pct = max(0.0, min(100.0, (score / 10 * 100))) if assessed else 0.0
     hint = (getattr(sa, "level_basis", "") or "").strip() or None
+    short = (getattr(sa, "signal_label", None) or "").strip() or None
     return {
         "label": sa.signal,
+        # Two-line glance hierarchy: bold short `title` + light verbose `subtitle`.
+        # No generated label → title falls back to the full string, no subtitle.
+        "title": short or sa.signal,
+        "subtitle": sa.signal if short else None,
         "must_have": must_have,
         "assessed": assessed,
         "not_reached": not_reached,
@@ -205,13 +223,19 @@ def verdict_stamp(verdict: str) -> StampSpec:
 
 
 def recommendation_meta(verdict: str) -> dict:
-    label, ink = _RECOMMENDATION.get(verdict, ("Pending", "#5C6B73"))
-    return {"label": label, "ink": ink}
+    label, ink, accent, bg = _RECOMMENDATION.get(
+        verdict, ("Pending", "#5C6B73", "#8F9DA5", "#F4F6F8"))
+    return {"label": label, "ink": ink, "accent": accent, "bg": bg}
 
 
 def verdict_glow(verdict: str) -> dict:
     glow, ring = _GLOW.get(verdict, ("rgba(108,92,208,0.45)", "rgba(108,92,208,0.45)"))
     return {"glow": glow, "ring": ring}
+
+
+def hero_tint(verdict: str) -> str:
+    """Soft verdict-tinted glow painted over the deep navy-slate hero."""
+    return _HERO_TINT.get(verdict, "rgba(143,157,165,0.30)")
 
 
 def monogram_initials(name: str | None) -> str:
@@ -247,6 +271,8 @@ def build_pdf_context(
     generated_on: str,
     reference_photo_url: str | None,
     full_session_url: str,
+    reel_url: str | None = None,
+    has_reel: bool = False,
 ) -> dict:
     """Flatten a ReportRead + session metadata into the print template context."""
     scores_as_dict = {
@@ -279,13 +305,19 @@ def build_pdf_context(
         "stage_label": header_block["stage_label"],
         "generated_on": generated_on,
         "reference_photo_url": reference_photo_url,
+        # Two recording entry points (same capability token, deep-linked view).
+        # "Candidate highlight" (the reel) is the USP CTA — gated on has_reel so
+        # it only shows when a reel actually rendered (advance/borderline verdict).
         "full_session_url": full_session_url,
+        "reel_url": reel_url,
+        "has_reel": has_reel,
         "header": header_block,
         # ---- verdict ----
         "stamp": verdict_stamp(report.verdict),
         "recommendation": {**recommendation_meta(report.verdict),
                            "headline": report.decision.headline},
         "glow": verdict_glow(report.verdict),
+        "hero_tint": hero_tint(report.verdict),
         "verified_seal_path": VERIFIED_SEAL_PATH,
         # ---- gauges + competency bars (the glance band) ----
         "gauges": gauges,
@@ -293,6 +325,9 @@ def build_pdf_context(
         "overall_tier": overall_d.get("tier_label") or "",
         "competencies": build_competencies(report),
         "bands": {"reject_pct": REJECT_PCT, "advance_pct": ADVANCE_PCT},
+        # Band fill colors for the legend (single source: the same tone fills the
+        # gauges + bars use, so the legend always matches what's drawn).
+        "fills": {"ok": _FILL_OK, "caution": _FILL_CAUTION, "danger": _FILL_DANGER},
         # ---- prose sections ----
         "decision": report.decision.model_dump(),
         "quick_summary": report.quick_summary,

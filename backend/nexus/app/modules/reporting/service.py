@@ -44,6 +44,7 @@ from app.modules.reporting.scoring.judge import grade_communication
 from app.modules.reporting.scoring.narrative import write_narrative
 from app.modules.reporting.scoring.question_grade import grade_question, question_base_level
 from app.modules.reporting.scoring.rollup import pick_dedicated_question, roll_up_signal
+from app.modules.reporting.scoring.signal_labels import generate_signal_labels
 from app.modules.reporting.scoring.status import badge_for_question
 
 logger = structlog.get_logger()
@@ -235,11 +236,17 @@ async def build_report(*, evidence, questions, signal_metadata, correlation_id,
         s.value: _scorecard_evidence(s.value, grade_by_sig, notes_by_signal) for s in scored
     }
 
+    # Crisp glance titles for the verbose competency statements (best-effort LLM;
+    # {} on failure → consumers fall back to the full `signal` string).
+    signal_labels = await generate_signal_labels(
+        [s.value for s in scored], correlation_id=correlation_id)
+
     signal_assessments = []
     for s in scored:
         g = grade_by_sig.get(s.value)
         signal_assessments.append(SignalAssessmentOut(
-            signal=s.value, type=s.type, weight=s.weight, knockout=s.knockout, priority=s.priority,
+            signal=s.value, signal_label=signal_labels.get(s.value),
+            type=s.type, weight=s.weight, knockout=s.knockout, priority=s.priority,
             provenance=_provenance_str(s.value), level=s.level, score=s.score,
             evidence=evidence_by_sig[s.value],
             overridden=bool(g and g.overridden),

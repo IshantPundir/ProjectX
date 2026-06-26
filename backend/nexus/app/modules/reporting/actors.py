@@ -24,14 +24,38 @@ from app.config import settings
 from app.database import get_bypass_session
 from app.modules.interview_runtime.evidence import SessionEvidence
 from app.modules.notifications import render_template, send_email
+from app.modules.reel import get_reel
+from app.modules.reporting.assets import attach_report_header
 from app.modules.reporting.models import ReportShare, SessionReport
 from app.modules.reporting.pdf import build_pdf_context, render_report_pdf
+from app.modules.reporting.scoring.signal_labels import generate_signal_labels
 from app.modules.reporting.serialization import report_read_from_row
 from app.modules.reporting.service import build_report, persist_report
 from app.modules.reporting.share_tokens import generate_share_token, hash_share_token
 from app.storage import get_object_storage
 
 logger = structlog.get_logger("reporting.actor")
+
+
+async def _ensure_signal_labels(report, *, correlation_id: str) -> None:
+    """Backfill short competency titles on a report that lacks them.
+
+    Reports scored before `signal_label` existed have None on every assessment, so
+    a shared PDF would fall back to the verbose names. Here we generate the missing
+    titles at share time (best-effort, one model call) and patch them onto the
+    in-memory ReportRead. We NEVER re-score — finalized scores/verdicts are
+    untouched. No-op when every assessment already has a label (new reports).
+    """
+    missing = [sa.signal for sa in report.signal_assessments
+               if not (sa.signal_label or "").strip()]
+    if not missing:
+        return
+    labels = await generate_signal_labels(missing, correlation_id=correlation_id)
+    if not labels:
+        return
+    for sa in report.signal_assessments:
+        if not (sa.signal_label or "").strip():
+            sa.signal_label = labels.get(sa.signal)
 
 
 # ---------------------------------------------------------------------------
@@ -461,7 +485,33 @@ async def _share_report_pdf_async(
             # falls back to frontend_base_url (the recruiter app). See
             # docs/superpowers/specs/2026-06-18-lan-recordings-share-link-design.md
             share_base = settings.recording_share_base_url or settings.frontend_base_url
-            full_session_url = f"{share_base}/recordings/{share_token}"
+            # Two deep-linked entry points off the same capability token. The
+            # public /recordings page reads ?view= to open straight to the reel
+            # ("Candidate highlight" — the USP) or the full session recording.
+            full_session_url = f"{share_base}/recordings/{share_token}?view=full"
+            reel_url = f"{share_base}/recordings/{share_token}?view=reel"
+
+            # The highlight CTA only shows when a reel actually rendered (gated to
+            # advance/borderline verdicts). Best-effort — never block the PDF on it.
+            has_reel = False
+            with contextlib.suppress(Exception):
+                reel_row = await get_reel(
+                    db, session_id=share.session_id, tenant_id=tenant_id)
+                has_reel = reel_row is not None and reel_row.status == "ready"
+
+            # Populate the full report header (email / title / location / company /
+            # job location / work arrangement / session date / duration / skills)
+            # from the SAME shared helper the web read-path uses — web/PDF parity,
+            # single source of truth. Best-effort; leaves header None on miss.
+            await attach_report_header(
+                db=db, report=report,
+                session_id=share.session_id, tenant_id=tenant_id)
+
+            # Backfill short competency titles for legacy reports (scored before
+            # signal_label). New reports already carry them, so this is a no-op
+            # there; for old ones it generates them for THIS render only — never
+            # re-scoring, so finalized scores stay frozen.
+            await _ensure_signal_labels(report, correlation_id=correlation_id)
 
             share.status = "rendering"
             await db.flush()
@@ -474,6 +524,8 @@ async def _share_report_pdf_async(
                 generated_on=generated_on,
                 reference_photo_url=reference_photo_url,
                 full_session_url=full_session_url,
+                reel_url=reel_url,
+                has_reel=has_reel,
             )
             pdf_bytes = await render_report_pdf(ctx)
 
