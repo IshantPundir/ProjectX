@@ -116,7 +116,12 @@ async def attach_report_header(
                 text("""
                     SELECT c.name AS candidate_name,
                            c.email AS candidate_email,
+                           c.current_title AS candidate_title,
+                           c.location AS candidate_location,
+                           cl.name AS company_name,
                            j.title AS job_title,
+                           j.location AS job_location,
+                           j.work_arrangement AS work_arrangement,
                            st.name AS stage_name,
                            s.started_at,
                            s.recording_duration_seconds
@@ -125,6 +130,7 @@ async def attach_report_header(
                       LEFT JOIN candidates c ON c.id = a.candidate_id
                       LEFT JOIN job_postings j ON j.id = a.job_posting_id
                       LEFT JOIN job_pipeline_stages st ON st.id = s.stage_id
+                      LEFT JOIN clients cl ON cl.id = s.tenant_id
                      WHERE s.id = :sid AND s.tenant_id = :tid
                 """),
                 {"sid": str(session_id), "tid": str(tenant_id)},
@@ -137,7 +143,12 @@ async def attach_report_header(
     report.header = ReportHeader(
         candidate_name=row["candidate_name"] or "Candidate",
         candidate_email=row["candidate_email"],
+        candidate_title=row["candidate_title"],
+        candidate_location=row["candidate_location"],
+        company_name=row["company_name"],
         job_title=row["job_title"] or "",
+        job_location=row["job_location"],
+        work_arrangement=row["work_arrangement"],
         stage_label=row["stage_name"] or "",
         session_started_at=(
             row["started_at"].isoformat() if row["started_at"] else None

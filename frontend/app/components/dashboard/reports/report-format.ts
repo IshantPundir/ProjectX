@@ -66,12 +66,25 @@ export function verdictMeta(v: Verdict): VerdictMeta {
   return VERDICT_META[v]
 }
 
-/** Tier tone from a 0–10 score, aligned to backend verdict thresholds
- *  (ADVANCE_THRESHOLD 6.5 / REJECT_THRESHOLD 4.0 on a 0–10 scale). */
+/** Verdict band thresholds on the report's native 0–10 scale (single source of
+ *  truth — backend ADVANCE_THRESHOLD 6.5 / REJECT_THRESHOLD 4.0). */
+export const REJECT_BAND = 4.0
+export const ADVANCE_BAND = 6.5
+export const SCORE_MAX = 10
+
+/** Band boundary positions as a percentage (0–100) of a 0–10 track. */
+export function bandZones(): { rejectPct: number; advancePct: number } {
+  return {
+    rejectPct: (REJECT_BAND / SCORE_MAX) * 100,
+    advancePct: (ADVANCE_BAND / SCORE_MAX) * 100,
+  }
+}
+
+/** Tier tone from a 0–10 score, aligned to the exported verdict bands. */
 export function scoreBandTone(score: number | null): Tone {
   if (score === null || score === undefined) return 'neutral'
-  if (score >= 6.5) return 'ok'
-  if (score >= 4.0) return 'caution'
+  if (score >= ADVANCE_BAND) return 'ok'
+  if (score >= REJECT_BAND) return 'caution'
   return 'danger'
 }
 

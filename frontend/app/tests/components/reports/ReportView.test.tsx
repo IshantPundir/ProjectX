@@ -4,8 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReportView } from '@/components/dashboard/reports/ReportView'
 import { makeReport } from './_fixture'
 
-// ReportView embeds <ProctoringIntegrityPanel> and <AtAGlanceBand> which call
-// query hooks. Mock them so this stays a focused layout test (no network required).
+// ReportView embeds <GlanceBand> + <ProctoringIntegrityPanel> which call query
+// hooks. Mock them so this stays a focused layout test (no network required).
 vi.mock('@/lib/hooks/use-session-proctoring', () => ({
   useSessionProctoring: () => ({ data: undefined, isLoading: true }),
 }))
@@ -34,10 +34,13 @@ function renderView(report = makeReport()) {
 }
 
 describe('ReportView — Layout II', () => {
-  it('renders the at-a-glance band, left-column content, and right-rail panels', () => {
+  it('renders the glance band, left-column content, and right-rail panels', () => {
     renderView()
-    // At-a-glance band: signals top strip (multiple "Strengths" elements expected)
-    expect(screen.getAllByText(/Strengths/i).length).toBeGreaterThan(0)
+    // Glance band
+    expect(screen.getByRole('region', { name: /Candidate at a glance/ })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /Overall score 4.1 out of 10/ })).toBeInTheDocument()
+    // Dimension gauges (Technical assessed in fixture; Behavioral is null → absent)
+    expect(screen.getByRole('img', { name: /Technical score 4.1 out of 10/ })).toBeInTheDocument()
     // Left column
     expect(screen.getByText('Why this verdict')).toBeInTheDocument()
     expect(screen.getByText('Quick summary')).toBeInTheDocument()
@@ -77,8 +80,8 @@ describe('ReportView — Layout II', () => {
     expect(screen.getByText('Quick summary')).toBeInTheDocument()
   })
 
-  it('scores in ScoresCard are rendered without double-division (0-10 native)', () => {
-    // Fixture overall.score=4.1 (0-10 native). ScoreGauge uses formatTen (no ÷10),
+  it('scores render without double-division (0-10 native)', () => {
+    // Fixture overall.score=4.1 (0-10 native). ScoreBar uses formatTen (no ÷10),
     // so it should display "4.1" — not "0.4" (double-divided).
     renderView()
     expect(screen.getAllByText('4.1').length).toBeGreaterThan(0)

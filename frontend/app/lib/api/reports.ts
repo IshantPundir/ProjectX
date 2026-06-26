@@ -15,7 +15,12 @@ export type HumanDecisionValue = 'advance' | 'reject' | 'hold'
 export interface ReportHeader {
   candidate_name: string
   candidate_email: string | null
+  candidate_title?: string | null
+  candidate_location?: string | null
+  company_name?: string | null
   job_title: string
+  job_location?: string | null
+  work_arrangement?: string | null
   stage_label: string
   session_started_at: string | null
   duration_seconds: number | null

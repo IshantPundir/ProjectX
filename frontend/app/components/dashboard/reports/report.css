@@ -127,16 +127,54 @@
   pointer-events: none;
 }
 
+/* photo wrapper — hosts the verdict-colored gradient glow behind the photo */
+.rh-photo-wrap {
+  position: relative;
+  flex: none;
+}
+.rh-photo-wrap::before {
+  content: '';
+  position: absolute;
+  inset: -18px;
+  border-radius: 32px;
+  background: radial-gradient(circle at 50% 45%, var(--rh-glow, transparent), transparent 72%);
+  filter: blur(14px);
+  z-index: 0;
+  pointer-events: none;
+  animation: rh-glow-pulse 3.6s var(--px-ease, ease-in-out) infinite;
+}
+@keyframes rh-glow-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.97); }
+  50%      { opacity: 1;    transform: scale(1.03); }
+}
+
 /* photo / monogram */
 .rh-photo {
+  position: relative;
+  z-index: 1;
   height: 164px;
   width: 164px;
   flex: none;
   border-radius: 20px;
   border: 3px solid rgba(255,255,255,.22);
-  box-shadow: 0 0 0 6px rgba(111,104,240,.18), 0 14px 34px rgba(0,0,0,.4);
+  box-shadow: 0 0 0 5px var(--rh-ring, rgba(111,104,240,.18)),
+              0 0 30px 2px var(--rh-glow, transparent),
+              0 14px 34px rgba(0,0,0,.4);
   object-fit: cover;
 }
+/* verified seal badge — top-right corner of the photo */
+.rh-verified {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  z-index: 2;
+  display: flex;
+  line-height: 0;
+  filter:
+    drop-shadow(0 1px 0 rgba(255, 255, 255, .35))
+    drop-shadow(0 4px 7px rgba(8, 47, 110, .55));
+}
+
 .rh-monogram {
   background: linear-gradient(135deg,#6f68f0,#4f46e5);
   display: flex;
@@ -207,6 +245,22 @@
   background: rgba(255,255,255,.13);
 }
 
+/* --- ScoreBar (threshold-banded horizontal bar) --- */
+.px-band-reject     { background: color-mix(in srgb, var(--px-danger) 12%, transparent); }
+.px-band-borderline { background: color-mix(in srgb, var(--px-caution) 12%, transparent); }
+.px-band-advance    { background: color-mix(in srgb, var(--px-ok) 12%, transparent); }
+.px-bar-marker {
+  width: 2px;
+  background: var(--px-fg-3);
+  opacity: 0.55;
+  transform: translateX(-1px);
+}
+@keyframes px-bar-grow { from { width: 0; } to { width: var(--px-bar-fill); } }
+.px-scorebar-fill {
+  width: var(--px-bar-fill);
+  animation: px-bar-grow 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .px-gauge-ring { animation: none; stroke-dashoffset: var(--px-gauge-final-offset); }
   .px-reveal { animation: none; opacity: 1; transform: none; }
@@ -218,4 +272,6 @@
   .report-playposter:hover img, .report-playposter:hover .report-playbtn { transform: none; }
   .px-radar, .px-radar:hover { transform: none; filter: none; }
   .px-radar-data, .px-radar:hover .px-radar-data { fill-opacity: unset; }
+  .px-scorebar-fill { animation: none; width: var(--px-bar-fill); }
+  .rh-photo-wrap::before { animation: none; opacity: 0.7; transform: none; }
 }

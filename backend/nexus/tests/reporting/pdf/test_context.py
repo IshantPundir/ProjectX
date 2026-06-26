@@ -1,20 +1,39 @@
 from app.modules.reporting.pdf.context import (
-    monogram_initials,
-    verdict_stamp,
     assessed_dimensions,
-    derive_strengths,
-    derive_watchouts,
+    build_competencies,
+    build_pdf_context,
+    gauge_color,
+    monogram_initials,
+    recommendation_meta,
+    verdict_glow,
+    verdict_stamp,
 )
-from app.modules.reporting.schemas import SignalAssessmentOut
+from app.modules.reporting.pdf.render import build_pdf_html
+from app.modules.reporting.schemas import ReportRead
+
+
+# ---------------------------------------------------------------------------
+# Verdict chrome
+# ---------------------------------------------------------------------------
 
 
 def test_verdict_stamp_mapping():
     assert verdict_stamp("advance").text == "APPROVED"
-    assert verdict_stamp("advance").color == "#138a47"
+    assert verdict_stamp("advance").color == "#36d07f"
     assert verdict_stamp("borderline").text == "BORDERLINE"
-    assert verdict_stamp("borderline").color == "#c98a16"
     assert verdict_stamp("reject").text == "REJECTED"
-    assert verdict_stamp("reject").color == "#d23b34"
+    assert verdict_stamp("reject").color == "#ff6b6b"
+
+
+def test_recommendation_meta():
+    assert recommendation_meta("advance") == {"label": "Recommended", "ink": "#0B3D34"}
+    assert recommendation_meta("borderline") == {"label": "Borderline", "ink": "#4A3E7A"}
+    assert recommendation_meta("reject") == {"label": "Not Recommended", "ink": "#8A2733"}
+
+
+def test_verdict_glow():
+    assert verdict_glow("advance")["glow"].startswith("rgba(54,208,127")
+    assert verdict_glow("reject")["glow"].startswith("rgba(239,68,68")
 
 
 def test_monogram_initials():
@@ -25,38 +44,39 @@ def test_monogram_initials():
     assert monogram_initials(None) == "?"
 
 
-def test_assessed_dimensions_drops_unassessed():
+# ---------------------------------------------------------------------------
+# gauge_color — web verdict bands (6.5 / 4.0)
+# ---------------------------------------------------------------------------
+
+
+def test_gauge_color_bands():
+    assert gauge_color(8.0) == "#AEE3D9"   # >= 6.5 ok
+    assert gauge_color(6.5) == "#AEE3D9"
+    assert gauge_color(5.0) == "#E8930C"   # >= 4.0 caution
+    assert gauge_color(3.9) == "#E5556B"   # danger
+    assert gauge_color(None) == "#E7EBEE"
+
+
+def test_assessed_dimensions_drops_unassessed_and_colors():
     scores = {
-        "overall": {"score": 90},
-        "technical": {"score": 89, "tier_label": "Strong"},
-        "behavioral": {"score": None, "coverage": 0.0},
-        "communication": {"score": 70, "tier_label": "Strong"},
+        "overall": {"score": 9.0},
+        "technical": {"score": 8.9},
+        "behavioral": {"score": None},
+        "communication": {"score": 5.0},
     }
     dims = assessed_dimensions(scores)
-    names = [d["name"] for d in dims]
-    assert names == ["Technical", "Communication"]  # overall + behavioral excluded
-    assert dims[0]["score"] == 89
-    assert dims[0]["tier"] == "Strong"               # tier carried for the gauge label
+    assert [d["name"] for d in dims] == ["Technical", "Communication"]   # overall + behavioral excluded
+    assert dims[0]["color"] == "#AEE3D9"   # 8.9 → ok
+    assert dims[1]["color"] == "#E8930C"   # 5.0 → caution
 
 
-def test_assessed_dimensions_color_bands():
-    scores = {
-        "technical": {"score": 8.9},     # >=8.0 → green
-        "communication": {"score": 7.0}, # 6.0..7.9 → amber
-        "behavioral": {"score": 1.0},    # <6.0 → red
-    }
-    by_name = {d["name"]: d["color"] for d in assessed_dimensions(scores)}
-    assert by_name["Technical"] == "#137a45"
-    assert by_name["Communication"] == "#b4791a"
-    assert by_name["Behavioral"] == "#d23b34"
-
-
-from app.modules.reporting.pdf.context import build_pdf_context
-from app.modules.reporting.schemas import ReportRead
-from app.modules.reporting.pdf.render import build_pdf_html
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 
 def _min_report() -> ReportRead:
+    """Minimal report — no header, no signal_assessments (legacy/empty path)."""
     return ReportRead.model_validate({
         "verdict": "advance", "verdict_reason": "ok",
         "overall_score": 90, "overall_coverage": 1.0, "overall_confidence": "high",
@@ -81,195 +101,132 @@ def _min_report() -> ReportRead:
     })
 
 
-def test_build_pdf_context_shape():
-    ctx = build_pdf_context(
-        _min_report(), candidate_name="Ishant Pundir", job_title="Engineer",
+def _report_full() -> ReportRead:
+    """Report with header + must-have / other signal assessments."""
+    return ReportRead.model_validate({
+        "verdict": "advance", "verdict_reason": "ok",
+        "overall_score": 8.5, "overall_coverage": 1.0, "overall_confidence": "high",
+        "decision": {"headline": "Recommend advance.", "why_positive": {"title": "p", "body": "pb"},
+                     "why_negative": {"title": "n", "body": "nb"}},
+        "scores": {
+            "overall": {"score": 8.5, "tier_label": "Strong", "tone": "ok", "confidence": "high", "coverage": 1.0},
+            "technical": {"score": 8.0, "tier_label": "Strong", "tone": "ok", "confidence": "high", "coverage": 1.0},
+            "communication": {"score": 7.5, "tier_label": "Solid", "tone": "ok", "confidence": "medium", "coverage": 1.0},
+        },
+        "quick_summary": "Strong technical candidate.",
+        "strengths": [{"title": "Initiative", "detail": "Led the migration"}],
+        "concerns": [{"title": "Gaps", "detail": "Limited testing", "severity": "deal_breaker"}],
+        "questions": [{"seq": 1, "question_id": "q1", "title": "t",
+                       "status_badge": "passed", "status_tone": "ok",
+                       "question_text": "Describe a distributed system you built.",
+                       "candidate_quote": "I built X.", "our_read": "Good depth.",
+                       "difficulty": "hard", "score": 8,
+                       "listen_for_hits": ["scaling"], "red_flags_tripped": []}],
+        "methodology": {"note": "", "charity_flags": []},
+        "signal_assessments": [
+            {"signal": "System Design", "score": 9.0, "weight": 3, "provenance": "asked_directly",
+             "level": "strong", "type": "skill", "knockout": True, "priority": "required",
+             "level_basis": "dedicated: strong"},
+            {"signal": "Problem Solving", "score": 5.5, "weight": 2, "provenance": "probed_absent",
+             "level": "thin", "type": "skill", "knockout": False, "priority": "nice_to_have"},
+            {"signal": "Leadership", "score": None, "weight": 1, "provenance": "not_reached",
+             "level": "not_reached", "type": "behavioral", "knockout": False, "priority": "nice_to_have"},
+        ],
+        "header": {
+            "candidate_name": "Riya Sharma", "candidate_email": "riya@example.com",
+            "candidate_title": "Senior Engineer", "candidate_location": "Pune, India",
+            "company_name": "Acme Corp", "job_title": "Senior Backend Engineer",
+            "job_location": "Bangalore", "work_arrangement": "Remote",
+            "stage_label": "AI Screening", "session_started_at": "2026-06-15T10:30:00Z",
+            "duration_seconds": 1845, "skills": ["Python", "Kafka"],
+        },
+    })
+
+
+def _ctx(report):
+    return build_pdf_context(
+        report, candidate_name="Ishant Pundir", job_title="Engineer",
         stage_label="New Stage", generated_on="Jun 14, 2026",
-        reference_photo_url=None, full_session_url="https://x/coming-soon",
+        reference_photo_url=None, full_session_url="https://x/recordings/tok",
     )
+
+
+# ---------------------------------------------------------------------------
+# build_pdf_context shape
+# ---------------------------------------------------------------------------
+
+
+def test_build_pdf_context_shape():
+    ctx = _ctx(_min_report())
     assert ctx["candidate_name"] == "Ishant Pundir"
     assert ctx["monogram"] == "IP"
     assert ctx["stamp"].text == "APPROVED"
-    assert ctx["overall_score"] == 90
-    assert [d["name"] for d in ctx["dimensions"]] == ["Technical", "Communication"]
-    assert ctx["reference_photo_url"] is None
-    assert len(ctx["questions"]) == 1
-    assert ctx["overall_color"] == "#137a45"   # 90 → green band, drives the gauge arc
-    # Dead fields removed from the context (template never consumed them).
-    assert "overall_confidence" not in ctx
-    assert "overall_coverage_pct" not in ctx
+    assert ctx["recommendation"]["label"] == "Recommended"
+    assert [g["name"] for g in ctx["gauges"]] == ["Overall", "Technical", "Communication"]
+    assert ctx["gauges"][0]["is_overall"] is True
+    assert "glow" in ctx and "verified_seal_path" in ctx
+    assert ctx["competencies"] == {"must_haves": [], "others": []}   # no signals
+    # Dead radar/pill fields are gone.
+    assert "radar" not in ctx and "radar_geom" not in ctx
+    assert "strengths_pills" not in ctx and "dimensions" not in ctx
 
 
 # ---------------------------------------------------------------------------
-# derive_strengths / derive_watchouts unit tests
+# Competency bars
 # ---------------------------------------------------------------------------
 
-def _sa(
-    signal: str,
-    level: str,
-    weight: int,
-    *,
-    knockout: bool = False,
-    priority: str = "medium",
-) -> SignalAssessmentOut:
-    return SignalAssessmentOut(
-        signal=signal,
-        type="skill",
-        weight=weight,
-        knockout=knockout,
-        priority=priority,
-        provenance="asked_directly",
-        level=level,  # type: ignore[arg-type]
-    )
+
+def test_build_competencies_split_sort_and_fields():
+    comp = build_competencies(_report_full())
+    assert [b["label"] for b in comp["must_haves"]] == ["System Design"]
+    assert [b["label"] for b in comp["others"]] == ["Problem Solving", "Leadership"]
+
+    must = comp["must_haves"][0]
+    assert must["cleared"] is True and must["glyph"] == "✓" and must["value"] == "9.0"
+    assert must["fill_color"] == "#AEE3D9" and must["must_have"] is True
+    assert must["hint"] == "dedicated: strong"
+
+    sol = comp["others"][0]
+    assert sol["cleared"] is False and sol["glyph"] == "⚠" and sol["fill_color"] == "#E8930C"
+
+    lead = comp["others"][1]
+    assert lead["not_reached"] is True and lead["assessed"] is False and lead["value"] is None
 
 
-class TestDeriveStrengths:
-    def test_includes_solid_and_strong(self):
-        assessments = [
-            _sa("Alpha", "strong", weight=3),
-            _sa("Beta", "solid", weight=2),
-            _sa("Gamma", "thin", weight=1),
-        ]
-        result = derive_strengths(assessments)
-        assert result == ["Alpha", "Beta"]
-
-    def test_sorted_by_weight_desc(self):
-        assessments = [
-            _sa("Low", "solid", weight=1),
-            _sa("High", "strong", weight=5),
-            _sa("Mid", "solid", weight=3),
-        ]
-        result = derive_strengths(assessments)
-        assert result == ["High", "Mid", "Low"]
-
-    def test_cap_respected(self):
-        assessments = [_sa(f"S{i}", "strong", weight=i) for i in range(10, 0, -1)]
-        result = derive_strengths(assessments, cap=3)
-        assert len(result) == 3
-        assert result[0] == "S10"  # highest weight first
-
-    def test_empty_assessments(self):
-        assert derive_strengths([]) == []
-
-    def test_no_solid_or_strong(self):
-        assessments = [
-            _sa("A", "thin", weight=5),
-            _sa("B", "absent", weight=3),
-            _sa("C", "not_reached", weight=2),
-        ]
-        assert derive_strengths(assessments) == []
-
-    def test_thin_absent_not_included(self):
-        assessments = [
-            _sa("Solid One", "solid", weight=2),
-            _sa("Thin One", "thin", weight=10),
-        ]
-        result = derive_strengths(assessments)
-        assert result == ["Solid One"]
-        assert "Thin One" not in result
+# ---------------------------------------------------------------------------
+# Header (new fields) + question stars
+# ---------------------------------------------------------------------------
 
 
-class TestDeriveWatchouts:
-    def test_knockout_with_negative_level_included(self):
-        assessments = [
-            _sa("Critical Skill", "thin", weight=5, knockout=True),
-        ]
-        result = derive_watchouts(assessments)
-        assert result == ["Critical Skill"]
-
-    def test_required_priority_with_negative_level_included(self):
-        assessments = [
-            _sa("Required Skill", "absent", weight=4, priority="required"),
-        ]
-        result = derive_watchouts(assessments)
-        assert result == ["Required Skill"]
-
-    def test_not_reached_required_is_watchout(self):
-        assessments = [
-            _sa("Untested Required", "not_reached", weight=3, priority="required"),
-        ]
-        result = derive_watchouts(assessments)
-        assert result == ["Untested Required"]
-
-    def test_solid_strong_required_not_a_watchout(self):
-        """A required/knockout signal that was solid/strong is NOT a watch-out."""
-        assessments = [
-            _sa("Good Required", "solid", weight=5, knockout=True, priority="required"),
-            _sa("Good KO", "strong", weight=4, knockout=True),
-        ]
-        result = derive_watchouts(assessments)
-        assert result == []
-
-    def test_thin_non_required_non_knockout_not_a_watchout(self):
-        """A thin signal that is NOT required/knockout does not appear as a watch-out."""
-        assessments = [
-            _sa("Optional Thin", "thin", weight=5, knockout=False, priority="medium"),
-        ]
-        result = derive_watchouts(assessments)
-        assert result == []
-
-    def test_sorted_by_weight_desc_and_cap(self):
-        assessments = [
-            _sa("Low KO", "absent", weight=1, knockout=True),
-            _sa("High KO", "thin", weight=10, knockout=True),
-            _sa("Mid Req", "not_reached", weight=5, priority="required"),
-            _sa("Extra", "absent", weight=3, knockout=True),
-        ]
-        result = derive_watchouts(assessments, cap=3)
-        assert result == ["High KO", "Mid Req", "Extra"]
-
-    def test_empty_assessments(self):
-        assert derive_watchouts([]) == []
+def test_header_new_fields_and_fallback():
+    h = _ctx(_report_full())["header"]
+    assert h["company_name"] == "Acme Corp"
+    assert h["candidate_title"] == "Senior Engineer"
+    assert h["candidate_location"] == "Pune, India"
+    assert h["job_location"] == "Bangalore" and h["work_arrangement"] == "Remote"
+    assert h["session_date"] == "Jun 15, 2026" and h["duration"] == "30:45"
+    # legacy fallback when no header
+    hf = _ctx(_min_report())["header"]
+    assert hf["candidate_name"] == "Ishant Pundir" and hf["company_name"] is None
 
 
-class TestPillsInHtml:
-    def test_strength_pill_name_appears_in_rendered_html(self):
-        """A derived strength signal name must appear in the rendered PDF HTML."""
-        report_data = {
-            "verdict": "advance", "verdict_reason": "ok",
-            "overall_score": 8.5, "overall_coverage": 1.0, "overall_confidence": "high",
-            "decision": {"headline": "h", "why_positive": {"title": "p", "body": "pb"},
-                         "why_negative": {"title": "n", "body": "nb"}},
-            "scores": {
-                "overall": {"score": 8.5, "tier_label": "Strong", "tone": "ok",
-                            "confidence": "high", "coverage": 1.0},
-            },
-            "quick_summary": "Strong candidate.",
-            "strengths": [], "concerns": [],
-            "questions": [],
-            "methodology": {"note": "", "charity_flags": []},
-            "signal_assessments": [
-                {
-                    "signal": "PythonExpertise", "score": 9.0, "weight": 5,
-                    "provenance": "asked_directly", "level": "strong",
-                    "type": "skill", "knockout": False, "priority": "required",
-                },
-                {
-                    "signal": "MissingRequired", "score": None, "weight": 4,
-                    "provenance": "not_reached", "level": "not_reached",
-                    "type": "skill", "knockout": False, "priority": "required",
-                },
-            ],
-        }
-        report = ReportRead.model_validate(report_data)
-        ctx = build_pdf_context(
-            report,
-            candidate_name="Test User",
-            job_title="Engineer",
-            stage_label="AI Screening",
-            generated_on="Jun 19, 2026",
-            reference_photo_url=None,
-            full_session_url="https://x",
-        )
-        # strength pill: PythonExpertise (solid/strong)
-        assert "PythonExpertise" in ctx["strengths_pills"]
-        # watchout pill: MissingRequired (not_reached + required)
-        assert "MissingRequired" in ctx["watchout_pills"]
+def test_questions_carry_stars():
+    q0 = _ctx(_report_full())["questions"][0]
+    assert q0["score"] == 8
+    assert q0["stars"] == [1.0, 1.0, 1.0, 1.0, 0.0]   # 8 → 4.0 stars
 
-        html = build_pdf_html(ctx)
-        # Both names must appear as pills in the rendered HTML
-        assert "PythonExpertise" in html
-        assert "MissingRequired" in html
-        # The label text for the strip must also be present
-        assert "Top strengths" in html
-        assert "Watch-outs" in html
+
+# ---------------------------------------------------------------------------
+# Rendered HTML carries the new structure
+# ---------------------------------------------------------------------------
+
+
+def test_rendered_html_has_glance_and_competencies():
+    html = build_pdf_html(_ctx(_report_full()))
+    for token in ("AI recommendation", "Must-have competencies", "Other competencies",
+                  "System Design", "Quick summary", "Why this verdict",
+                  "Question by question", "Acme Corp", "Senior Engineer",
+                  "riya@example.com", "bar-track", "photo-glow", "vbadge"):
+        assert token in html, f"missing: {token}"
+    # radar artifacts gone
+    assert "radar" not in html

@@ -1,7 +1,69 @@
+import { type CSSProperties, useId } from 'react'
 import { Play } from 'lucide-react'
 import './report.css'
 import type { ReportHeader, Verdict } from '@/lib/api/reports'
 import { VerdictStamp } from './VerdictStamp'
+
+// ─── Verified seal badge ───────────────────────────────────────────────────────
+// Scalloped blue seal + white check, with a glossy 3D look (top-lit gradient,
+// highlight sheen, embossed check). Outer lift comes from a CSS drop-shadow.
+function VerifiedBadge({ size = 36 }: { size?: number }) {
+  const uid = useId().replace(/[:]/g, '')
+  const grad = `vb-grad-${uid}`
+  const gloss = `vb-gloss-${uid}`
+
+  // 12-point star whose spikes get rounded into scallops by a thick round stroke.
+  const cx = 50, cy = 50, spikes = 12, outer = 31, inner = 25
+  const step = Math.PI / spikes
+  let rot = -Math.PI / 2
+  let d = ''
+  for (let i = 0; i < spikes * 2; i++) {
+    const r = i % 2 === 0 ? outer : inner
+    const x = cx + Math.cos(rot) * r
+    const y = cy + Math.sin(rot) * r
+    d += `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`
+    rot += step
+  }
+  d += 'Z'
+
+  const check = 'M36 50.5 L46 60.5 L67 38.5'
+
+  return (
+    <svg viewBox="0 0 100 100" width={size} height={size} role="img" aria-label="Identity verified">
+      <defs>
+        <linearGradient id={grad} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#5cb3ff" />
+          <stop offset="52%" stopColor="#2b8ff0" />
+          <stop offset="100%" stopColor="#1466d6" />
+        </linearGradient>
+        <radialGradient id={gloss} cx="50%" cy="26%" r="62%">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.55" />
+          <stop offset="60%" stopColor="#ffffff" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+
+      {/* seal body — fill + thick round stroke rounds the spikes into scallops */}
+      <path d={d} fill={`url(#${grad})`} stroke={`url(#${grad})`} strokeWidth="17"
+        strokeLinejoin="round" strokeLinecap="round" />
+      {/* top glossy sheen for convex depth */}
+      <path d={d} fill={`url(#${gloss})`} stroke={`url(#${gloss})`} strokeWidth="17"
+        strokeLinejoin="round" strokeLinecap="round" />
+      {/* embossed check: darker drop beneath, white on top */}
+      <path d={check} fill="none" stroke="#0c4ea8" strokeOpacity="0.5" strokeWidth="9"
+        strokeLinecap="round" strokeLinejoin="round" transform="translate(0,1.6)" />
+      <path d={check} fill="none" stroke="#ffffff" strokeWidth="9"
+        strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+// ─── Verdict-based glow around the candidate photo ─────────────────────────────
+// glow = soft radial halo behind the photo; ring = the photo's edge ring.
+const VERDICT_GLOW: Record<Verdict, { glow: string; ring: string }> = {
+  advance: { glow: 'rgba(54,208,127,0.60)', ring: 'rgba(54,208,127,0.55)' },
+  borderline: { glow: 'rgba(245,176,69,0.60)', ring: 'rgba(245,176,69,0.55)' },
+  reject: { glow: 'rgba(239,68,68,0.58)', ring: 'rgba(239,68,68,0.52)' },
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -76,18 +138,31 @@ export function ImmersiveHeader({
 
         {/* ── Main row: photo + identity + stamp ── */}
         <div className="relative flex items-center gap-[26px]">
-          {/* Photo / monogram */}
-          {header.reference_photo_url ? (
-            <img
-              src={header.reference_photo_url}
-              alt={header.candidate_name}
-              className="rh-photo"
-            />
-          ) : (
-            <div className="rh-photo rh-monogram" aria-label={`${header.candidate_name} initials`}>
-              {initials(header.candidate_name)}
-            </div>
-          )}
+          {/* Photo / monogram — wrapped with a verdict-colored gradient glow */}
+          <div
+            className="rh-photo-wrap"
+            style={{
+              '--rh-glow': VERDICT_GLOW[verdict].glow,
+              '--rh-ring': VERDICT_GLOW[verdict].ring,
+            } as CSSProperties}
+          >
+            {header.reference_photo_url ? (
+              <img
+                src={header.reference_photo_url}
+                alt={header.candidate_name}
+                className="rh-photo"
+              />
+            ) : (
+              <div className="rh-photo rh-monogram" aria-label={`${header.candidate_name} initials`}>
+                {initials(header.candidate_name)}
+              </div>
+            )}
+
+            {/* Verified badge — identity confirmed (OTP + consent) for this session */}
+            <span className="rh-verified" title="Identity verified">
+              <VerifiedBadge size={38} />
+            </span>
+          </div>
 
           {/* Identity block */}
           <div className="flex-1">
@@ -95,16 +170,35 @@ export function ImmersiveHeader({
               {header.candidate_name}
             </p>
 
-            {header.candidate_email && (
-              <p className="mb-[11px] text-[13px] text-[#c7c8e4]">{header.candidate_email}</p>
+            {(header.candidate_email || header.candidate_title || header.candidate_location) && (
+              <div className="mb-[11px] space-y-[3px]">
+                {header.candidate_email && (
+                  <p className="text-[13px] text-[#c7c8e4]">{header.candidate_email}</p>
+                )}
+                {(header.candidate_title || header.candidate_location) && (
+                  <p className="text-[12.5px] text-[#b9bae0]">
+                    {[
+                      header.candidate_title,
+                      header.candidate_location && `📍 ${header.candidate_location}`,
+                    ].filter(Boolean).join('   ·   ')}
+                  </p>
+                )}
+              </div>
             )}
 
             {/* Inline info row */}
             <div className="flex flex-wrap gap-[22px] text-[12.5px] text-[#cfd0ea]">
               <span>
                 💼 <strong className="text-white">{header.job_title}</strong>
+                {header.company_name ? ` · ${header.company_name}` : ''}
                 {header.stage_label ? ` · ${header.stage_label}` : ''}
               </span>
+
+              {(header.work_arrangement || header.job_location) && (
+                <span>
+                  🌐 {[header.work_arrangement, header.job_location].filter(Boolean).join(' · ')}
+                </span>
+              )}
 
               {header.session_started_at && (
                 <span>🗓 {formatSessionDate(header.session_started_at)}</span>
