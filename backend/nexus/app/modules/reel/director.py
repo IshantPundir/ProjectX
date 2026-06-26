@@ -40,7 +40,7 @@ from app.modules.reel.transcript import AnswerRun, answer_runs, is_pause_before
 TARGET_MS = 60_000           # aim for ~60s
 EST_BOUNDARY_PAUSE_MS = 500  # estimated inter-turn pause inside a multi-turn clip
 SPEAK_WPS = 2.75             # ~165 wpm, Arjun narration, for card duration estimate
-_CARD_FLOOR_MS = {"title": 3_000, "match": 4_000, "point": 3_500, "outro": 4_000}
+_CARD_FLOOR_MS = {"point": 3_500, "outro": 4_000}
 
 # Edge-only disfluency/discourse tokens trimmed off a clip's IN/OUT.
 # This is lexical edge cleanup, NOT semantic intent classification.
@@ -48,8 +48,8 @@ _EDGE_TRIM = {"um", "uh", "uhh", "umm", "mm", "mmm", "er", "ah", "hmm", "so",
               "like", "yeah", "okay", "ok", "sure", "well", "right"}
 
 TIMED_KINDS = {"clip", "experience"}   # beats cut from the recording (carry timing)
-LEAD_CARDS = {"match", "point"}        # a card that leads a drop-group of clips
-BeatKind = Literal["title", "match", "experience", "point", "clip", "outro"]
+LEAD_CARDS = {"point"}                  # a card that leads a drop-group of clips
+BeatKind = Literal["experience", "point", "clip", "outro"]
 
 
 class NoClipBeatsError(Exception):
