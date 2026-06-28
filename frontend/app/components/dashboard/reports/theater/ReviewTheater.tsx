@@ -8,14 +8,13 @@ import type { ReportRead } from '@/lib/api/reports'
 import type { PlaybackSeekApi } from '../SessionPlayback'
 import { useSessionProctoring } from '@/lib/hooks/use-session-proctoring'
 import { useSessionRecording } from '@/lib/hooks/use-session-recording'
-import { Filmstrip } from './Filmstrip'
 import { GlassLayer, GlassProvider } from './GlassBackdrop'
-import { ScoreRail } from './ScoreRail'
+import { QuestionRail } from './QuestionRail'
 import { TheaterStage } from './TheaterStage'
 import { TheaterTopBar } from './TheaterTopBar'
 import { ThisMomentPanel } from './ThisMomentPanel'
 import { VideoControls } from './VideoControls'
-import { buildFlagMarkers, buildQuestionMarkers, pickPosterUrl } from './timeline-model'
+import { buildFlagMarkers, buildQuestionMarkers, buildRailMarkers, pickPosterUrl } from './timeline-model'
 import { useTheaterState } from './useTheaterState'
 import { useVideoController } from './useVideoController'
 import './theater.css'
@@ -85,6 +84,8 @@ export function ReviewTheater({
     () => buildQuestionMarkers(report.questions, durationMs),
     [report.questions, durationMs],
   )
+  // The right-side pill rail: attempted questions only, ordered as asked.
+  const railMarkers = useMemo(() => buildRailMarkers(markers), [markers])
   // Poster the <video> with the candidate's reference photo (captured on the
   // camera step). For older sessions without one, fall back to a real
   // mid-interview question frame; null → no poster attribute.
@@ -168,17 +169,18 @@ export function ReviewTheater({
     return () => window.removeEventListener('keydown', onKey)
   }, [open, toggleFullscreen])
 
-  // pre-select a flag when opened from a proctoring "jump to" row
-  const { selectFlag } = st
+  // Opened from a proctoring "jump to" row → seek to that moment. (The violation
+  // detail lives in the scrubber hover card now, not in the "This moment" panel.)
+  const { seekMs } = st
   const appliedFlagRef = useRef(false)
   useEffect(() => {
     if (appliedFlagRef.current || initialFlagStartMs == null) return
     const f = flags.find((x) => x.startMs === initialFlagStartMs)
     if (f) {
       appliedFlagRef.current = true
-      selectFlag(f)
+      seekMs(f.startMs)
     }
-  }, [initialFlagStartMs, flags, selectFlag])
+  }, [initialFlagStartMs, flags, seekMs])
 
   // Exit animation: the shared px Dialog unmounts instantly on close, so we keep
   // it mounted through a brief "closing" phase (data-closing drives the CSS exit
@@ -226,46 +228,35 @@ export function ReviewTheater({
           <GlassLayer />
 
           <div className="theater-topbar-slot">
-            <TheaterTopBar report={report} riskBand={riskBand} onClose={requestClose} showClose={showClose} />
-          </div>
-
-          {/* left rail: candidate identity + all gauges + proctoring integrity */}
-          <div className="theater-rail-slot">
-            <ScoreRail
+            <TheaterTopBar
               report={report}
               candidateName={candidateName}
               subtitle={subtitle}
+              integrityCaption={proc?.status === 'ready' ? integrityCaption : null}
+              integrityPending={procPending}
               offScreenPct={offScreenPct}
+              onClose={requestClose}
+              showClose={showClose}
             />
           </div>
 
+          {/* left: contextual "This moment" detail panel */}
           <div className="theater-moment-slot">
             <ThisMomentPanel selection={st.selection} decision={report.decision} onJump={st.seekMs} />
           </div>
 
-          <div className="theater-bottom">
-            {/* row 1: a light "Question timeline" tag + an optional integrity
-                chip, floating over the video (no heavy box) */}
-            <div className="flex items-center gap-2 pl-0.5">
-              <span className="theater-tl-label">Question timeline</span>
-              {proc?.status === 'ready' && integrityCaption && (
-                <span className="theater-tl-integrity">{integrityCaption}</span>
-              )}
-              {procPending && (
-                <span className="theater-tl-pending">
-                  <span className="theater-spinner-sm" aria-hidden="true" />
-                  Analyzing integrity…
-                </span>
-              )}
-            </div>
-            {/* row 2: lively, status-tinted question cards floating free */}
-            <Filmstrip
-              markers={markers}
+          {/* right: vertical question pills, ordered as asked, active one scaled */}
+          <div className="theater-questions-slot">
+            <QuestionRail
+              markers={railMarkers}
               activeQuestionId={st.activeId}
               onSelect={st.selectQuestion}
             />
-            {/* row 3: controls pinned at the very bottom, with proctoring flag
-                ticks + question nodes merged onto the scrubber */}
+          </div>
+
+          <div className="theater-bottom">
+            {/* controls pinned at the very bottom, with proctoring flag ticks +
+                question nodes merged onto the scrubber */}
             {signedUrl && (
               <VideoControls
                 controller={ctrl}
@@ -275,7 +266,6 @@ export function ReviewTheater({
                 flags={flags}
                 activeQuestionId={st.activeId}
                 onSeekMs={st.seekMs}
-                onSelectFlag={st.selectFlag}
               />
             )}
           </div>

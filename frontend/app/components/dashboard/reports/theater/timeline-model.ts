@@ -23,7 +23,11 @@ export interface FlagMarker {
   endMs: number
   confidence: number
   thumbnailUrl: string | null
+  /** 0–100 start position on the track. */
   positionPct: number
+  /** 0–100 span width on the track (end − start), so the flag renders as a band
+   *  covering the violation's full duration, not a single tick. */
+  widthPct: number
 }
 
 // Mirrors the backend's select_flag_targets severity ordering.
@@ -55,6 +59,24 @@ export function buildQuestionMarkers(
   }))
 }
 
+/**
+ * Rail view of the question markers (the vertical question pills): drops
+ * never-attempted questions and orders them as they were actually asked — by
+ * `asked_at_ms` ascending, with unknown timings sorted last and ties broken by
+ * `seq`. Display-only; the scrubber + active tracking still use the full set.
+ */
+export function buildRailMarkers(markers: TimelineMarker[]): TimelineMarker[] {
+  return markers
+    .filter((m) => m.statusBadge !== 'not_attempted')
+    .slice()
+    .sort((a, b) => {
+      const aa = a.askedAtMs ?? Number.POSITIVE_INFINITY
+      const bb = b.askedAtMs ?? Number.POSITIVE_INFINITY
+      if (aa !== bb) return aa - bb
+      return a.seq - b.seq
+    })
+}
+
 export function buildFlagMarkers(
   flagged: ProctoringFlaggedInterval[],
   durationMs: number,
@@ -67,14 +89,19 @@ export function buildFlagMarkers(
     if (conf !== 0) return conf
     return (a.start_ms ?? 0) - (b.start_ms ?? 0)
   })
-  return ranked.slice(0, Math.max(0, topN)).map((f) => ({
-    kind: f.kind,
-    startMs: f.start_ms,
-    endMs: f.end_ms,
-    confidence: f.confidence,
-    thumbnailUrl: f.thumbnail_url ?? null,
-    positionPct: pct(f.start_ms, durationMs) ?? 0,
-  }))
+  return ranked.slice(0, Math.max(0, topN)).map((f) => {
+    const startPct = pct(f.start_ms, durationMs) ?? 0
+    const endPct = pct(f.end_ms, durationMs) ?? startPct
+    return {
+      kind: f.kind,
+      startMs: f.start_ms,
+      endMs: f.end_ms,
+      confidence: f.confidence,
+      thumbnailUrl: f.thumbnail_url ?? null,
+      positionPct: startPct,
+      widthPct: Math.max(0, endPct - startPct),
+    }
+  })
 }
 
 /** The latest question whose asked_at_ms <= currentMs (markers with null are ignored). */

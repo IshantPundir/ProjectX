@@ -10,7 +10,6 @@ import type { PlaybackSeekApi } from '../SessionPlayback'
 import { GlassBackdrop, GlassLayer, GlassProvider } from './GlassBackdrop'
 import { TheaterStage } from './TheaterStage'
 import { VideoControls } from './VideoControls'
-import { clockFromSec } from './useVideoController'
 import type { TimelineMarker } from './timeline-model'
 import { useVideoController } from './useVideoController'
 import './theater.css'
@@ -29,8 +28,6 @@ export function ReelTheater({
   signedUrl,
   chapters,
   durationSeconds,
-  candidateName,
-  subtitle,
   onClose,
   showClose = true,
 }: {
@@ -172,7 +169,7 @@ export function ReelTheater({
                     className="whitespace-nowrap rounded-full px-2.5 py-0.5 text-[10.5px] font-bold"
                     style={{ background: 'var(--px-accent)', color: 'var(--px-accent-ink, #fff)' }}
                   >
-                    ★ Highlight reel
+                    ★ Highlight reel{durationSeconds ? ` · ${Math.round(durationSeconds)}s` : ''}
                   </span>
                   {showClose && (
                     <button
@@ -189,57 +186,7 @@ export function ReelTheater({
               </div>
             </div>
 
-            {/* left rail: candidate identity (mirrors the recording theater's rail slot) */}
-            <div className="theater-rail-slot">
-              <div className="theater-glass relative rounded-2xl px-4 py-3">
-                <GlassBackdrop />
-                <div className="text-[13px] font-extrabold" style={{ color: 'var(--px-fg)' }}>
-                  {candidateName}
-                </div>
-                {subtitle && (
-                  <div className="mt-0.5 text-[11px] font-semibold" style={{ color: 'var(--px-fg-3)' }}>
-                    {subtitle}
-                  </div>
-                )}
-                <div className="mt-2 text-[10.5px] font-bold uppercase tracking-wide" style={{ color: 'var(--px-accent)' }}>
-                  AI highlight reel{durationSeconds ? ` · ${Math.round(durationSeconds)}s` : ''}
-                </div>
-              </div>
-            </div>
-
             <div className="theater-bottom">
-              <div className="flex items-center gap-2 pl-0.5">
-                <span className="theater-tl-label">Reel chapters</span>
-              </div>
-              {/* chapter strip — reuses the theater filmstrip container + card look */}
-              <div className="theater-scroll flex gap-2.5 overflow-x-auto pb-1.5 pt-1" aria-label="Reel chapters">
-                {markers.map((m) => (
-                  <button
-                    key={m.questionId}
-                    type="button"
-                    data-active={m.questionId === activeId ? 'true' : 'false'}
-                    onClick={() => m.askedAtMs != null && seekMs(m.askedAtMs)}
-                    className="theater-tl-card flex w-[210px] flex-none items-center gap-3 rounded-full p-1.5 pr-5 text-left"
-                    style={{ '--tf': 'var(--px-accent)' } as React.CSSProperties}
-                  >
-                    <span
-                      className="grid h-11 w-11 flex-none place-items-center rounded-full text-[13px] font-extrabold text-white"
-                      style={{ background: 'var(--px-accent)' }}
-                      aria-hidden="true"
-                    >
-                      {m.seq}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[9px] font-bold tabular-nums" style={{ color: 'var(--px-fg-4)' }}>
-                        {clockFromSec((m.askedAtMs ?? 0) / 1000)}
-                      </div>
-                      <div className="truncate text-[12px] font-bold leading-snug" style={{ color: 'var(--px-fg)' }} title={m.title}>
-                        {m.title}
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
               {signedUrl && (
                 <VideoControls
                   controller={ctrl}

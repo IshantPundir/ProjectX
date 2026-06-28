@@ -185,34 +185,17 @@
   user-select: none;
 }
 
-/* left rail: vertically-centered glass pill holding identity + gauges +
-   integrity. Click-through gutter; the panel itself re-enables pointer events. */
-.theater-rail-slot {
-  position: absolute;
-  left: 14px;
-  top: 60px;
-  bottom: 168px;
-  z-index: 25;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  pointer-events: none;
-}
-.theater-rail-slot > * {
-  pointer-events: auto;
-  max-height: 100%;
-}
 /* Vertically centered on the right, WITHOUT transform (see file header).
    The slot spans a tall band and centers its single child via flex; it is
    click-through (pointer-events:none) so the empty area doesn't block the
    video, while the panel itself re-enables pointer events. */
 .theater-moment-slot {
   position: absolute;
-  /* a right-edge gutter that mirrors the left rail's inset; the band between the
-     top chrome and the floating bottom can never collide with either. */
-  top: 60px;
-  bottom: 168px;
-  right: 14px;
+  /* left-side contextual detail. top:96px clears the taller top bar; bottom:84px
+     clears the (now single-row) controls bar. */
+  top: 96px;
+  bottom: 84px;
+  left: 14px;
   width: 312px;
   z-index: 25;
   display: flex;
@@ -223,6 +206,49 @@
 .theater-moment-slot > * {
   pointer-events: auto;
   max-height: 100%;
+}
+
+/* right rail: vertical question pills. Click-through gutter; the rail re-enables
+   pointer events. Cards are right-aligned and scale leftward (into the pl gutter)
+   when active so growth never clips against the scroll edge. */
+.theater-questions-slot {
+  position: absolute;
+  right: 14px;
+  top: 96px;
+  bottom: 84px;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  /* vertically centered on the right (the rail itself scrolls if it overflows) */
+  justify-content: center;
+  pointer-events: none;
+}
+.theater-questions-slot > * {
+  pointer-events: auto;
+  max-height: 100%;
+}
+
+/* compact question pill; the playhead-active one scales up + rings. --tf is the
+   tone's saturated fill (set inline per card). */
+.theater-qrail-card {
+  background: color-mix(in srgb, var(--tf) 22%, #fff);
+  border: 1px solid color-mix(in srgb, var(--tf) 48%, #fff);
+  box-shadow: 0 6px 18px rgba(15, 40, 60, 0.16);
+  cursor: pointer;
+  transform-origin: right center;
+  transition: transform 0.18s var(--px-ease), box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.theater-qrail-card:hover {
+  transform: scale(1.03);
+}
+.theater-qrail-card[data-active='true'] {
+  border-color: color-mix(in srgb, var(--tf) 80%, #fff);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tf) 72%, #fff), 0 12px 28px rgba(15, 40, 60, 0.26);
+  transform: scale(1.08);
+}
+.theater-qrail-card[data-seekable='false'] {
+  opacity: 0.66;
 }
 .theater-bottom {
   position: absolute;
@@ -263,12 +289,9 @@
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.85);
   box-shadow: 0 8px 28px rgba(15, 40, 60, 0.25);
-  transition: transform 0.15s ease, background 0.15s ease;
 }
-.theater-centerplay:hover {
-  transform: translate(-50%, -50%) scale(1.06);
-  background: rgba(255, 255, 255, 0.72);
-}
+/* No hover interaction on purpose: it's a play control, not a target that should
+   shift or scale under the cursor. The base Tailwind centering transform stays. */
 
 /* --- control bar --- */
 .theater-controls {
@@ -340,19 +363,63 @@
   z-index: 1;
 }
 
-/* proctoring flag ticks merged onto the scrubber — above the range input so
-   they stay clickable/hoverable; thin enough not to block dragging elsewhere. */
+/* proctoring violation bands merged onto the scrubber — each spans its full
+   start→end duration (min-width keeps a brief violation visible). Purely visual:
+   pointer-events:none so they never block scrubbing; the pointer-following hover
+   card carries the detail. data-hover (set from JS hit-testing) lifts the band
+   the pointer is currently over. */
 .theater-scrub-flag {
   position: absolute;
   top: 50%;
-  height: 14px;
-  width: 3px;
-  transform: translate(-50%, -50%);
+  height: 7px;
+  min-width: 4px;
+  transform: translateY(-50%);
   border: none;
   padding: 0;
-  border-radius: 1px;
-  cursor: pointer;
+  border-radius: 999px;
+  pointer-events: none;
   z-index: 2;
+  opacity: 0.9;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+  transition: height 0.12s ease, opacity 0.12s ease;
+}
+.theater-scrub-flag[data-hover='true'] {
+  height: 11px;
+  opacity: 1;
+}
+
+/* pointer-following hover card for a violation band (portaled to body, fixed) */
+.theater-flagcard {
+  position: fixed;
+  transform: translate(-50%, calc(-100% - 12px));
+  width: 158px;
+  z-index: 90;
+  pointer-events: none;
+  border-radius: 11px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid var(--px-hairline-strong);
+  box-shadow: 0 14px 34px rgba(15, 30, 45, 0.36);
+}
+.theater-flagcard-img {
+  display: block;
+  width: 100%;
+  height: 88px;
+  object-fit: cover;
+}
+.theater-flagcard-body {
+  padding: 7px 10px;
+}
+.theater-flagcard-title {
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.theater-flagcard-meta {
+  margin-top: 2px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--px-fg-3);
 }
 /* question markers — small accent dots on the same track */
 .theater-scrub-node {
@@ -417,20 +484,7 @@
   background: #fff;
 }
 
-/* --- bottom timeline: floating label + integrity chips --- */
-.theater-tl-label {
-  display: inline-block;
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--px-fg-3);
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.75);
-  box-shadow: 0 4px 14px rgba(15, 40, 60, 0.16);
-}
+/* --- integrity chips (shown in the top bar) --- */
 .theater-tl-integrity {
   display: inline-block;
   padding: 3px 10px;
@@ -516,49 +570,3 @@
   background: transparent;
 }
 
-/* --- lively, status-tinted timeline cards ---
-   --tf is the tone's saturated fill (set inline per card); the surface is a
-   pastel of it (mixed toward white) so the whole card carries the status color
-   while text stays dark and legible. */
-.theater-tl-card {
-  background: color-mix(in srgb, var(--tf) 22%, #fff);
-  border: 1px solid color-mix(in srgb, var(--tf) 48%, #fff);
-  box-shadow: 0 6px 18px rgba(15, 40, 60, 0.16);
-  cursor: pointer;
-  transition: transform 0.15s var(--px-ease), box-shadow 0.15s ease, border-color 0.15s ease;
-}
-.theater-tl-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 12px 26px rgba(15, 40, 60, 0.22);
-}
-.theater-tl-card[data-active='true'] {
-  border-color: color-mix(in srgb, var(--tf) 80%, #fff);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tf) 72%, #fff), 0 12px 28px rgba(15, 40, 60, 0.26);
-  transform: translateY(-3px);
-}
-.theater-tl-card[data-seekable='false'] {
-  opacity: 0.62;
-  cursor: default;
-}
-.theater-tl-card[data-seekable='false']:hover {
-  transform: none;
-  box-shadow: 0 6px 18px rgba(15, 40, 60, 0.16);
-}
-
-/* --- scrubber flag hover thumbnail --- */
-.theater-flagtip {
-  position: absolute;
-  bottom: 150%;
-  left: 50%;
-  transform: translateX(-50%);
-  display: none;
-  width: 132px;
-  border-radius: 8px;
-  overflow: hidden;
-  z-index: 40;
-  box-shadow: 0 10px 28px rgba(15, 30, 45, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.8);
-}
-.theater-flagtick:hover .theater-flagtip {
-  display: block;
-}

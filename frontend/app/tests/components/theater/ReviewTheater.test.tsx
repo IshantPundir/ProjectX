@@ -1,5 +1,4 @@
-import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { ReviewTheater } from '@/components/dashboard/reports/theater/ReviewTheater'
@@ -44,16 +43,20 @@ const report = {
 } as unknown as ReportRead
 
 describe('ReviewTheater', () => {
-  it('renders the stage, timeline and verdict when open', () => {
+  it('renders the stage, question rail and verdict when open', () => {
     render(<ReviewTheater open report={report} candidateName="Aarav" subtitle="Jr. FDE" onClose={() => {}} />)
     expect(screen.getByLabelText(/Interview session recording/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Experience/i })).toBeInTheDocument()
     expect(screen.getByText(/Not Recommended/i)).toBeInTheDocument()
   })
 
-  it('selecting a question shows its read in the panel', async () => {
+  it('"This moment" tracks the playhead — shows a question once it is reached', () => {
     render(<ReviewTheater open report={report} candidateName="Aarav" subtitle="" onClose={() => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: /Experience/i }))
+    // before q1's asked_at_ms (23s) the panel shows the decision summary, not the read
+    expect(screen.queryByText(/Years\?/)).not.toBeInTheDocument()
+    const video = screen.getByLabelText(/Interview session recording/i) as HTMLVideoElement
+    Object.defineProperty(video, 'currentTime', { configurable: true, value: 24 })
+    fireEvent.timeUpdate(video)
     expect(screen.getByText(/Years\?/)).toBeInTheDocument()
   })
 
@@ -83,13 +86,16 @@ describe('ReviewTheater', () => {
     expect(video.hasAttribute('poster')).toBe(false)
   })
 
-  it('pre-selects the flag when opened with initialFlagStartMs', async () => {
+  it('keeps "This moment" questions-only when opened with initialFlagStartMs', () => {
     render(
       <ReviewTheater open report={report} candidateName="Aarav" subtitle=""
         initialFlagStartMs={16200} onClose={() => {}} />,
     )
-    // The "this moment" panel switches to the flag detail (kind label) + confidence.
-    expect(await screen.findByText(/Looked off-screen/i)).toBeInTheDocument()
-    expect(screen.getByText(/65% confidence/i)).toBeInTheDocument()
+    // Opening at a violation seeks there but never shows flag detail in the panel
+    // (proctoring detail lives in the scrubber hover card now). The default
+    // decision summary stays.
+    expect(screen.queryByText(/Looked off-screen/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/% confidence/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/Closed early/i)).toBeInTheDocument()
   })
 })

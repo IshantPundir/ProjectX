@@ -32,6 +32,34 @@ describe('ThisMomentPanel', () => {
     expect(screen.getByText(/workable but no validation/)).toBeInTheDocument()
   })
 
+  it('shows stars/score, difficulty, probes and observations for a scored question', () => {
+    const rich: QuestionOut = {
+      ...question,
+      score: 7,
+      difficulty: 'hard',
+      probes_used: 2,
+      probes_available: 3,
+      listen_for_hits: ['Mentioned idempotency'],
+      red_flags_tripped: ['Hand-waved on scale'],
+    }
+    render(
+      <ThisMomentPanel selection={{ type: 'question', question: rich }} decision={decision} onJump={() => {}} />,
+    )
+    expect(screen.getByRole('img', { name: /3\.5 out of 5/i })).toBeInTheDocument()
+    expect(screen.getByText('3.5 / 5')).toBeInTheDocument()
+    expect(screen.getByText('hard')).toBeInTheDocument()
+    expect(screen.getByText('2/3 probes')).toBeInTheDocument()
+    expect(screen.getByText(/Mentioned idempotency/)).toBeInTheDocument()
+    expect(screen.getByText(/Hand-waved on scale/)).toBeInTheDocument()
+  })
+
+  it('shows "Not assessed" when the question has no score', () => {
+    render(
+      <ThisMomentPanel selection={{ type: 'question', question }} decision={decision} onJump={() => {}} />,
+    )
+    expect(screen.getByText('Not assessed')).toBeInTheDocument()
+  })
+
   it('renders the agent verdict (humanized closure + grade) when present', () => {
     const graded: QuestionOut = { ...question, closure: 'tapped_out', level: 'strong' }
     render(

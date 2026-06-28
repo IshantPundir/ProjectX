@@ -6,6 +6,7 @@ import {
   activeSegmentIndex,
   buildFlagMarkers,
   buildQuestionMarkers,
+  buildRailMarkers,
   pickPosterUrl,
 } from '@/components/dashboard/reports/theater/timeline-model'
 
@@ -49,8 +50,61 @@ describe('buildFlagMarkers', () => {
     expect(out[0].positionPct).toBeCloseTo(90)
     expect(out[0].thumbnailUrl).toBe('u')
   })
+  it('spans each violation from its start to its end (widthPct)', () => {
+    const out = buildFlagMarkers(flags, 1000, 3)
+    const byKind = Object.fromEntries(out.map((f) => [f.kind, f]))
+    // multiple_faces 900→1000ms = 90%→100% → 10% wide
+    expect(byKind.multiple_faces.positionPct).toBeCloseTo(90)
+    expect(byKind.multiple_faces.widthPct).toBeCloseTo(10)
+    // off_screen_sustained 300→800ms = 30%→80% → 50% wide
+    expect(byKind.off_screen_sustained.positionPct).toBeCloseTo(30)
+    expect(byKind.off_screen_sustained.widthPct).toBeCloseTo(50)
+  })
+  it('clamps width to 0 when duration is unknown (no negative spans)', () => {
+    const [f] = buildFlagMarkers([flags[0]], 0, 1)
+    expect(f.widthPct).toBe(0)
+  })
   it('empty flags → empty', () => {
     expect(buildFlagMarkers([], 1000, 6)).toEqual([])
+  })
+})
+
+describe('buildRailMarkers', () => {
+  it('drops not_attempted questions and orders the rest by asked_at_ms (ties by seq)', () => {
+    const markers = buildQuestionMarkers(
+      [
+        q({ seq: 1, question_id: 'q1', status_badge: 'passed', asked_at_ms: 30_000 }),
+        q({ seq: 2, question_id: 'q2', status_badge: 'not_attempted', asked_at_ms: null }),
+        q({ seq: 3, question_id: 'q3', status_badge: 'partial', asked_at_ms: 9_000 }),
+      ],
+      120_000,
+    )
+    const rail = buildRailMarkers(markers)
+    expect(rail.map((m) => m.questionId)).toEqual(['q3', 'q1'])
+  })
+
+  it('sorts unknown timings (null asked_at_ms) last', () => {
+    const markers = buildQuestionMarkers(
+      [
+        q({ seq: 1, question_id: 'q1', status_badge: 'partial', asked_at_ms: null }),
+        q({ seq: 2, question_id: 'q2', status_badge: 'passed', asked_at_ms: 5_000 }),
+      ],
+      120_000,
+    )
+    expect(buildRailMarkers(markers).map((m) => m.questionId)).toEqual(['q2', 'q1'])
+  })
+
+  it('does not mutate the input array', () => {
+    const markers = buildQuestionMarkers(
+      [
+        q({ seq: 1, question_id: 'q1', asked_at_ms: 30_000 }),
+        q({ seq: 2, question_id: 'q2', asked_at_ms: 5_000 }),
+      ],
+      120_000,
+    )
+    const before = markers.map((m) => m.questionId)
+    buildRailMarkers(markers)
+    expect(markers.map((m) => m.questionId)).toEqual(before)
   })
 })
 
