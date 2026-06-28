@@ -1,17 +1,22 @@
 'use client'
 
-import { useCallback, useMemo, useState, type MutableRefObject } from 'react'
+import { useCallback, useMemo, type MutableRefObject } from 'react'
 
 import type { QuestionOut } from '@/lib/api/reports'
 import type { PlaybackSeekApi } from '../SessionPlayback'
 import type { MomentSelection } from './ThisMomentPanel'
-import { activeQuestionId, type FlagMarker, type TimelineMarker } from './timeline-model'
+import { activeQuestionId, type TimelineMarker } from './timeline-model'
 
 /**
- * Selection/playhead state for the theater. `seekRef` and `currentMs` are passed
- * in (owned by ReviewTheater) so the video controller — which writes them — can
- * be created BEFORE this hook, letting the controller's intrinsic duration feed
- * marker/flag positioning as a pure render-time derivation (no setState-in-effect).
+ * Playhead-derived state for the theater. `seekRef` and `currentMs` are passed in
+ * (owned by ReviewTheater) so the video controller — which writes them — can be
+ * created BEFORE this hook, letting the controller's intrinsic duration feed
+ * marker/active derivation purely at render time (no setState-in-effect).
+ *
+ * Everything tracks the timeline: the active question (the latest whose
+ * asked_at_ms has passed) drives BOTH the pill highlight AND the "This moment"
+ * panel, so both advance during playback and manual scrubbing. Clicking a pill
+ * just seeks to it — the playhead move makes it active, and thus shown.
  */
 export function useTheaterState(params: {
   markers: TimelineMarker[]
@@ -20,15 +25,17 @@ export function useTheaterState(params: {
   seekRef: MutableRefObject<PlaybackSeekApi | null>
   currentMs: number
 }) {
-  const { markers, questions, durationMs, seekRef, currentMs } = params
-  // explicit selection overrides the playhead-derived active question until cleared
-  const [explicit, setExplicit] = useState<MomentSelection>(null)
+  const { markers, questions, seekRef, currentMs } = params
 
-  const playheadActiveId = useMemo(() => activeQuestionId(markers, currentMs), [markers, currentMs])
+  const activeId = useMemo(() => activeQuestionId(markers, currentMs), [markers, currentMs])
 
-  const selection: MomentSelection = explicit
-  const activeId =
-    explicit?.type === 'question' ? explicit.question.question_id : playheadActiveId
+  // "This moment" follows the playhead-active question (null before the first
+  // one is reached → the panel shows the decision summary).
+  const selection: MomentSelection = useMemo(() => {
+    if (!activeId) return null
+    const q = questions.find((x) => x.question_id === activeId)
+    return q ? { type: 'question', question: q } : null
+  }, [activeId, questions])
 
   const seekMs = useCallback((ms: number) => {
     seekRef.current?.seekToMs(ms)
@@ -36,27 +43,13 @@ export function useTheaterState(params: {
 
   const selectQuestion = useCallback((questionId: string) => {
     const q = questions.find((x) => x.question_id === questionId)
-    if (!q) return
-    setExplicit({ type: 'question', question: q })
-    if (q.asked_at_ms != null) seekRef.current?.seekToMs(q.asked_at_ms)
+    if (q?.asked_at_ms != null) seekRef.current?.seekToMs(q.asked_at_ms)
   }, [questions, seekRef])
-
-  const selectFlag = useCallback((flag: FlagMarker) => {
-    setExplicit({ type: 'flag', flag })
-    seekRef.current?.seekToMs(flag.startMs)
-  }, [seekRef])
-
-  const clearSelection = useCallback(() => setExplicit(null), [])
-
-  const playheadPct = durationMs > 0 ? Math.min(100, (currentMs / durationMs) * 100) : 0
 
   return {
     selection,
     activeId,
-    playheadPct,
     seekMs,
     selectQuestion,
-    selectFlag,
-    clearSelection,
   }
 }

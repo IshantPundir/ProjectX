@@ -2,14 +2,18 @@
 
 import type { DecisionOut, QuestionOut } from '@/lib/api/reports'
 import { formatTimestamp, statusBadgeMeta, TONE_BG, TONE_INK } from '../report-format'
+import { StarRating } from '../StarRating'
 import { GlassBackdrop } from './GlassBackdrop'
-import type { FlagMarker } from './timeline-model'
 
-const KIND_LABEL: Record<string, string> = {
-  off_screen_sustained: 'Looked off-screen',
-  down_glance: 'Glanced down',
-  reading_sweep: 'Reading pattern',
-  multiple_faces: 'Multiple faces',
+const DIFFICULTY_BG: Record<string, string> = {
+  easy: 'var(--px-ok-bg)',
+  medium: 'var(--px-caution-bg)',
+  hard: 'var(--px-danger-bg)',
+}
+const DIFFICULTY_INK: Record<string, string> = {
+  easy: 'var(--px-ok)',
+  medium: 'var(--px-caution)',
+  hard: 'var(--px-danger)',
 }
 
 // Engine per-question closure → human label. Unknown/null values are omitted.
@@ -29,9 +33,10 @@ const LEVEL_LABEL: Record<string, string> = {
   not_reached: 'Not reached',
 }
 
+// The detail panel is questions-only. Proctoring violations are surfaced via a
+// hover card on the scrubber, never here.
 export type MomentSelection =
   | { type: 'question'; question: QuestionOut }
-  | { type: 'flag'; flag: FlagMarker }
   | null
 
 export function ThisMomentPanel({
@@ -69,30 +74,68 @@ export function ThisMomentPanel({
         </div>
       )}
 
-      {selection?.type === 'question' && (
-        <div className="flex flex-1 flex-col overflow-y-auto">
-          <div className="mb-2 flex items-center gap-2">
-            <span
-              className="rounded-md px-2 py-0.5 text-[10px] font-extrabold"
-              style={{ background: TONE_BG[statusBadgeMeta(selection.question.status_badge).tone], color: TONE_INK[statusBadgeMeta(selection.question.status_badge).tone] }}
-            >
-              {statusBadgeMeta(selection.question.status_badge).label}
-            </span>
-            <span className="text-[13px] font-bold">Q{selection.question.seq} · {selection.question.title}</span>
-          </div>
-          <p className="mb-2 text-[11.5px]" style={{ color: 'var(--px-fg-3)', whiteSpace: 'pre-wrap' }}>{selection.question.question_text}</p>
-          {selection.question.candidate_quote && (
-            <p className="mb-2 border-l-2 pl-2 text-[12px] italic" style={{ borderColor: 'var(--px-caution)', color: 'var(--px-fg)', whiteSpace: 'pre-wrap' }}>
-              {selection.question.candidate_quote}
-            </p>
-          )}
-          {(() => {
-            const closure = selection.question.closure
-            const closureLabel = closure ? CLOSURE_LABEL[closure] ?? null : null
-            const levelLabel = selection.question.level ? LEVEL_LABEL[selection.question.level] ?? null : null
-            // Omit entirely when the question was never asked / no engine verdict.
-            if (!closureLabel && !levelLabel) return null
-            return (
+      {selection?.type === 'question' && (() => {
+        const q = selection.question
+        const meta = statusBadgeMeta(q.status_badge)
+        const hasScore = q.score != null
+        const listenForHits = q.listen_for_hits ?? []
+        const redFlagsTripped = q.red_flags_tripped ?? []
+        const probesAvailable = q.probes_available ?? 0
+        const closureLabel = q.closure ? CLOSURE_LABEL[q.closure] ?? null : null
+        const levelLabel = q.level ? LEVEL_LABEL[q.level] ?? null : null
+        return (
+          <div className="flex flex-1 flex-col overflow-y-auto">
+            <div className="mb-2 flex items-center gap-2">
+              <span
+                className="flex-none rounded-md px-2 py-0.5 text-[10px] font-extrabold"
+                style={{ background: TONE_BG[meta.tone], color: TONE_INK[meta.tone] }}
+              >
+                {meta.label}
+              </span>
+              <span className="text-[13px] font-bold">Q{q.seq} · {q.title}</span>
+            </div>
+
+            {/* stars / score, difficulty, probe count */}
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              {hasScore ? (
+                <span className="flex items-center gap-1.5">
+                  <StarRating valueTen={q.score as number} size={14} />
+                  <span className="text-[11px] font-extrabold" style={{ color: 'var(--px-fg-3)' }}>
+                    {((q.score as number) / 2).toFixed(1)} / 5
+                  </span>
+                </span>
+              ) : (
+                <span
+                  className="rounded px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide"
+                  style={{ background: 'var(--px-surface-2)', color: 'var(--px-fg-4)' }}
+                >
+                  Not assessed
+                </span>
+              )}
+              {q.difficulty && (
+                <span
+                  className="rounded px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide"
+                  style={{ background: DIFFICULTY_BG[q.difficulty] ?? 'var(--px-surface-2)', color: DIFFICULTY_INK[q.difficulty] ?? 'var(--px-fg-4)' }}
+                >
+                  {q.difficulty}
+                </span>
+              )}
+              {probesAvailable > 0 && (
+                <span className="text-[10.5px]" style={{ color: 'var(--px-fg-4)' }}>
+                  {q.probes_used ?? 0}/{probesAvailable} probes
+                </span>
+              )}
+            </div>
+
+            <p className="mb-2 text-[11.5px]" style={{ color: 'var(--px-fg-3)', whiteSpace: 'pre-wrap' }}>{q.question_text}</p>
+
+            {q.candidate_quote && (
+              <p className="mb-2 border-l-2 pl-2 text-[12px] italic" style={{ borderColor: 'var(--px-caution)', color: 'var(--px-fg)', whiteSpace: 'pre-wrap' }}>
+                {q.candidate_quote}
+              </p>
+            )}
+
+            {(closureLabel || levelLabel) && (
               <div className="mb-2">
                 <div className="text-[9.5px] font-bold uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>Agent verdict</div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
@@ -109,48 +152,54 @@ export function ThisMomentPanel({
                   )}
                 </div>
               </div>
-            )
-          })()}
-          {selection.question.our_read && (
-            <>
-              <div className="text-[9.5px] font-bold uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>Our read</div>
-              <p className="text-[12px]" style={{ color: 'var(--px-fg-3)', whiteSpace: 'pre-wrap' }}>{selection.question.our_read}</p>
-            </>
-          )}
-          {selection.question.asked_at_ms != null && (
-            <button
-              type="button"
-              onClick={() => onJump(selection.question.asked_at_ms as number)}
-              className="mt-auto pt-2 text-left text-[11.5px] font-bold"
-              style={{ color: 'var(--px-accent)' }}
-            >
-              ▶ Jump to {formatTimestamp(selection.question.asked_at_ms)}
-            </button>
-          )}
-        </div>
-      )}
+            )}
 
-      {selection?.type === 'flag' && (
-        <div className="flex flex-1 flex-col overflow-y-auto">
-          <div className="mb-2 text-[13px] font-bold" style={{ color: 'var(--px-danger)' }}>
-            {KIND_LABEL[selection.flag.kind] ?? selection.flag.kind}
+            {(listenForHits.length > 0 || redFlagsTripped.length > 0) && (
+              <div className="mb-2">
+                <div className="text-[9.5px] font-bold uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>Observations</div>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {listenForHits.map((hit) => (
+                    <span
+                      key={hit}
+                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold"
+                      style={{ background: 'var(--px-ok-bg)', color: 'var(--px-ok)' }}
+                    >
+                      <span aria-hidden>✓</span>{hit}
+                    </span>
+                  ))}
+                  {redFlagsTripped.map((flag) => (
+                    <span
+                      key={flag}
+                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold"
+                      style={{ background: 'var(--px-danger-bg)', color: 'var(--px-danger)' }}
+                    >
+                      <span aria-hidden>!</span>{flag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {q.our_read && (
+              <>
+                <div className="text-[9.5px] font-bold uppercase tracking-wide" style={{ color: 'var(--px-fg-4)' }}>Our read</div>
+                <p className="text-[12px]" style={{ color: 'var(--px-fg-3)', whiteSpace: 'pre-wrap' }}>{q.our_read}</p>
+              </>
+            )}
+
+            {q.asked_at_ms != null && (
+              <button
+                type="button"
+                onClick={() => onJump(q.asked_at_ms as number)}
+                className="mt-auto pt-2 text-left text-[11.5px] font-bold"
+                style={{ color: 'var(--px-accent)' }}
+              >
+                ▶ Jump to {formatTimestamp(q.asked_at_ms)}
+              </button>
+            )}
           </div>
-          {selection.flag.thumbnailUrl && (
-            <img src={selection.flag.thumbnailUrl} alt="Flagged moment" className="mb-2 w-full rounded-lg object-cover" />
-          )}
-          <p className="text-[12px]" style={{ color: 'var(--px-fg-3)' }}>
-            {formatTimestamp(selection.flag.startMs)}–{formatTimestamp(selection.flag.endMs)} · {Math.round(selection.flag.confidence * 100)}% confidence
-          </p>
-          <button
-            type="button"
-            onClick={() => onJump(selection.flag.startMs)}
-            className="mt-auto pt-2 text-left text-[11.5px] font-bold"
-            style={{ color: 'var(--px-accent)' }}
-          >
-            ▶ Jump to {formatTimestamp(selection.flag.startMs)}
-          </button>
-        </div>
-      )}
+        )
+      })()}
       </div>
     </div>
   )
