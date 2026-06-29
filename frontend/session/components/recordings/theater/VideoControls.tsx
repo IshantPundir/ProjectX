@@ -27,6 +27,7 @@ export function VideoControls({
   flags = [],
   activeQuestionId = null,
   onSeekMs,
+  fullscreenSupported = true,
 }: {
   controller: VideoController
   visible: boolean
@@ -35,6 +36,7 @@ export function VideoControls({
   flags?: FlagMarker[]
   activeQuestionId?: string | null
   onSeekMs?: (ms: number) => void
+  fullscreenSupported?: boolean
 }) {
   const c = controller
   const pct = c.durationSec > 0 ? (c.currentSec / c.durationSec) * 100 : 0
@@ -169,14 +171,16 @@ export function VideoControls({
         className="theater-vol flex-none"
       />
 
-      <button
-        type="button"
-        onClick={onToggleFullscreen}
-        aria-label={c.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-        className="theater-ctrlbtn grid h-7 w-7 flex-none place-items-center"
-      >
-        <Maximize className="h-4 w-4" />
-      </button>
+      {fullscreenSupported && (
+        <button
+          type="button"
+          onClick={onToggleFullscreen}
+          aria-label={c.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+          className="theater-ctrlbtn grid h-7 w-7 flex-none place-items-center"
+        >
+          <Maximize className="h-4 w-4" />
+        </button>
+      )}
 
       {/* hover card for the violation band under the pointer — portaled to body
           (fixed) so the controls bar's overflow:hidden can't clip it */}

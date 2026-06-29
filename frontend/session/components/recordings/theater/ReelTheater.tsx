@@ -82,11 +82,24 @@ export function ReelTheater({
 
   const shellRef = useRef<HTMLDivElement>(null)
   const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen?.()
+      return
+    }
     const el = shellRef.current
-    if (!el) return
-    if (document.fullscreenElement) void document.exitFullscreen?.()
-    else void el.requestFullscreen?.()
-  }, [])
+    if (el?.requestFullscreen) {
+      void el.requestFullscreen()
+      return
+    }
+    const v = videoEl as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null
+    v?.webkitEnterFullscreen?.()
+  }, [videoEl])
+
+  const fullscreenSupported =
+    typeof document !== 'undefined' &&
+    (document.fullscreenEnabled ||
+      typeof (videoEl as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null)
+        ?.webkitEnterFullscreen === 'function')
 
   // auto-hide the control bar on pointer idle
   const [controlsVisible, setControlsVisible] = useState(true)
@@ -196,6 +209,7 @@ export function ReelTheater({
                   flags={[]}
                   activeQuestionId={activeId}
                   onSeekMs={seekMs}
+                  fullscreenSupported={fullscreenSupported}
                 />
               )}
             </div>

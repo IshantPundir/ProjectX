@@ -113,14 +113,28 @@ export function ReviewTheater({
     ctrlRef.current = ctrl
   })
 
-  // fullscreen targets the theater root
+  // fullscreen targets the theater root; iOS Safari has no element.requestFullscreen
+  // (only the <video> supports webkitEnterFullscreen), so fall back to that.
   const shellRef = useRef<HTMLDivElement>(null)
   const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen?.()
+      return
+    }
     const el = shellRef.current
-    if (!el) return
-    if (document.fullscreenElement) void document.exitFullscreen?.()
-    else void el.requestFullscreen?.()
-  }, [])
+    if (el?.requestFullscreen) {
+      void el.requestFullscreen()
+      return
+    }
+    const v = videoEl as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null
+    v?.webkitEnterFullscreen?.()
+  }, [videoEl])
+
+  const fullscreenSupported =
+    typeof document !== 'undefined' &&
+    (document.fullscreenEnabled ||
+      typeof (videoEl as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null)
+        ?.webkitEnterFullscreen === 'function')
 
   // auto-hide the control bar on pointer idle
   const [controlsVisible, setControlsVisible] = useState(true)
@@ -266,6 +280,7 @@ export function ReviewTheater({
                 flags={flags}
                 activeQuestionId={st.activeId}
                 onSeekMs={st.seekMs}
+                fullscreenSupported={fullscreenSupported}
               />
             )}
           </div>
