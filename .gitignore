@@ -7,3 +7,6 @@ tmp/
 scripts/.state/
 # Claude Code per-project state directory
 .claude/
+
+# Stray Vite/Vitest cache when run from repo root (real deps live in frontend/*/node_modules)
+node_modules/
