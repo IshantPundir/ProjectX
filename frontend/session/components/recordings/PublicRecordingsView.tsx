@@ -95,7 +95,7 @@ export function PublicRecordingsView({ token }: { token: string }) {
                   : 'text-zinc-600 hover:text-zinc-900',
               )}
             >
-              {m === 'reel' ? 'Highlight reel' : 'Full session'}
+              {m === 'reel' ? 'Evidence Reel' : 'Full session'}
             </button>
           ))}
         </div>
