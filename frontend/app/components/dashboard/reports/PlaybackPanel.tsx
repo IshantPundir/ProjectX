@@ -35,7 +35,7 @@ export function PlaybackPanel({
           Full interview
         </ToggleBtn>
         <ToggleBtn active={mode === 'reel'} onClick={() => setMode('reel')}>
-          Evidence Reel
+          Highlights
         </ToggleBtn>
       </div>
 

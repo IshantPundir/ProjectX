@@ -11,7 +11,7 @@ import { ReelTheater } from './theater/ReelTheater'
 const CARD = 'rounded-xl border bg-white p-3.5'
 
 /**
- * Evidence Reel card for the report page. Owns the full generation lifecycle —
+ * Highlights card for the report page. Owns the full generation lifecycle —
  * absent → generating → ready / failed — and plays the ready reel in a modal with
  * a chapter rail. The reel surfaces the video evidence behind the verdict; the
  * backend gates eligibility (report + recording ready, any verdict).
@@ -55,7 +55,7 @@ export function ReelCard({
     <div className={CARD} style={{ borderColor: 'var(--px-hairline)' }}>
       <div className="mb-2.5 flex items-center justify-between">
         <span className="text-[12px] font-semibold" style={{ color: 'var(--px-fg-2)' }}>
-          Evidence Reel
+          Highlights
         </span>
         {status === 'ready' && data?.duration_seconds != null && (
           <span className="text-[11px]" style={{ color: 'var(--px-fg-4)' }}>
@@ -74,7 +74,7 @@ export function ReelCard({
           regenerating={generate.isPending}
         />
       ) : busy ? (
-        <Poster spinner>Generating Evidence Reel… this takes a minute.</Poster>
+        <Poster spinner>Generating Highlights… this takes a minute.</Poster>
       ) : status === 'failed' ? (
         <FailedState
           error={data?.generation_error}
@@ -165,7 +165,7 @@ function EmptyState({
         AI-directed from the interview — the evidence behind the verdict, at a glance.
       </span>
       <Button size="sm" onClick={onGenerate} disabled={starting}>
-        {starting ? 'Starting…' : 'Create Evidence Reel'}
+        {starting ? 'Starting…' : 'Create Highlights'}
       </Button>
     </div>
   )
@@ -218,7 +218,7 @@ function ReadyPoster({
       <button
         type="button"
         onClick={onPlay}
-        aria-label={`Play ${candidateName}'s Evidence Reel`}
+        aria-label={`Play ${candidateName}'s Highlights`}
         className="group relative flex w-full items-center justify-center overflow-hidden rounded-lg"
         style={{
           aspectRatio: '16 / 9',
@@ -237,7 +237,7 @@ function ReadyPoster({
           className="absolute bottom-2.5 left-2.5 text-[11px] font-semibold text-white"
           style={{ textShadow: '0 1px 6px rgba(0,0,0,0.5)' }}
         >
-          {candidateName} · Evidence Reel
+          {candidateName} · Highlights
         </span>
       </button>
       <button

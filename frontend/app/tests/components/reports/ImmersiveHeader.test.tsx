@@ -31,18 +31,18 @@ test('shows identity, email, job and skills', () => {
   expect(screen.getByText('Punar Sharma')).toBeInTheDocument()
   expect(screen.getByText('punar@example.com')).toBeInTheDocument()
   expect(screen.getByText('Intune')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /evidence reel/i })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /highlights/i })).toBeInTheDocument()
 })
 
 test('shows the reel button on reject (all verdicts get the reel)', () => {
   renderHeader({ verdict: 'reject' })
-  expect(screen.getByRole('button', { name: /evidence reel/i })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /highlights/i })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /full session/i })).toBeInTheDocument()
 })
 
 test('hasReel=false hides reel button even on advance verdict', () => {
   renderHeader({ hasReel: false })
-  expect(screen.queryByRole('button', { name: /evidence reel/i })).toBeNull()
+  expect(screen.queryByRole('button', { name: /highlights/i })).toBeNull()
   expect(screen.getByRole('button', { name: /full session/i })).toBeInTheDocument()
 })
 
@@ -69,12 +69,12 @@ test('renders worn SVG verdict stamp with correct text for each verdict', () => 
   expect(screen.getByRole('img', { name: /verdict: rejected/i })).toBeInTheDocument()
 })
 
-// ─── Generate Evidence Reel CTA ──────────────────────────────────────────────
+// ─── Generate Highlights CTA ──────────────────────────────────────────────
 
 test('shows the generate button when reel is absent + eligible (advance)', () => {
   const onGenerateReel = vi.fn()
   renderHeader({ hasReel: false, reelEligible: true, onGenerateReel })
-  const btn = screen.getByRole('button', { name: /generate evidence reel/i })
+  const btn = screen.getByRole('button', { name: /generate highlights/i })
   expect(btn).toBeInTheDocument()
   fireEvent.click(btn)
   expect(onGenerateReel).toHaveBeenCalledOnce()
@@ -82,29 +82,29 @@ test('shows the generate button when reel is absent + eligible (advance)', () =>
 
 test('shows the generate button on borderline too', () => {
   renderHeader({ verdict: 'borderline', hasReel: false, reelEligible: true })
-  expect(screen.getByRole('button', { name: /generate evidence reel/i })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /generate highlights/i })).toBeInTheDocument()
 })
 
 test('shows the generate button on reject when eligible (reject no longer blocked)', () => {
   renderHeader({ verdict: 'reject', hasReel: false, reelEligible: true })
-  expect(screen.getByRole('button', { name: /generate evidence reel/i })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /generate highlights/i })).toBeInTheDocument()
 })
 
 test('hides the generate button when not eligible', () => {
   renderHeader({ hasReel: false, reelEligible: false })
-  expect(screen.queryByRole('button', { name: /generate evidence reel/i })).toBeNull()
+  expect(screen.queryByRole('button', { name: /generate highlights/i })).toBeNull()
 })
 
 test('hides the generate button once a reel exists (shows play instead)', () => {
   renderHeader({ hasReel: true, reelEligible: true })
-  expect(screen.queryByRole('button', { name: /generate evidence reel/i })).toBeNull()
-  expect(screen.getByRole('button', { name: /evidence reel/i })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /generate highlights/i })).toBeNull()
+  expect(screen.getByRole('button', { name: /highlights/i })).toBeInTheDocument()
 })
 
 test('busy state disables the button and shows Generating…', () => {
   const onGenerateReel = vi.fn()
   renderHeader({ hasReel: false, reelEligible: true, reelBusy: true, onGenerateReel })
-  const btn = screen.getByRole('button', { name: /generate evidence reel/i })
+  const btn = screen.getByRole('button', { name: /generate highlights/i })
   expect(btn).toBeDisabled()
   expect(btn).toHaveTextContent(/generating/i)
   fireEvent.click(btn)

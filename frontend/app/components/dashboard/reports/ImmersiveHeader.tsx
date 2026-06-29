@@ -123,7 +123,7 @@ export function ImmersiveHeader({
   onGenerateReel,
   onOpenSession,
 }: ImmersiveHeaderProps) {
-  // Evidence Reel is available for every verdict; the backend `reelEligible`
+  // Highlights is available for every verdict; the backend `reelEligible`
   // flag already gates on report + recording readiness.
   const showReel = hasReel
   const showGenerate = !hasReel && reelEligible
@@ -225,19 +225,19 @@ export function ImmersiveHeader({
               {showReel && (
                 <button
                   type="button"
-                  aria-label="Evidence Reel"
+                  aria-label="Highlights"
                   onClick={onOpenReel}
                   className="rh-btn-reel inline-flex items-center gap-[9px] cursor-pointer"
                 >
                   <Play size={14} aria-hidden />
-                  Evidence Reel
+                  Highlights
                 </button>
               )}
 
               {showGenerate && (
                 <button
                   type="button"
-                  aria-label="Generate Evidence Reel"
+                  aria-label="Generate Highlights"
                   onClick={onGenerateReel}
                   disabled={reelBusy}
                   aria-busy={reelBusy}
@@ -251,7 +251,7 @@ export function ImmersiveHeader({
                   ) : (
                     <>
                       <Clapperboard size={14} aria-hidden />
-                      Generate Evidence Reel
+                      Generate Highlights
                     </>
                   )}
                 </button>

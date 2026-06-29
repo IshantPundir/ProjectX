@@ -12,12 +12,12 @@ vi.mock('@/lib/hooks/use-reel', () => ({
   useGenerateReel: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
-describe('Evidence Reel card', () => {
-  it('labels the feature "Evidence Reel", not "Highlight Reel"', () => {
+describe('Highlights card', () => {
+  it('labels the feature "Highlights", not "Highlight Reel"', () => {
     renderWithProviders(<ReelCard sessionId="s1" candidateName="Rahul" verdict="reject" />)
-    // Header label must say exactly "Evidence Reel"
-    expect(screen.getByText('Evidence Reel')).toBeInTheDocument()
-    // No element should contain the old name
+    // Header label must say exactly "Highlights"
+    expect(screen.getByText('Highlights')).toBeInTheDocument()
+    // No element should contain the old "Highlight Reel" name
     expect(screen.queryByText(/highlight reel/i)).not.toBeInTheDocument()
   })
 })
