@@ -158,7 +158,7 @@ export function VideoControls({
         type="button"
         onClick={c.cycleRate}
         aria-label={`Playback speed: ${c.rate}×`}
-        className="theater-ctrlbtn flex-none text-[11px] font-bold tabular-nums"
+        className="theater-ctrlbtn flex-none text-[11px] font-bold tabular-nums max-[640px]:ml-auto"
       >
         {c.rate}×
       </button>
