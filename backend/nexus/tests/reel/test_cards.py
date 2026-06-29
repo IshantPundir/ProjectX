@@ -44,3 +44,23 @@ def test_identity_tag_role_only_when_name_missing():
 def test_identity_tag_none_when_both_missing():
     assert format_identity_tag(None, None) is None
     assert format_identity_tag("  ", "") is None
+
+
+def test_parse_point_glyph_defaults_to_star():
+    from app.modules.reel.cards import parse_point_glyph, _ACCENT_SOFT
+    glyph, phrase, rgb = parse_point_glyph("Strong on reliability")
+    assert glyph == "★" and phrase == "Strong on reliability" and rgb == _ACCENT_SOFT
+
+
+def test_parse_point_glyph_met_check():
+    from app.modules.reel.cards import parse_point_glyph, _ACCENT_SOFT
+    glyph, phrase, rgb = parse_point_glyph("✓ Met the bar on incident response")
+    assert glyph == "✓" and phrase == "Met the bar on incident response"
+    assert rgb == _ACCENT_SOFT
+
+
+def test_parse_point_glyph_gap_is_neutral_not_accent():
+    from app.modules.reel.cards import parse_point_glyph, _INK_SOFT, _ACCENT_SOFT
+    glyph, phrase, rgb = parse_point_glyph("△ Scaling depth stayed shallow")
+    assert glyph == "△" and phrase == "Scaling depth stayed shallow"
+    assert rgb == _INK_SOFT and rgb != _ACCENT_SOFT
