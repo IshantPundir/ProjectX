@@ -75,6 +75,7 @@ export async function apiFetch<T>(
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    "ngrok-skip-browser-warning": "1",
     ...(options.headers as Record<string, string>),
   };
 
