@@ -1,5 +1,5 @@
 import { type CSSProperties, useId } from 'react'
-import { Play } from 'lucide-react'
+import { Clapperboard, Loader2, Play } from 'lucide-react'
 import './report.css'
 import type { ReportHeader, Verdict } from '@/lib/api/reports'
 import { VerdictStamp } from './VerdictStamp'
@@ -102,7 +102,12 @@ export interface ImmersiveHeaderProps {
   header: ReportHeader
   verdict: Verdict
   hasReel: boolean
+  /** Backend says a reel can be generated (verdict advance/borderline + report + recording ready). */
+  reelEligible: boolean
+  /** A reel is currently being generated (pending/generating or the mutation is in flight). */
+  reelBusy: boolean
   onOpenReel: () => void
+  onGenerateReel: () => void
   onOpenSession: () => void
 }
 
@@ -112,10 +117,16 @@ export function ImmersiveHeader({
   header,
   verdict,
   hasReel,
+  reelEligible,
+  reelBusy,
   onOpenReel,
+  onGenerateReel,
   onOpenSession,
 }: ImmersiveHeaderProps) {
   const showReel = hasReel && verdict !== 'reject'
+  // Offer generation when no reel exists yet and the candidate is reel-eligible
+  // (advance/borderline only — never for a reject).
+  const showGenerate = !hasReel && verdict !== 'reject' && reelEligible
 
   return (
     <div className="rh-hero overflow-hidden rounded-[18px] shadow-[0_12px_40px_rgba(20,20,40,.22)]">
@@ -220,6 +231,29 @@ export function ImmersiveHeader({
                 >
                   <Play size={14} aria-hidden />
                   Candidate highlight
+                </button>
+              )}
+
+              {showGenerate && (
+                <button
+                  type="button"
+                  aria-label="Generate highlight video"
+                  onClick={onGenerateReel}
+                  disabled={reelBusy}
+                  aria-busy={reelBusy}
+                  className="rh-btn-gen inline-flex items-center gap-[9px] cursor-pointer disabled:cursor-default"
+                >
+                  {reelBusy ? (
+                    <>
+                      <Loader2 size={14} aria-hidden className="animate-spin" />
+                      Generating…
+                    </>
+                  ) : (
+                    <>
+                      <Clapperboard size={14} aria-hidden />
+                      Generate highlight video
+                    </>
+                  )}
                 </button>
               )}
 

@@ -9,9 +9,10 @@ import { makeReport } from './_fixture'
 vi.mock('@/lib/hooks/use-session-proctoring', () => ({
   useSessionProctoring: () => ({ data: undefined, isLoading: true }),
 }))
-// useReel is used by ReportView for the ImmersiveHeader reel CTA
+// useReel + useGenerateReel power the ImmersiveHeader reel CTA
 vi.mock('@/lib/hooks/use-reel', () => ({
   useReel: () => ({ data: { status: 'absent', signed_url: null, eligible: false, chapters: [] }, isLoading: false }),
+  useGenerateReel: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 // useShareReport is used by ShareReportDialog embedded in ReportView
 vi.mock('@/lib/hooks/use-share-report', () => ({
