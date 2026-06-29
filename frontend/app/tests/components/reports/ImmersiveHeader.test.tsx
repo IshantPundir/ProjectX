@@ -31,18 +31,18 @@ test('shows identity, email, job and skills', () => {
   expect(screen.getByText('Punar Sharma')).toBeInTheDocument()
   expect(screen.getByText('punar@example.com')).toBeInTheDocument()
   expect(screen.getByText('Intune')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /candidate highlight/i })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /evidence reel/i })).toBeInTheDocument()
 })
 
 test('shows the reel button on reject (all verdicts get the reel)', () => {
   renderHeader({ verdict: 'reject' })
-  expect(screen.getByRole('button', { name: /candidate highlight/i })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /evidence reel/i })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /full session/i })).toBeInTheDocument()
 })
 
 test('hasReel=false hides reel button even on advance verdict', () => {
   renderHeader({ hasReel: false })
-  expect(screen.queryByRole('button', { name: /candidate highlight/i })).toBeNull()
+  expect(screen.queryByRole('button', { name: /evidence reel/i })).toBeNull()
   expect(screen.getByRole('button', { name: /full session/i })).toBeInTheDocument()
 })
 
@@ -98,7 +98,7 @@ test('hides the generate button when not eligible', () => {
 test('hides the generate button once a reel exists (shows play instead)', () => {
   renderHeader({ hasReel: true, reelEligible: true })
   expect(screen.queryByRole('button', { name: /generate evidence reel/i })).toBeNull()
-  expect(screen.getByRole('button', { name: /candidate highlight/i })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /evidence reel/i })).toBeInTheDocument()
 })
 
 test('busy state disables the button and shows Generating…', () => {
