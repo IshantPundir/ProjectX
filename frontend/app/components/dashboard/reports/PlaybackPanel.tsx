@@ -35,14 +35,14 @@ export function PlaybackPanel({
           Full interview
         </ToggleBtn>
         <ToggleBtn active={mode === 'reel'} onClick={() => setMode('reel')}>
-          Highlight reel
+          Evidence Reel
         </ToggleBtn>
       </div>
 
       {mode === 'interview' ? (
         <SessionPlayback report={report} onOpen={onOpenTheater} />
       ) : (
-        <ReelCard sessionId={report.session_id ?? ''} candidateName={candidateName} />
+        <ReelCard sessionId={report.session_id ?? ''} candidateName={candidateName} verdict={report.verdict} />
       )}
     </div>
   )

@@ -36,8 +36,8 @@ describe('ReelCard reel playback', () => {
   // fire-once `closing` state never reset on reopen.
   it('reopening the reel after closing renders it cleanly (not stuck in the exit state)', async () => {
     const user = userEvent.setup()
-    render(<ReelCard sessionId="s1" candidateName="Aarav" />)
-    const playLabel = /Play Aarav's candidate reel/i
+    render(<ReelCard sessionId="s1" candidateName="Aarav" verdict="advance" />)
+    const playLabel = /Play Aarav's Evidence Reel/i
     // The theater renders in a Base UI portal (document.body), a tick after click.
     const shell = () => document.querySelector('.theater-shell')
 
