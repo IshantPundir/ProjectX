@@ -1,4 +1,5 @@
 """Reel eligibility (pure) + RLS membership (lean nexus image)."""
+import pytest
 from app.modules.reel.service import eligibility_decision
 
 
@@ -14,10 +15,11 @@ def test_borderline_is_eligible():
     assert ok is True
 
 
-def test_reject_verdict_is_ineligible():
+@pytest.mark.parametrize("verdict", ["advance", "borderline", "reject"])
+def test_all_verdicts_eligible_when_report_and_recording_ready(verdict):
     ok, reason = eligibility_decision(
-        report_status="ready", verdict="reject", recording_key="k")
-    assert ok is False and "advancing or borderline" in reason
+        report_status="ready", verdict=verdict, recording_key="reels/x.mp4")
+    assert ok is True and reason is None
 
 
 def test_report_not_ready_is_ineligible():
