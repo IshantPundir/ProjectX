@@ -15,6 +15,7 @@ import { TheaterTopBar } from './TheaterTopBar'
 import { ThisMomentPanel } from './ThisMomentPanel'
 import { VideoControls } from './VideoControls'
 import { buildFlagMarkers, buildQuestionMarkers, buildRailMarkers, pickPosterUrl } from './timeline-model'
+import { TheaterMobileSheet } from './TheaterMobileSheet'
 import { useTheaterState } from './useTheaterState'
 import { useVideoController } from './useVideoController'
 import './theater.css'
@@ -138,6 +139,7 @@ export function ReviewTheater({
 
   // auto-hide the control bar on pointer idle
   const [controlsVisible, setControlsVisible] = useState(true)
+  const [sheetOpen, setSheetOpen] = useState(false)
   useEffect(() => {
     if (!open) return
     const root = shellRef.current
@@ -268,22 +270,39 @@ export function ReviewTheater({
             />
           </div>
 
-          <div className="theater-bottom">
-            {/* controls pinned at the very bottom, with proctoring flag ticks +
-                question nodes merged onto the scrubber */}
+          <div className="theater-bottom flex flex-col">
+            <button
+              type="button"
+              className="theater-mobile-trigger"
+              onClick={() => setSheetOpen(true)}
+            >
+              Questions &amp; scores
+            </button>
             {signedUrl && (
               <VideoControls
                 controller={ctrl}
                 visible={controlsVisible}
                 onToggleFullscreen={toggleFullscreen}
+                fullscreenSupported={fullscreenSupported}
                 markers={markers}
                 flags={flags}
                 activeQuestionId={st.activeId}
                 onSeekMs={st.seekMs}
-                fullscreenSupported={fullscreenSupported}
               />
             )}
           </div>
+
+          <TheaterMobileSheet
+            open={sheetOpen}
+            onClose={() => setSheetOpen(false)}
+            report={report}
+            railMarkers={railMarkers}
+            activeQuestionId={st.activeId}
+            selection={st.selection}
+            offScreenPct={offScreenPct}
+            onSelectQuestion={(id) => { st.selectQuestion(id); setSheetOpen(false) }}
+            onJump={(ms) => { st.seekMs(ms); setSheetOpen(false) }}
+          />
         </div>
         </GlassProvider>
       </DialogContent>
