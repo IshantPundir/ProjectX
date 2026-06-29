@@ -15,6 +15,7 @@ import { TheaterTopBar } from './TheaterTopBar'
 import { ThisMomentPanel } from './ThisMomentPanel'
 import { VideoControls } from './VideoControls'
 import { buildFlagMarkers, buildQuestionMarkers, buildRailMarkers, pickPosterUrl } from './timeline-model'
+import { TheaterMobileSheet } from './TheaterMobileSheet'
 import { useTheaterState } from './useTheaterState'
 import { useVideoController } from './useVideoController'
 import './theater.css'
@@ -113,17 +114,32 @@ export function ReviewTheater({
     ctrlRef.current = ctrl
   })
 
-  // fullscreen targets the theater root
+  // fullscreen targets the theater root; iOS Safari has no element.requestFullscreen
+  // (only the <video> supports webkitEnterFullscreen), so fall back to that.
   const shellRef = useRef<HTMLDivElement>(null)
   const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen?.()
+      return
+    }
     const el = shellRef.current
-    if (!el) return
-    if (document.fullscreenElement) void document.exitFullscreen?.()
-    else void el.requestFullscreen?.()
-  }, [])
+    if (el?.requestFullscreen) {
+      void el.requestFullscreen()
+      return
+    }
+    const v = videoEl as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null
+    v?.webkitEnterFullscreen?.()
+  }, [videoEl])
+
+  const fullscreenSupported =
+    typeof document !== 'undefined' &&
+    (document.fullscreenEnabled ||
+      typeof (videoEl as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null)
+        ?.webkitEnterFullscreen === 'function')
 
   // auto-hide the control bar on pointer idle
   const [controlsVisible, setControlsVisible] = useState(true)
+  const [sheetOpen, setSheetOpen] = useState(false)
   useEffect(() => {
     if (!open) return
     const root = shellRef.current
@@ -254,14 +270,20 @@ export function ReviewTheater({
             />
           </div>
 
-          <div className="theater-bottom">
-            {/* controls pinned at the very bottom, with proctoring flag ticks +
-                question nodes merged onto the scrubber */}
+          <div className="theater-bottom flex flex-col">
+            <button
+              type="button"
+              className="theater-mobile-trigger"
+              onClick={() => setSheetOpen(true)}
+            >
+              Questions &amp; scores
+            </button>
             {signedUrl && (
               <VideoControls
                 controller={ctrl}
                 visible={controlsVisible}
                 onToggleFullscreen={toggleFullscreen}
+                fullscreenSupported={fullscreenSupported}
                 markers={markers}
                 flags={flags}
                 activeQuestionId={st.activeId}
@@ -269,6 +291,18 @@ export function ReviewTheater({
               />
             )}
           </div>
+
+          <TheaterMobileSheet
+            open={sheetOpen}
+            onClose={() => setSheetOpen(false)}
+            report={report}
+            railMarkers={railMarkers}
+            activeQuestionId={st.activeId}
+            selection={st.selection}
+            offScreenPct={offScreenPct}
+            onSelectQuestion={(id) => { st.selectQuestion(id); setSheetOpen(false) }}
+            onJump={(ms) => { st.seekMs(ms); setSheetOpen(false) }}
+          />
         </div>
         </GlassProvider>
       </DialogContent>

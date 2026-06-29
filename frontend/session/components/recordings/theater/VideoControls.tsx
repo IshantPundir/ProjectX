@@ -27,6 +27,7 @@ export function VideoControls({
   flags = [],
   activeQuestionId = null,
   onSeekMs,
+  fullscreenSupported = true,
 }: {
   controller: VideoController
   visible: boolean
@@ -35,6 +36,7 @@ export function VideoControls({
   flags?: FlagMarker[]
   activeQuestionId?: string | null
   onSeekMs?: (ms: number) => void
+  fullscreenSupported?: boolean
 }) {
   const c = controller
   const pct = c.durationSec > 0 ? (c.currentSec / c.durationSec) * 100 : 0
@@ -47,9 +49,9 @@ export function VideoControls({
   // that way the bands never block scrubbing.
   const scrubRef = useRef<HTMLDivElement>(null)
   const [hover, setHover] = useState<{ flag: FlagMarker; x: number; y: number } | null>(null)
-  const onScrubMove = (e: React.PointerEvent<HTMLDivElement>) => {
+  const hitFlagAt = (e: React.PointerEvent<HTMLDivElement>): { flag: FlagMarker; x: number; y: number } | null => {
     const el = scrubRef.current
-    if (!el || flags.length === 0) return
+    if (!el || flags.length === 0) return null
     const rect = el.getBoundingClientRect()
     const x = e.clientX - rect.left
     const f = flags.find((fl) => {
@@ -57,10 +59,21 @@ export function VideoControls({
       const width = Math.max((fl.widthPct / 100) * rect.width, 4)
       return x >= left && x <= left + width
     })
-    setHover((prev) => {
-      if (!f) return prev === null ? prev : null
-      return { flag: f, x: e.clientX, y: rect.top }
-    })
+    if (!f) return null
+    // clamp the card center so a 158px-wide card stays fully on-screen
+    const half = 80
+    const cx = Math.min(Math.max(e.clientX, half), window.innerWidth - half)
+    return { flag: f, x: cx, y: rect.top }
+  }
+  const onScrubMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const hit = hitFlagAt(e)
+    setHover((prev) => (hit ? hit : prev === null ? prev : null))
+  }
+  // touch has no hover: a tap on a band toggles the detail card; a tap elsewhere clears it
+  const onScrubDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType !== 'touch') return
+    const hit = hitFlagAt(e)
+    setHover((prev) => (hit && prev?.flag !== hit.flag ? hit : null))
   }
   const clearHover = () => setHover((prev) => (prev === null ? prev : null))
 
@@ -86,6 +99,7 @@ export function VideoControls({
       <div
         ref={scrubRef}
         className="theater-scrub relative flex-1"
+        onPointerDown={onScrubDown}
         onPointerMove={onScrubMove}
         onPointerLeave={clearHover}
       >
@@ -144,7 +158,7 @@ export function VideoControls({
         type="button"
         onClick={c.cycleRate}
         aria-label={`Playback speed: ${c.rate}×`}
-        className="theater-ctrlbtn flex-none text-[11px] font-bold tabular-nums"
+        className="theater-ctrlbtn flex-none text-[11px] font-bold tabular-nums max-[640px]:ml-auto"
       >
         {c.rate}×
       </button>
@@ -169,14 +183,16 @@ export function VideoControls({
         className="theater-vol flex-none"
       />
 
-      <button
-        type="button"
-        onClick={onToggleFullscreen}
-        aria-label={c.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-        className="theater-ctrlbtn grid h-7 w-7 flex-none place-items-center"
-      >
-        <Maximize className="h-4 w-4" />
-      </button>
+      {fullscreenSupported && (
+        <button
+          type="button"
+          onClick={onToggleFullscreen}
+          aria-label={c.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+          className="theater-ctrlbtn grid h-7 w-7 flex-none place-items-center"
+        >
+          <Maximize className="h-4 w-4" />
+        </button>
+      )}
 
       {/* hover card for the violation band under the pointer — portaled to body
           (fixed) so the controls bar's overflow:hidden can't clip it */}

@@ -570,3 +570,168 @@
   background: transparent;
 }
 
+/* ============================================================
+   MOBILE / TOUCH RESPONSIVE LAYOUT  (added 2026-06-29)
+   Desktop rules above are untouched; these only apply on phones.
+   ============================================================ */
+
+/* --- Compact: phone portrait + small viewports --- */
+@media (max-width: 640px) {
+  /* full-bleed theater (dvh accounts for mobile browser chrome) */
+  .px-dialog-content.theater-shell {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
+  /* the fixed desktop side panels can't coexist with the video on a phone;
+     their content moves into TheaterMobileSheet (Task 5) */
+  .theater-moment-slot,
+  .theater-questions-slot {
+    display: none;
+  }
+
+  /* the inline score gauges move into the sheet; identity + verdict stay */
+  .theater-topbar-gauges {
+    display: none;
+  }
+
+  /* give the top bar + bottom controls a little less inset on small screens */
+  .theater-topbar-slot { top: 8px; left: 8px; right: 8px; }
+  .theater-bottom { left: 8px; right: 8px; bottom: 8px; }
+}
+
+/* --- Landscape-compact: phone landscape (short height) --- */
+@media (orientation: landscape) and (max-height: 480px) {
+  .px-dialog-content.theater-shell {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+  .theater-moment-slot,
+  .theater-questions-slot,
+  .theater-topbar-gauges {
+    display: none;
+  }
+  /* reclaim vertical space: tighter chrome insets */
+  .theater-topbar-slot { top: 6px; left: 6px; right: 6px; }
+  .theater-bottom { left: 6px; right: 6px; bottom: 6px; }
+}
+
+/* --- Touch: bigger targets regardless of orientation --- */
+@media (hover: none) and (pointer: coarse) {
+  .theater-playbtn { width: 44px; height: 44px; }
+  .theater-ctrlbtn { min-width: 44px; min-height: 44px; }
+}
+
+/* --- Compact: two-row control bar so the scrubber gets full width --- */
+@media (max-width: 640px) {
+  .theater-controls {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    column-gap: 8px;
+    padding: 10px 12px;
+  }
+  /* scrubber onto its own first row, full width */
+  .theater-scrub {
+    order: -1;
+    flex: 1 0 100%;
+  }
+  /* hardware volume on phones — drop the slider, keep the mute button */
+  .theater-vol { display: none; }
+}
+
+/* --- Landscape-compact: keep controls single-row but compact --- */
+@media (orientation: landscape) and (max-height: 480px) {
+  .theater-vol { display: none; }
+  .theater-controls { padding: 6px 10px; }
+}
+
+/* --- Mobile panel sheet/drawer (TheaterMobileSheet) --- */
+.theater-sheet-root { display: none; }
+
+.theater-mobile-trigger { display: none; }
+
+@media (max-width: 640px), (orientation: landscape) and (max-height: 480px) {
+  /* trigger button shown only on mobile, in the bottom slot above controls */
+  .theater-mobile-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: center;
+    margin-bottom: 8px;
+    min-height: 44px;
+    padding: 0 16px;
+    border-radius: 9999px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--px-fg);
+    background: var(--px-surface);
+    border: 1px solid var(--px-hairline-strong);
+    pointer-events: auto;
+  }
+
+  .theater-sheet-root { display: block; }
+  .theater-sheet-root[data-open='false'] { pointer-events: none; }
+
+  .theater-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    border: 0;
+    background: rgba(10, 20, 30, 0.45);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+  .theater-sheet-root[data-open='true'] .theater-sheet-backdrop { opacity: 1; }
+
+  .theater-sheet {
+    position: fixed;
+    z-index: 81;
+    background: var(--px-bg);
+    box-shadow: 0 -8px 40px rgba(10, 20, 30, 0.35);
+    transition: transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+    display: flex;
+    flex-direction: column;
+  }
+  .theater-sheet-scroll {
+    overflow-y: auto;
+    padding: 8px 16px 24px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .theater-sheet-grip {
+    flex: none;
+    width: 40px;
+    height: 4px;
+    margin: 8px auto 4px;
+    border-radius: 9999px;
+    background: var(--px-surface-3);
+  }
+}
+
+/* portrait: bottom sheet */
+@media (max-width: 640px) {
+  .theater-sheet {
+    left: 0; right: 0; bottom: 0;
+    max-height: 72dvh;
+    border-radius: 18px 18px 0 0;
+    transform: translateY(100%);
+  }
+  .theater-sheet-root[data-open='true'] .theater-sheet { transform: translateY(0); }
+}
+
+/* landscape: right-side drawer (short height → don't eat vertical space) */
+@media (orientation: landscape) and (max-height: 480px) {
+  .theater-sheet {
+    top: 0; bottom: 0; right: 0;
+    width: min(360px, 80vw);
+    border-radius: 18px 0 0 18px;
+    transform: translateX(100%);
+  }
+  .theater-sheet-grip { display: none; }
+  .theater-sheet-root[data-open='true'] .theater-sheet { transform: translateX(0); }
+}

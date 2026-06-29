@@ -79,7 +79,7 @@ export function PublicRecordingsView({ token }: { token: string }) {
         <div
           role="tablist"
           aria-label="Switch view"
-          className="fixed left-4 top-4 z-[60] flex items-center gap-1 rounded-full border bg-white/90 p-1 shadow-sm backdrop-blur"
+          className="fixed left-4 top-4 z-[60] flex items-center gap-1 rounded-full border bg-white/90 p-1 shadow-sm backdrop-blur max-[640px]:top-16"
         >
           {(['reel', 'full'] as const).map((m) => (
             <button
@@ -89,7 +89,7 @@ export function PublicRecordingsView({ token }: { token: string }) {
               aria-selected={activeMode === m}
               onClick={() => setMode(m)}
               className={cn(
-                'rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors',
+                'rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors max-[640px]:min-h-[44px] max-[640px]:px-5',
                 activeMode === m
                   ? 'bg-zinc-900 text-white'
                   : 'text-zinc-600 hover:text-zinc-900',

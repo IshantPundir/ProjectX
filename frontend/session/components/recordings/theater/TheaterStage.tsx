@@ -47,7 +47,7 @@ export function TheaterStage({
         playsInline
         aria-label="Interview session recording"
         onClick={onTogglePlay}
-        className="absolute inset-0 h-full w-full bg-black object-cover"
+        className="absolute inset-0 h-full w-full bg-black object-cover max-[640px]:object-contain"
       />
       <div className="theater-scrim-top" aria-hidden="true" />
       <div className="theater-scrim-bottom" aria-hidden="true" />
