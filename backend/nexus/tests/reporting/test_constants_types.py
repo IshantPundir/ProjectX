@@ -5,8 +5,10 @@ from app.modules.reporting.scoring.constants import (
 
 
 def test_thresholds():
-    assert ADVANCE_THRESHOLD == 65
-    assert REJECT_THRESHOLD == 40
+    # Verdict bands are aligned to the tier-label floors: advance = "Strong"
+    # (>=70), borderline = "Meets Bar" (55-69), reject = "Below Bar" or worse.
+    assert ADVANCE_THRESHOLD == 70
+    assert REJECT_THRESHOLD == 55
     assert MIN_COVERAGE_FOR_ADVANCE == 0.6
 
 

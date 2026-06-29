@@ -1,8 +1,8 @@
 """Scoring constants. All policy numbers live here (configurable later)."""
 from __future__ import annotations
 
-ADVANCE_THRESHOLD = 65          # Overall >= → advance (when not must-have-capped)
-REJECT_THRESHOLD = 40           # Overall <  → reject
+ADVANCE_THRESHOLD = 70          # Overall >= → advance (when not must-have-capped)
+REJECT_THRESHOLD = 55           # Overall <  → reject
 MIN_COVERAGE_FOR_ADVANCE = 0.6  # below this, a high Overall is forced to borderline
 
 TECHNICAL_TYPES = frozenset({"competency", "experience", "credential"})
@@ -22,20 +22,20 @@ SCORECARD_EVIDENCE_MAX = 5               # max fallback quotes per signal scorec
 
 # Fit-aware aggregation ceilings (the score MEANS role-fit, so a must-have
 # gap caps it — this is the metric's definition, not a post-hoc clamp).
-REJECT_CEILING = 35      # failed must-have → score forced into reject band (<40)
-BORDERLINE_CEILING = 60  # unconfirmed must-have / low coverage → at most borderline (<65)
+REJECT_CEILING = 35      # failed must-have → score forced into reject band (<55)
+BORDERLINE_CEILING = 60  # unconfirmed must-have / low coverage → at most borderline (<70)
 
 # Bound on the Layer-2.5 holistic adjustment (±5 pts = ±0.5 on the /10 scale).
 HOLISTIC_ADJ_MAX = 5
 
 # 0-100 composite score → display tier label.
-# Bands are calibrated against the ADVANCE_THRESHOLD (65) / REJECT_THRESHOLD (40)
-# above: "Strong" sits comfortably above advance, "Meets Bar" spans the
-# advance-borderline corridor, "Below Bar" spans borderline-reject, and
-# "Well Below Bar" covers clear rejects.  Tunable here without touching logic.
-# NOTE: ADVANCE_THRESHOLD (65) sits inside the "Meets Bar" band (55-69): a
-# "Meets Bar" candidate CAN be auto-advanced. "Below Bar" (40-54) is the
-# borderline zone; REJECT_THRESHOLD (40) is its floor.
+# The verdict bands are aligned 1:1 with the tier bands (so the verdict the
+# recruiter sees always matches the tier label on the report):
+#   "Strong"     (>=70) → advance      (ADVANCE_THRESHOLD = 70)
+#   "Meets Bar"  (55-69) → borderline   (held for human review)
+#   "Below Bar"  (40-54) → reject       (REJECT_THRESHOLD = 55)
+#   "Well Below" (<40)   → reject
+# Tunable here without touching logic; keep the thresholds on the tier floors.
 _TIER_BANDS: list[tuple[int, str]] = [
     (70, "Strong"),
     (55, "Meets Bar"),
