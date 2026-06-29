@@ -1,0 +1,572 @@
+/* components/dashboard/reports/theater/theater.css
+   True light glassmorphism for the Review Theater: translucent white frosted
+   panels (real backdrop blur + saturation) floating over the full-bleed video.
+   The theater uses the app's DEFAULT light tokens (dark-on-light), so no token
+   overrides are needed here — text stays legible on the frosted white glass.
+
+   IMPORTANT: never put `transform`/`filter`/`backdrop-filter`/`perspective`/
+   `will-change` on an ancestor that wraps a `.theater-glass` panel — Chromium
+   suppresses a descendant's backdrop-filter when an ancestor has one (nested
+   backdrop-filter bug) or resets the backdrop root on transform, so the blur
+   silently degrades to plain transparency. The backdrop below therefore dims
+   WITHOUT its own backdrop-filter, and the slots avoid transform. */
+
+/* Dim the page behind the overlay with opacity only. The base .px-dialog-backdrop
+   rule sets `backdrop-filter: blur(4px)` — we MUST force it off here, because a
+   backdrop-filter on this ancestor makes Chromium drop the backdrop-filter on
+   every descendant .theater-glass panel (the nested-backdrop-filter bug). That
+   single inherited line is what was killing the glass blur. */
+.px-dialog-backdrop:has(.theater-shell) {
+  background: rgba(12, 20, 28, 0.55);
+  /* No backdrop-filter: the main panel glass is GlassLayer's `filter: blur()`
+     (immune to ancestor effects); a backdrop-filter here would still suppress
+     the few small frosted chips. Opacity fade is safe now that no descendant
+     uses backdrop-filter. */
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  animation: theater-backdrop-in 320ms var(--px-ease) both;
+}
+.px-dialog-backdrop:has(.theater-shell[data-closing='true']) {
+  animation: theater-backdrop-out 260ms var(--px-ease) both;
+}
+@keyframes theater-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes theater-backdrop-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* Centred WITHOUT transform. The shared .px-dialog-content centres via
+   `transform: translate(-50%,-50%)`, but a transform on an ancestor of a
+   backdrop-filter element disables the blur in Chromium — which silently flattens
+   every .theater-glass panel to plain transparency. We override the transform
+   centring with inset + margin:auto (double class for specificity over the base
+   rule) so the glass blur actually renders. */
+.px-dialog-content.theater-shell {
+  width: 96vw;
+  height: 94vh;
+  max-width: 96vw;
+  max-height: 94vh;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 22px;
+  background: #0a0f14;
+  box-shadow: 0 30px 90px rgba(15, 30, 45, 0.4);
+
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  top: 0;
+  left: 0;
+  transform: none;
+  /* Futuristic open/close. Safe to transform now: the panel glass is GlassLayer's
+     `filter: blur()` (unaffected by ancestor transforms) and no descendant uses
+     backdrop-filter anymore, so the old "blur paints once un-blurred" bug can't
+     fire. Everything inside scales as one unit, so panels stay aligned with their
+     blurred backdrop. */
+  animation: theater-shell-in 380ms var(--px-ease) both;
+}
+.px-dialog-content.theater-shell[data-closing='true'] {
+  /* exit shorter than enter — feels responsive (MD motion) */
+  animation: theater-shell-out 260ms var(--px-ease) both;
+}
+@keyframes theater-shell-in {
+  from {
+    opacity: 0;
+    transform: scale(0.93) translateY(12px);
+    clip-path: inset(6% 7% round 22px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    clip-path: inset(0 round 22px);
+  }
+}
+@keyframes theater-shell-out {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    clip-path: inset(0 round 22px);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.965) translateY(8px);
+    clip-path: inset(4% 5% round 22px);
+  }
+}
+/* reduced motion: opacity-only, no scale/clip reveal */
+@media (prefers-reduced-motion: reduce) {
+  .px-dialog-content.theater-shell {
+    animation-name: theater-backdrop-in;
+  }
+  .px-dialog-content.theater-shell[data-closing='true'] {
+    animation-name: theater-backdrop-out;
+  }
+}
+
+/* The single positioned root that holds the video + all overlays.
+   Background only shows in the loading / "unavailable" state (the video is
+   object-cover and fills it otherwise). Default light tokens apply — no
+   overrides — so every var(--px-fg*)/tone token renders dark-on-light. */
+.theater-root {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+  background: linear-gradient(160deg, #eef4f8, #dde8ee);
+  /* Single stacking context: the glass layer (z 15) and panel slots (z 20+)
+     all order within the stage. */
+  isolation: isolate;
+}
+
+/* Light frosted glass — the panel surface. The blur is the single <GlassLayer>
+   (one blurred video, clipped to all panel rects) painting behind the panels;
+   the panel itself is nearly transparent and only supplies border + shadow. */
+.theater-glass {
+  position: relative;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 10px 36px rgba(15, 40, 60, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+/* Single blurred-video layer covering the stage, clip-path'd (set in JS) to the
+   union of the panels' rounded rects. Sits above the sharp video/scrims (z 10)
+   and below every panel slot (z 20+), so each panel shows a correctly aligned,
+   blurred, live slice of the video behind it. One video decode total. */
+.theater-glass-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  overflow: hidden;
+  pointer-events: none;
+  clip-path: path('');
+}
+.theater-glass-layer video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* real frosted blur on the video pixels (works, unlike backdrop-filter over
+     video). scale hides blur's transparent edge bleed. */
+  filter: blur(12px) saturate(150%);
+  transform: scale(1.1);
+}
+/* white frost tint over the blurred video → the "barely visible" look */
+.theater-glass-layer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+/* --- overlay slots --- */
+.theater-topbar-slot {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  z-index: 30;
+  /* the strip is mostly empty (watermark + a small pill) — let clicks fall
+     through to the video; interactive children opt back in. */
+  pointer-events: none;
+}
+
+/* faint product watermark, top-left. White glow keeps the dark wordmark legible
+   over the darkened top scrim. Purely decorative. */
+.theater-watermark {
+  opacity: 0.72;
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.85)) drop-shadow(0 1px 2px rgba(255, 255, 255, 0.7));
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Vertically centered on the right, WITHOUT transform (see file header).
+   The slot spans a tall band and centers its single child via flex; it is
+   click-through (pointer-events:none) so the empty area doesn't block the
+   video, while the panel itself re-enables pointer events. */
+.theater-moment-slot {
+  position: absolute;
+  /* left-side contextual detail. top:96px clears the taller top bar; bottom:84px
+     clears the (now single-row) controls bar. */
+  top: 96px;
+  bottom: 84px;
+  left: 14px;
+  width: 312px;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  pointer-events: none;
+}
+.theater-moment-slot > * {
+  pointer-events: auto;
+  max-height: 100%;
+}
+
+/* right rail: vertical question pills. Click-through gutter; the rail re-enables
+   pointer events. Cards are right-aligned and scale leftward (into the pl gutter)
+   when active so growth never clips against the scroll edge. */
+.theater-questions-slot {
+  position: absolute;
+  right: 14px;
+  top: 96px;
+  bottom: 84px;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  /* vertically centered on the right (the rail itself scrolls if it overflows) */
+  justify-content: center;
+  pointer-events: none;
+}
+.theater-questions-slot > * {
+  pointer-events: auto;
+  max-height: 100%;
+}
+
+/* compact question pill; the playhead-active one scales up + rings. --tf is the
+   tone's saturated fill (set inline per card). */
+.theater-qrail-card {
+  background: color-mix(in srgb, var(--tf) 22%, #fff);
+  border: 1px solid color-mix(in srgb, var(--tf) 48%, #fff);
+  box-shadow: 0 6px 18px rgba(15, 40, 60, 0.16);
+  cursor: pointer;
+  transform-origin: right center;
+  transition: transform 0.18s var(--px-ease), box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.theater-qrail-card:hover {
+  transform: scale(1.03);
+}
+.theater-qrail-card[data-active='true'] {
+  border-color: color-mix(in srgb, var(--tf) 80%, #fff);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tf) 72%, #fff), 0 12px 28px rgba(15, 40, 60, 0.26);
+  transform: scale(1.08);
+}
+.theater-qrail-card[data-seekable='false'] {
+  opacity: 0.66;
+}
+.theater-bottom {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* --- video scrims: subtle, just enough to seat the panels + define edges
+   without muddying the light/airy look. --- */
+.theater-scrim-top {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 120px;
+  z-index: 10;
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(10, 20, 30, 0.16), rgba(10, 20, 30, 0));
+}
+.theater-scrim-bottom {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 300px;
+  z-index: 10;
+  pointer-events: none;
+  background: linear-gradient(to top, rgba(10, 20, 30, 0.24), rgba(10, 20, 30, 0));
+}
+
+/* --- center play overlay (light frosted, dark icon) ---
+   No backdrop-filter on purpose: it's the only kind of blur that breaks under a
+   transformed ancestor, and the shell now plays a transform open/close
+   animation. A more opaque white reads the same over the video. --- */
+.theater-centerplay {
+  color: var(--px-fg);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 8px 28px rgba(15, 40, 60, 0.25);
+}
+/* No hover interaction on purpose: it's a play control, not a target that should
+   shift or scale under the cursor. The base Tailwind centering transform stays. */
+
+/* --- control bar --- */
+.theater-controls {
+  transition: opacity 0.25s ease;
+}
+.theater-controls[data-visible='false'] {
+  opacity: 0;
+  pointer-events: none;
+}
+.theater-playbtn {
+  color: #fff;
+  background: var(--px-accent);
+  transition: transform 0.12s ease;
+}
+.theater-playbtn:hover {
+  transform: scale(1.06);
+}
+.theater-ctrlbtn {
+  color: var(--px-fg-3);
+  border-radius: 8px;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.theater-ctrlbtn:hover {
+  color: var(--px-fg);
+  background: rgba(20, 40, 60, 0.07);
+}
+
+/* scrubber: a styled track with buffered + played fills, a transparent
+   range input on top capturing pointer/keyboard. */
+.theater-scrub {
+  height: 18px;
+  display: flex;
+  align-items: center;
+}
+.theater-scrub-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 4px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: rgba(20, 40, 60, 0.16);
+  overflow: hidden;
+}
+.theater-scrub-buf {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(20, 40, 60, 0.24);
+}
+.theater-scrub-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--px-accent);
+}
+.theater-scrub-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+  z-index: 1;
+}
+
+/* proctoring violation bands merged onto the scrubber — each spans its full
+   start→end duration (min-width keeps a brief violation visible). Purely visual:
+   pointer-events:none so they never block scrubbing; the pointer-following hover
+   card carries the detail. data-hover (set from JS hit-testing) lifts the band
+   the pointer is currently over. */
+.theater-scrub-flag {
+  position: absolute;
+  top: 50%;
+  height: 7px;
+  min-width: 4px;
+  transform: translateY(-50%);
+  border: none;
+  padding: 0;
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0.9;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+  transition: height 0.12s ease, opacity 0.12s ease;
+}
+.theater-scrub-flag[data-hover='true'] {
+  height: 11px;
+  opacity: 1;
+}
+
+/* pointer-following hover card for a violation band (portaled to body, fixed) */
+.theater-flagcard {
+  position: fixed;
+  transform: translate(-50%, calc(-100% - 12px));
+  width: 158px;
+  z-index: 90;
+  pointer-events: none;
+  border-radius: 11px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid var(--px-hairline-strong);
+  box-shadow: 0 14px 34px rgba(15, 30, 45, 0.36);
+}
+.theater-flagcard-img {
+  display: block;
+  width: 100%;
+  height: 88px;
+  object-fit: cover;
+}
+.theater-flagcard-body {
+  padding: 7px 10px;
+}
+.theater-flagcard-title {
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.theater-flagcard-meta {
+  margin-top: 2px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--px-fg-3);
+}
+/* question markers — small accent dots on the same track */
+.theater-scrub-node {
+  position: absolute;
+  top: 50%;
+  height: 9px;
+  width: 9px;
+  transform: translate(-50%, -50%);
+  border: 2px solid #fff;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--px-accent);
+  cursor: pointer;
+  z-index: 3;
+  transition: transform 0.12s ease;
+}
+.theater-scrub-node:hover {
+  transform: translate(-50%, -50%) scale(1.25);
+}
+.theater-scrub-node[data-active='true'] {
+  box-shadow: 0 0 0 3px var(--px-accent-glow);
+}
+.theater-scrub-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 12px;
+  width: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(20, 40, 60, 0.2);
+}
+.theater-scrub-input::-moz-range-thumb {
+  height: 12px;
+  width: 12px;
+  border: 1px solid rgba(20, 40, 60, 0.2);
+  border-radius: 50%;
+  background: #fff;
+}
+.theater-vol {
+  width: 72px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  border-radius: 999px;
+  background: rgba(20, 40, 60, 0.16);
+  cursor: pointer;
+}
+.theater-vol::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 11px;
+  width: 11px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(20, 40, 60, 0.2);
+}
+.theater-vol::-moz-range-thumb {
+  height: 11px;
+  width: 11px;
+  border: 1px solid rgba(20, 40, 60, 0.2);
+  border-radius: 50%;
+  background: #fff;
+}
+
+/* --- integrity chips (shown in the top bar) --- */
+.theater-tl-integrity {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  color: #fff;
+  background: var(--px-danger-fill);
+  box-shadow: 0 4px 14px rgba(229, 85, 107, 0.4);
+}
+/* pending hint (proctoring still analyzing) — same frosted pill as the label */
+.theater-tl-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--px-fg-3);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 4px 14px rgba(15, 40, 60, 0.16);
+}
+
+/* --- loading spinners (accent ring on a faint track) --- */
+.theater-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid rgba(20, 40, 60, 0.14);
+  border-top-color: var(--px-accent);
+  animation: theater-spin 0.8s linear infinite;
+}
+.theater-spinner-sm {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid rgba(20, 40, 60, 0.18);
+  border-top-color: var(--px-accent);
+  animation: theater-spin 0.8s linear infinite;
+}
+@keyframes theater-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .theater-spinner,
+  .theater-spinner-sm {
+    animation-duration: 1.8s;
+  }
+}
+
+/* --- glassmorphic scrollbar ---
+   Minimal, floating, theme-tinted: a translucent ink thumb with rounded ends
+   inset off a transparent track (the 3px transparent border + padding-box clip
+   makes it read as a small pill drifting inside the panel). Shared by every
+   scroll region in the theater. */
+.theater-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(20, 40, 60, 0.26) transparent;
+}
+.theater-scroll::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+.theater-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.theater-scroll::-webkit-scrollbar-thumb {
+  background: rgba(20, 40, 60, 0.22);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.theater-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(20, 40, 60, 0.38);
+  background-clip: padding-box;
+}
+.theater-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
