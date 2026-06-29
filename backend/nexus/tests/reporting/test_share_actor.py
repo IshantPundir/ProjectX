@@ -139,16 +139,18 @@ async def test_share_actor_marks_failed_on_render_error(db_session, monkeypatch,
 
 
 @pytest.mark.asyncio
-async def test_share_actor_uses_recording_share_base_url_override(
+async def test_share_actor_uses_candidate_session_base_url(
     db_session, monkeypatch, seeded_share
 ):
-    """When RECORDING_SHARE_BASE_URL is set (LAN demo), the PDF link uses it
-    instead of frontend_base_url."""
+    """The recordings link is based on candidate_session_base_url (the session
+    app), so a shared PDF opened over the session ngrok tunnel reaches a real
+    page. Changed 2026-06-29: moved from the recruiter-app base to the session-app base."""
     captured = {}
     real_build = actors.build_pdf_context
 
     def _capture_build(*args, **kwargs):
         captured["full_session_url"] = kwargs.get("full_session_url")
+        captured["reel_url"] = kwargs.get("reel_url")
         return real_build(*args, **kwargs)
 
     async def fake_render(ctx):
@@ -163,7 +165,7 @@ async def test_share_actor_uses_recording_share_base_url_override(
     async def fake_send_email(*, to, subject, html, attachments=None):
         pass
 
-    monkeypatch.setattr(actors.settings, "recording_share_base_url", "http://192.168.1.50:3000")
+    monkeypatch.setattr(actors.settings, "candidate_session_base_url", "https://sess.example.ngrok.app")
     _patch_bypass_session(monkeypatch, db_session)
     monkeypatch.setattr(actors, "build_pdf_context", _capture_build)
     monkeypatch.setattr(actors, "render_report_pdf", fake_render)
@@ -174,5 +176,10 @@ async def test_share_actor_uses_recording_share_base_url_override(
         share_id=seeded_share.id, tenant_id=seeded_share.tenant_id, correlation_id="c",
     )
 
-    url = captured["full_session_url"]
-    assert url.startswith("http://192.168.1.50:3000/recordings/")
+    full_url = captured["full_session_url"]
+    reel_url = captured["reel_url"]
+    assert "/recordings/" in full_url
+    token = full_url.rsplit("/recordings/", 1)[1].split("?", 1)[0]
+    assert token  # non-empty
+    assert full_url == "https://sess.example.ngrok.app/recordings/" + token + "?view=full"
+    assert reel_url == "https://sess.example.ngrok.app/recordings/" + token + "?view=reel"

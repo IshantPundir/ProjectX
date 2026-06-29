@@ -480,11 +480,11 @@ async def _share_report_pdf_async(
             share.share_token_hash = hash_share_token(share_token)
             share.share_expires_at = datetime.now(UTC) + timedelta(
                 days=settings.recording_share_ttl_days)
-            # LAN demo: recording_share_base_url points at the host LAN IP so a
-            # PDF recipient on the same WiFi can open the page; unset in prod →
-            # falls back to frontend_base_url (the recruiter app). See
-            # docs/superpowers/specs/2026-06-18-lan-recordings-share-link-design.md
-            share_base = settings.recording_share_base_url or settings.frontend_base_url
+            # The recordings page lives in the candidate session app (frontend/session),
+            # which is the surface already tunneled in LAN/demo mode and set as
+            # CANDIDATE_SESSION_BASE_URL. Local default is http://localhost:3002.
+            # See docs/superpowers/specs/2026-06-29-public-recordings-share-to-session-design.md
+            share_base = settings.candidate_session_base_url
             # Two deep-linked entry points off the same capability token. The
             # public /recordings page reads ?view= to open straight to the reel
             # ("Candidate highlight" — the USP) or the full session recording.
