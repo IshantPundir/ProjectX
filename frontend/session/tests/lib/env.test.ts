@@ -49,6 +49,20 @@ describe('NEXT_PUBLIC_LIVEKIT_WS_URL', () => {
   })
 })
 
+describe('NEXT_PUBLIC_RECORDING_MEDIA_ORIGIN', () => {
+  const base = { NEXT_PUBLIC_API_URL: 'https://api.example.com' }
+
+  it('defaults to the R2 wildcard when unset', () => {
+    const env = envSchema.parse({ ...base })
+    expect(env.NEXT_PUBLIC_RECORDING_MEDIA_ORIGIN).toBe('https://*.r2.cloudflarestorage.com')
+  })
+
+  it('passes through an explicit origin', () => {
+    const env = envSchema.parse({ ...base, NEXT_PUBLIC_RECORDING_MEDIA_ORIGIN: 'https://x.s3.us-east-1.amazonaws.com' })
+    expect(env.NEXT_PUBLIC_RECORDING_MEDIA_ORIGIN).toBe('https://x.s3.us-east-1.amazonaws.com')
+  })
+})
+
 describe('envSchema', () => {
   it('accepts a valid http URL', () => {
     const parsed = envSchema.parse({

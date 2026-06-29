@@ -4,10 +4,10 @@ import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 
-import { BrandLogo, Skeleton } from '@/components/px'
-import { reportsApi } from '@/lib/api/reports'
+import { BrandLogo, Skeleton } from '@/components/recordings/px'
+import { reportsApi } from '@/components/recordings/api/reports'
 import { cn } from '@/lib/utils'
-import { PublicPlaybackProvider } from '@/lib/hooks/public-playback-context'
+import { PublicPlaybackProvider } from '@/components/recordings/hooks/public-playback-context'
 import { ReelTheater } from './theater/ReelTheater'
 import { ReviewTheater } from './theater/ReviewTheater'
 

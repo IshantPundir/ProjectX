@@ -2,7 +2,7 @@
 
 import { useParams } from 'next/navigation'
 
-import { PublicRecordingsView } from '@/components/dashboard/reports/PublicRecordingsView'
+import { PublicRecordingsView } from '@/components/recordings/PublicRecordingsView'
 
 export default function PublicRecordingsPage() {
   const params = useParams<{ token: string }>()

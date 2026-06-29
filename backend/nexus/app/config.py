@@ -550,20 +550,6 @@ class Settings(BaseSettings):
     def _strip_trailing_slash(cls, v: str) -> str:
         return v.rstrip("/")
 
-    # Base URL for the public recordings share page (the "See full session
-    # recording" button in the shared report PDF). Defaults to frontend_base_url
-    # (the recruiter app hosts /recordings/) when unset — production leaves this
-    # unset, so there is no behavior change. Overridden ONLY for the LAN demo,
-    # where the recruiter app is reached at the host's LAN IP instead of
-    # localhost (scripts/demo.sh sets it). Kept separate from frontend_base_url
-    # so the LAN override does not disturb recruiter invite-email links.
-    recording_share_base_url: str | None = None
-
-    @field_validator("recording_share_base_url")
-    @classmethod
-    def _strip_recording_share_trailing_slash(cls, v: str | None) -> str | None:
-        return v.rstrip("/") if v else v
-
     # Candidate session base URL — used to build interview invite links in
     # scheduler emails. Kept SEPARATE from frontend_base_url so the two
     # surfaces (recruiter dashboard vs. candidate session app) can be

@@ -54,6 +54,11 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: SECURITY_HEADERS,
       },
+      {
+        // Public recordings share page — never index a capability URL.
+        source: "/recordings/:path*",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+      },
     ];
   },
 };

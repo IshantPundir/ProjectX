@@ -24,6 +24,15 @@ export const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => v && v.length > 0 ? v : 'wss://*.livekit.cloud https://*.livekit.cloud'),
+  // CSP origin(s) for presigned session-recording / reel video + thumbnails.
+  // The <video src> and reference-photo <img> load from the object store
+  // (Cloudflare R2: https://<account>.r2.cloudflarestorage.com, or an AWS S3
+  // regional host). Space-separated list allowed. Defaults to the R2 wildcard
+  // so it works out-of-box; an S3-hosted deploy MUST set this explicitly.
+  NEXT_PUBLIC_RECORDING_MEDIA_ORIGIN: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : 'https://*.r2.cloudflarestorage.com')),
 })
 
 export type Env = z.infer<typeof envSchema>
@@ -37,4 +46,5 @@ export const env: Env = envSchema.parse({
   NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
   NEXT_PUBLIC_PROCTORING_DEBUG: process.env.NEXT_PUBLIC_PROCTORING_DEBUG,
   NEXT_PUBLIC_LIVEKIT_WS_URL: process.env.NEXT_PUBLIC_LIVEKIT_WS_URL,
+  NEXT_PUBLIC_RECORDING_MEDIA_ORIGIN: process.env.NEXT_PUBLIC_RECORDING_MEDIA_ORIGIN,
 })

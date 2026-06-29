@@ -1,0 +1,312 @@
+/* ─────────────────────────────────────────────────────────
+   Scoped daylight token block for the /recordings subtree.
+   Activates only inside [data-px-theme="daylight"] wrappers.
+   Raw --px-* vars here; @theme inline mappings live in globals.css.
+   Source: frontend/app/app/theme.css [data-px-theme="daylight"]
+   ───────────────────────────────────────────────────────── */
+
+[data-px-theme="daylight"] {
+  /* Tailwind named-palette ramps — per theme; referenced from globals.css @theme */
+  --c-white: #FFFFFF;
+
+  /* zinc / neutral / stone / slate / gray — cool navy-grey family */
+  --c-zinc-50:  #F4F6F8;
+  --c-zinc-100: #E8ECEF;
+  --c-zinc-200: #D3DADF;
+  --c-zinc-300: #C3CBCE;
+  --c-zinc-400: #8F9DA5;
+  --c-zinc-500: #5C6B73;
+  --c-zinc-600: #435059;
+  --c-zinc-700: #2A3940;
+  --c-zinc-800: #1E2B32;
+  --c-zinc-900: #14242B;
+  --c-zinc-950: #0A171C;
+
+  --c-neutral-50:  #F4F6F8;
+  --c-neutral-100: #E8ECEF;
+  --c-neutral-200: #D3DADF;
+  --c-neutral-300: #C3CBCE;
+  --c-neutral-400: #8F9DA5;
+  --c-neutral-500: #5C6B73;
+  --c-neutral-600: #435059;
+  --c-neutral-700: #2A3940;
+  --c-neutral-800: #1E2B32;
+  --c-neutral-900: #14242B;
+
+  --c-stone-50:  #F4F6F8;
+  --c-stone-100: #E8ECEF;
+  --c-stone-200: #D3DADF;
+  --c-stone-300: #C3CBCE;
+  --c-stone-400: #8F9DA5;
+  --c-stone-500: #5C6B73;
+  --c-stone-600: #435059;
+  --c-stone-700: #2A3940;
+  --c-stone-800: #1E2B32;
+  --c-stone-900: #14242B;
+
+  --c-slate-50:  #F4F6F8;
+  --c-slate-100: #E8ECEF;
+  --c-slate-200: #D3DADF;
+  --c-slate-300: #C3CBCE;
+  --c-slate-400: #8F9DA5;
+  --c-slate-500: #5C6B73;
+  --c-slate-600: #435059;
+  --c-slate-700: #2A3940;
+  --c-slate-800: #1E2B32;
+  --c-slate-900: #14242B;
+
+  --c-gray-50:  #F4F6F8;
+  --c-gray-100: #E8ECEF;
+  --c-gray-200: #D3DADF;
+  --c-gray-300: #C3CBCE;
+  --c-gray-400: #8F9DA5;
+  --c-gray-500: #5C6B73;
+  --c-gray-600: #435059;
+  --c-gray-700: #2A3940;
+  --c-gray-800: #1E2B32;
+  --c-gray-900: #14242B;
+
+  /* red / rose — danger, coral-red family */
+  --c-red-50:  #FBEAEC;
+  --c-red-100: #F5D3D7;
+  --c-red-200: #ECA8B1;
+  --c-red-300: #EF8093;
+  --c-red-400: #EA6A7E;
+  --c-red-500: #E5556B;
+  --c-red-600: #C73E56;
+  --c-red-700: #A8344A;
+  --c-red-800: #8A2A3C;
+  --c-red-900: #6E2230;
+
+  --c-rose-50:  #FBEAEC;
+  --c-rose-100: #F5D3D7;
+  --c-rose-400: #EA6A7E;
+  --c-rose-500: #E5556B;
+  --c-rose-600: #C73E56;
+  --c-rose-700: #A8344A;
+
+  /* green / emerald / teal — mint success family */
+  --c-green-50:  #E8F5F1;
+  --c-green-100: #D1EBE4;
+  --c-green-200: #A5D8CB;
+  --c-green-300: #80CAB8;
+  --c-green-400: #6FC9B8;
+  --c-green-500: #2C8472;
+  --c-green-600: #1E6B5C;
+  --c-green-700: #134E42;
+  --c-green-800: #0E3D34;
+  --c-green-900: #0B362E;
+
+  --c-emerald-50:  #E8F5F1;
+  --c-emerald-100: #D1EBE4;
+  --c-emerald-400: #6FC9B8;
+  --c-emerald-500: #2C8472;
+  --c-emerald-600: #1E6B5C;
+  --c-emerald-700: #134E42;
+  --c-emerald-800: #0E3D34;
+
+  --c-teal-50:  #E8F5F1;
+  --c-teal-100: #D1EBE4;
+  --c-teal-400: #6FC9B8;
+  --c-teal-500: #2C8472;
+  --c-teal-600: #1E6B5C;
+  --c-teal-700: #134E42;
+
+  /* blue / sky / indigo — cyan-teal info family */
+  --c-blue-50:  #EAF4F7;
+  --c-blue-100: #D4EAF0;
+  --c-blue-200: #A9D5E1;
+  --c-blue-300: #7DBFCF;
+  --c-blue-400: #52AABF;
+  --c-blue-500: #1F7E92;
+  --c-blue-600: #1A6D7F;
+  --c-blue-700: #15616D;
+  --c-blue-800: #104F5A;
+  --c-blue-900: #0E4651;
+
+  --c-sky-50:  #EAF4F7;
+  --c-sky-100: #D4EAF0;
+  --c-sky-500: #1F7E92;
+  --c-sky-600: #1A6D7F;
+  --c-sky-700: #15616D;
+
+  --c-indigo-50:  #EAF4F7;
+  --c-indigo-100: #D4EAF0;
+  --c-indigo-500: #1F7E92;
+  --c-indigo-600: #1A6D7F;
+  --c-indigo-700: #15616D;
+  --c-indigo-800: #104F5A;
+
+  /* amber / yellow / orange — caution family */
+  --c-amber-50:  #FBF3E0;
+  --c-amber-100: #F6E6C0;
+  --c-amber-200: #EDD088;
+  --c-amber-300: #EBB950;
+  --c-amber-400: #ECA62C;
+  --c-amber-500: #E8930C;
+  --c-amber-600: #C07A0A;
+  --c-amber-700: #7A4A08;
+  --c-amber-800: #623B06;
+  --c-amber-900: #4D2F05;
+
+  --c-yellow-50:  #FBF3E0;
+  --c-yellow-100: #F6E6C0;
+  --c-yellow-500: #E8930C;
+  --c-yellow-600: #C07A0A;
+  --c-yellow-700: #7A4A08;
+
+  --c-orange-50:  #FBF3E0;
+  --c-orange-100: #F6E6C0;
+  --c-orange-500: #E8930C;
+  --c-orange-600: #C07A0A;
+  --c-orange-700: #7A4A08;
+
+  /* purple / violet / fuchsia — VIOLET accent family */
+  --c-purple-50:  #EEEBF9;
+  --c-purple-100: #DDD8F4;
+  --c-purple-500: #6C5CD0;
+  --c-purple-600: #5848B8;
+  --c-purple-700: #4A3EA0;
+  --c-purple-800: #3C3286;
+
+  --c-violet-50:  #EEEBF9;
+  --c-violet-100: #DDD8F4;
+  --c-violet-500: #6C5CD0;
+  --c-violet-600: #5848B8;
+  --c-violet-700: #4A3EA0;
+
+  --c-fuchsia-50:  #EEEBF9;
+  --c-fuchsia-500: #6C5CD0;
+  --c-fuchsia-600: #5848B8;
+
+  /* Surfaces */
+  --px-bg:        #F4F6F8;
+  --px-bg-2:      #EAEEF1;
+  --px-surface:   #FFFFFF;
+  --px-surface-2: #F4F6F8;
+  --px-surface-3: #E7EBEE;
+  --px-hairline:        rgba(12, 42, 56, 0.08);
+  --px-hairline-strong: rgba(12, 42, 56, 0.14);
+  --px-divider:         rgba(12, 42, 56, 0.05);
+
+  /* Ink */
+  --px-fg:   #0C2A38;
+  --px-fg-2: #34454E;
+  --px-fg-3: #5C6B73;
+  --px-fg-4: #93A0A6;
+  --px-fg-5: #C3CBCE;
+
+  /* Accent — violet */
+  --px-accent:       #6C5CD0;
+  --px-accent-2:     #5848B8;
+  --px-accent-soft:  #9B8FE0;
+  --px-accent-glow:  rgba(108, 92, 208, 0.28);
+  --px-accent-tint:  rgba(108, 92, 208, 0.12);
+  --px-accent-line:  rgba(108, 92, 208, 0.34);
+  --px-accent-ink:   #FFFFFF;
+
+  /* Glass */
+  --px-glass-blur:    16px;
+  --px-glass-bg:      rgba(255, 255, 255, 0.55);
+  --px-glass-bg-2:    rgba(255, 255, 255, 0.42);
+  --px-glass-border:  rgba(255, 255, 255, 0.65);
+  --px-glass-sheen:   linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.85), transparent);
+
+  /* Backdrop */
+  --px-backdrop:
+    radial-gradient(72% 58% at 6% 2%, rgba(108,92,208,0.20), transparent 60%),
+    radial-gradient(64% 72% at 102% 104%, rgba(98,198,230,0.22), transparent 60%),
+    radial-gradient(50% 50% at 60% -10%, rgba(183,166,230,0.16), transparent 70%),
+    linear-gradient(135deg,#EFEEF6,#E9EFF3);
+
+  /* Semantic — dark-ink role vars + pastel fills */
+  --px-ok:          #0B3D34;
+  --px-ok-fill:     #AEE3D9;
+  --px-ok-bg:       rgba(174, 227, 217, 0.20);
+  --px-ok-line:     rgba(174, 227, 217, 0.5);
+
+  --px-ai:          #15616D;
+  --px-ai-fill:     #B6E4EE;
+  --px-ai-bg:       rgba(182, 228, 238, 0.22);
+  --px-ai-line:     rgba(182, 228, 238, 0.55);
+
+  --px-human:       #4A3E7A;
+  --px-human-fill:  #D8CEF4;
+  --px-human-bg:    rgba(216, 206, 244, 0.28);
+  --px-human-line:  rgba(216, 206, 244, 0.6);
+
+  --px-neutral-cat:       #7A3E63;
+  --px-neutral-cat-fill:  #EAD0E6;
+  --px-neutral-cat-bg:    rgba(234, 208, 230, 0.30);
+  --px-neutral-cat-line:  rgba(234, 208, 230, 0.6);
+
+  --px-caution:       #7A4A08;
+  --px-caution-fill:  #E8930C;
+  --px-caution-bg:    rgba(232, 147, 12, 0.12);
+  --px-caution-line:  rgba(232, 147, 12, 0.4);
+
+  --px-danger:       #8A2733;
+  --px-danger-fill:  #E5556B;
+  --px-danger-bg:    rgba(229, 85, 107, 0.10);
+  --px-danger-line:  rgba(229, 85, 107, 0.35);
+
+  /* Density rhythm (comfortable default) */
+  --px-row-h: 34px;
+  --px-row-py: 10px;
+  --px-group-gap: 14px;
+
+  /* Chrome dimensions */
+  --px-topbar-h: 48px;
+
+  /* Radii (px) */
+  --px-r-xs: 4px;
+  --px-r-sm: 6px;
+  --px-r-md: 8px;
+  --px-r-lg: 10px;
+  --px-r-xl: 14px;
+
+  /* Shadows */
+  --px-shadow-sm: 0 1px 2px rgba(12, 42, 56, 0.05);
+  --px-shadow-md: 0 8px 24px rgba(20, 40, 60, 0.08), 0 2px 4px rgba(20, 40, 60, 0.04);
+  --px-shadow-lg: 0 24px 60px rgba(20, 40, 60, 0.14), 0 6px 16px rgba(20, 40, 60, 0.06);
+
+  /* Motion */
+  --px-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --px-d1: 120ms;
+  --px-d2: 200ms;
+  --px-d3: 320ms;
+
+  /* ─── shadcn semantic tokens mapped to v4 palette ─── */
+  --background: var(--px-bg);
+  --foreground: var(--px-fg);
+  --card: var(--px-surface);
+  --card-foreground: var(--px-fg);
+  --popover: var(--px-surface);
+  --popover-foreground: var(--px-fg);
+  --primary: var(--px-accent);
+  --primary-foreground: var(--px-accent-ink);
+  --secondary: var(--px-surface-2);
+  --secondary-foreground: var(--px-fg-2);
+  --muted: var(--px-bg-2);
+  --muted-foreground: var(--px-fg-3);
+  --accent: var(--px-surface-2);
+  --accent-foreground: var(--px-fg);
+  --destructive: var(--px-danger-fill);
+  --border: var(--px-surface-3);
+  --input: var(--px-hairline-strong);
+  --ring: var(--px-fg);
+  --chart-1: var(--px-accent);
+  --chart-2: var(--px-ai-fill);
+  --chart-3: var(--px-caution-fill);
+  --chart-4: var(--px-human-fill);
+  --chart-5: var(--px-ok-fill);
+  --radius: 0.5rem;
+  --sidebar: var(--px-bg-2);
+  --sidebar-foreground: var(--px-fg);
+  --sidebar-primary: var(--px-accent);
+  --sidebar-primary-foreground: var(--px-accent-ink);
+  --sidebar-accent: var(--px-surface-2);
+  --sidebar-accent-foreground: var(--px-fg);
+  --sidebar-border: var(--px-surface-3);
+  --sidebar-ring: var(--px-fg);
+}

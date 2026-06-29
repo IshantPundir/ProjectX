@@ -29,6 +29,7 @@ export function proxy(request: NextRequest) {
   const isDev = process.env.NODE_ENV === "development";
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  const mediaOrigin = process.env.NEXT_PUBLIC_RECORDING_MEDIA_ORIGIN || "https://*.r2.cloudflarestorage.com";
   if (!apiUrl) {
     // Same boundary as next.config.ts — refuse to serve a request
     // without a known API origin baked into connect-src.
@@ -44,8 +45,8 @@ export function proxy(request: NextRequest) {
     // docs/superpowers/specs/2026-05-29-vision-proctoring-design.md §5.
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval'${isDev ? " 'unsafe-eval'" : ""}`,
     `style-src 'self' ${isDev ? "'unsafe-inline'" : `'nonce-${nonce}'`}`,
-    "img-src 'self' data: blob:",
-    "media-src 'self' blob: mediastream:",
+    "img-src 'self' data: blob: " + mediaOrigin,
+    "media-src 'self' blob: mediastream: " + mediaOrigin,
     "font-src 'self' data:",
     // connect-src must allow BOTH schemes the LiveKit client uses against the
     // SFU host: the WebSocket (ws/wss) AND an HTTP(S) `fetch()` it issues to the
@@ -54,7 +55,7 @@ export function proxy(request: NextRequest) {
     // allow `ws://localhost:* http://localhost:*`. Prod → NEXT_PUBLIC_LIVEKIT_WS_URL
     // MUST list both the wss:// and https:// origins (the default cloud fallback
     // does). Keep that fallback default in sync with the transform in lib/env.ts.
-    `connect-src 'self' ${apiUrl}${isDev ? " ws://localhost:* http://localhost:*" : ""} ${process.env.NEXT_PUBLIC_LIVEKIT_WS_URL ?? "wss://*.livekit.cloud https://*.livekit.cloud"}`,
+    `connect-src 'self' ${apiUrl}${isDev ? " ws://localhost:* http://localhost:*" : ""} ${process.env.NEXT_PUBLIC_LIVEKIT_WS_URL ?? "wss://*.livekit.cloud https://*.livekit.cloud"} ${mediaOrigin}`,
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",

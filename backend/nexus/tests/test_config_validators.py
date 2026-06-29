@@ -102,33 +102,3 @@ def test_cors_origins_default_includes_3002():
     assert "http://127.0.0.1:3002" in s.cors_origins
 
 
-def test_recording_share_base_url_defaults_to_none():
-    """Unset → None, so the actor falls back to frontend_base_url (no prod change)."""
-    from app.config import Settings
-
-    s = Settings(_env_file=None, candidate_jwt_secret="test-secret-32-chars-long-0000000")
-    assert s.recording_share_base_url is None
-
-
-def test_recording_share_base_url_strips_trailing_slash():
-    """Mirrors frontend_base_url's normalizer — trailing slash is removed when set."""
-    from app.config import Settings
-
-    s = Settings(
-        _env_file=None,
-        candidate_jwt_secret="test-secret-32-chars-long-0000000",
-        recording_share_base_url="http://192.168.1.50:3000/",
-    )
-    assert s.recording_share_base_url == "http://192.168.1.50:3000"
-
-
-def test_recording_share_base_url_none_is_not_stripped():
-    """None passes through the validator untouched (no AttributeError)."""
-    from app.config import Settings
-
-    s = Settings(
-        _env_file=None,
-        candidate_jwt_secret="test-secret-32-chars-long-0000000",
-        recording_share_base_url=None,
-    )
-    assert s.recording_share_base_url is None

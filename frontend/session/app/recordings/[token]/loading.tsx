@@ -1,4 +1,4 @@
-import { Skeleton } from '@/components/px'
+import { Skeleton } from '@/components/recordings/px'
 
 export default function Loading() {
   return (

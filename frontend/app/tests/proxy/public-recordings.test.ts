@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 
-// Mock @supabase/ssr so proxy() runs with NO authenticated user. The
-// /recordings/ branch must short-circuit to a pass-through BEFORE any auth
-// check, so even an unauthenticated request is not redirected to /login.
+// Mock @supabase/ssr so proxy() runs with NO authenticated user.
+// /recordings/ is no longer a special public path — it must be auth-gated like
+// every other dashboard route.
 vi.mock('@supabase/ssr', () => ({
   createServerClient: () => ({
     auth: {
@@ -16,15 +16,16 @@ import { NextRequest } from 'next/server'
 
 import { proxy } from '@/proxy'
 
-describe('proxy — public /recordings/ allowlist', () => {
-  it('lets /recordings/<token> through unauthenticated (no /login redirect)', async () => {
+describe('proxy — /recordings/ is now a gated route (moved to session app)', () => {
+  it('redirects /recordings/<token> to /login when unauthenticated', async () => {
     const req = new NextRequest(new URL('http://localhost:3000/recordings/abc123'))
     const res = await proxy(req)
-    // Pass-through (NextResponse.next), NOT a redirect to /login.
-    expect(res.headers.get('location')).toBeNull()
+    const location = res.headers.get('location')
+    expect(location).not.toBeNull()
+    expect(location).toContain('/login')
   })
 
-  it('still redirects a protected route to /login when unauthenticated', async () => {
+  it('still redirects other protected routes to /login when unauthenticated', async () => {
     const req = new NextRequest(new URL('http://localhost:3000/jobs'))
     const res = await proxy(req)
     const location = res.headers.get('location')
