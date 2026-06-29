@@ -70,7 +70,7 @@ export function ReportView({
           toast.error(
             err instanceof ApiError && err.status === 422
               ? err.message // backend's ineligible_reason
-              : 'Could not start the highlight video. Please try again.',
+              : 'Could not start the Evidence Reel. Please try again.',
           ),
       },
     )

@@ -59,7 +59,7 @@ export function ReelCard({
         </span>
         {status === 'ready' && data?.duration_seconds != null && (
           <span className="text-[11px]" style={{ color: 'var(--px-fg-4)' }}>
-            {Math.round(data.duration_seconds)}s highlight
+            {Math.round(data.duration_seconds)}s
           </span>
         )}
       </div>
