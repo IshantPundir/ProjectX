@@ -51,7 +51,12 @@ export function VerdictStamp({ verdict }: { verdict: Verdict }) {
           textAnchor="middle"
           fontWeight="bold"
           fontSize="28"
-          letterSpacing="1.5"
+          letterSpacing="1"
+          // Constrain every verdict word to a uniform width that fits inside the
+          // inner frame (x 17→183), so long words like "BORDERLINE" can't overflow
+          // the border and short ones fill the stamp evenly.
+          textLength="146"
+          lengthAdjust="spacingAndGlyphs"
           fill={color}
           stroke="none"
           fontStyle="italic"

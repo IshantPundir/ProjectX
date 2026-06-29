@@ -4,7 +4,10 @@ import { useState, type CSSProperties } from 'react'
 import { Share2 } from 'lucide-react'
 
 import type { HumanDecisionValue, ReportRead } from '@/lib/api/reports'
-import { useReel } from '@/lib/hooks/use-reel'
+import { toast } from 'sonner'
+
+import { ApiError } from '@/lib/api/client'
+import { useReel, useGenerateReel } from '@/lib/hooks/use-reel'
 import { Button } from '@/components/px'
 import { HumanDecisionPanel } from './HumanDecisionPanel'
 import { ImmersiveHeader } from './ImmersiveHeader'
@@ -52,7 +55,25 @@ export function ReportView({
   // ── Reel state ────────────────────────────────────────────────────────────
   const [reelOpen, setReelOpen] = useState(false)
   const { data: reelData } = useReel(sessionId)
+  const generateReel = useGenerateReel(sessionId)
   const hasReel = reelData?.status === 'ready' && !!reelData.signed_url
+  const reelEligible = reelData?.eligible ?? false
+  const reelBusy =
+    reelData?.status === 'pending' ||
+    reelData?.status === 'generating' ||
+    generateReel.isPending
+  const handleGenerateReel = () =>
+    generateReel.mutate(
+      { regenerate: false },
+      {
+        onError: (err) =>
+          toast.error(
+            err instanceof ApiError && err.status === 422
+              ? err.message // backend's ineligible_reason
+              : 'Could not start the highlight video. Please try again.',
+          ),
+      },
+    )
 
   // ── Identity: prefer report.header over query-param props (legacy fallback) ─
   const resolvedName = report.header?.candidate_name ?? candidateName
@@ -78,7 +99,10 @@ export function ReportView({
             header={report.header}
             verdict={report.verdict}
             hasReel={hasReel}
+            reelEligible={reelEligible}
+            reelBusy={reelBusy}
             onOpenReel={() => setReelOpen(true)}
+            onGenerateReel={handleGenerateReel}
             onOpenSession={() => openTheater(null)}
           />
         </div>

@@ -1,6 +1,6 @@
-import { expect, test } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import { ImmersiveHeader } from '@/components/dashboard/reports/ImmersiveHeader'
+import { expect, test, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
+import { ImmersiveHeader, type ImmersiveHeaderProps } from '@/components/dashboard/reports/ImmersiveHeader'
 import type { ReportHeader } from '@/lib/api/reports'
 
 const header: ReportHeader = {
@@ -10,8 +10,24 @@ const header: ReportHeader = {
   skills: ['Intune', 'Troubleshooting'], reference_photo_url: null,
 }
 
+// Default props so each test only overrides what it cares about.
+function renderHeader(overrides: Partial<ImmersiveHeaderProps> = {}) {
+  const props: ImmersiveHeaderProps = {
+    header,
+    verdict: 'advance',
+    hasReel: true,
+    reelEligible: false,
+    reelBusy: false,
+    onOpenReel: () => {},
+    onGenerateReel: () => {},
+    onOpenSession: () => {},
+    ...overrides,
+  }
+  return render(<ImmersiveHeader {...props} />)
+}
+
 test('shows identity, email, job and skills', () => {
-  render(<ImmersiveHeader header={header} verdict="advance" hasReel onOpenReel={() => {}} onOpenSession={() => {}} />)
+  renderHeader()
   expect(screen.getByText('Punar Sharma')).toBeInTheDocument()
   expect(screen.getByText('punar@example.com')).toBeInTheDocument()
   expect(screen.getByText('Intune')).toBeInTheDocument()
@@ -19,36 +35,78 @@ test('shows identity, email, job and skills', () => {
 })
 
 test('hides the reel button on reject', () => {
-  render(<ImmersiveHeader header={header} verdict="reject" hasReel onOpenReel={() => {}} onOpenSession={() => {}} />)
+  renderHeader({ verdict: 'reject' })
   expect(screen.queryByRole('button', { name: /candidate highlight/i })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: /full session/i })).toBeInTheDocument()
 })
 
 test('hasReel=false hides reel button even on advance verdict', () => {
-  render(<ImmersiveHeader header={header} verdict="advance" hasReel={false} onOpenReel={() => {}} onOpenSession={() => {}} />)
+  renderHeader({ hasReel: false })
   expect(screen.queryByRole('button', { name: /candidate highlight/i })).toBeNull()
   expect(screen.getByRole('button', { name: /full session/i })).toBeInTheDocument()
 })
 
 test('null date and duration render without NaN or Invalid Date', () => {
   const nullHeader = { ...header, session_started_at: null, duration_seconds: null }
-  render(<ImmersiveHeader header={nullHeader as never} verdict="advance" hasReel onOpenReel={() => {}} onOpenSession={() => {}} />)
+  renderHeader({ header: nullHeader as never })
   expect(document.body.textContent).not.toMatch(/NaN|Invalid Date/)
   expect(screen.getByText('Punar Sharma')).toBeInTheDocument()
 })
 
 test('renders worn SVG verdict stamp with correct text for each verdict', () => {
-  const { unmount } = render(<ImmersiveHeader header={header} verdict="advance" hasReel onOpenReel={() => {}} onOpenSession={() => {}} />)
+  const { unmount } = renderHeader({ verdict: 'advance' })
   expect(screen.getByText('APPROVED')).toBeInTheDocument()
   expect(screen.getByRole('img', { name: /verdict: approved/i })).toBeInTheDocument()
   unmount()
 
-  const { unmount: u2 } = render(<ImmersiveHeader header={header} verdict="borderline" hasReel onOpenReel={() => {}} onOpenSession={() => {}} />)
+  const { unmount: u2 } = renderHeader({ verdict: 'borderline' })
   expect(screen.getByText('BORDERLINE')).toBeInTheDocument()
   expect(screen.getByRole('img', { name: /verdict: borderline/i })).toBeInTheDocument()
   u2()
 
-  render(<ImmersiveHeader header={header} verdict="reject" hasReel={false} onOpenReel={() => {}} onOpenSession={() => {}} />)
+  renderHeader({ verdict: 'reject', hasReel: false })
   expect(screen.getByText('REJECTED')).toBeInTheDocument()
   expect(screen.getByRole('img', { name: /verdict: rejected/i })).toBeInTheDocument()
+})
+
+// ─── Generate highlight video CTA ────────────────────────────────────────────
+
+test('shows the generate button when reel is absent + eligible (advance)', () => {
+  const onGenerateReel = vi.fn()
+  renderHeader({ hasReel: false, reelEligible: true, onGenerateReel })
+  const btn = screen.getByRole('button', { name: /generate highlight video/i })
+  expect(btn).toBeInTheDocument()
+  fireEvent.click(btn)
+  expect(onGenerateReel).toHaveBeenCalledOnce()
+})
+
+test('shows the generate button on borderline too', () => {
+  renderHeader({ verdict: 'borderline', hasReel: false, reelEligible: true })
+  expect(screen.getByRole('button', { name: /generate highlight video/i })).toBeInTheDocument()
+})
+
+test('hides the generate button on reject even when eligible', () => {
+  renderHeader({ verdict: 'reject', hasReel: false, reelEligible: true })
+  expect(screen.queryByRole('button', { name: /generate highlight video/i })).toBeNull()
+})
+
+test('hides the generate button when not eligible', () => {
+  renderHeader({ hasReel: false, reelEligible: false })
+  expect(screen.queryByRole('button', { name: /generate highlight video/i })).toBeNull()
+})
+
+test('hides the generate button once a reel exists (shows play instead)', () => {
+  renderHeader({ hasReel: true, reelEligible: true })
+  expect(screen.queryByRole('button', { name: /generate highlight video/i })).toBeNull()
+  expect(screen.getByRole('button', { name: /candidate highlight/i })).toBeInTheDocument()
+})
+
+test('busy state disables the button and shows Generating…', () => {
+  const onGenerateReel = vi.fn()
+  renderHeader({ hasReel: false, reelEligible: true, reelBusy: true, onGenerateReel })
+  const btn = screen.getByRole('button', { name: /generate highlight video/i })
+  expect(btn).toBeDisabled()
+  expect(btn).toHaveTextContent(/generating/i)
+  fireEvent.click(btn)
+  expect(onGenerateReel).not.toHaveBeenCalled()
 })

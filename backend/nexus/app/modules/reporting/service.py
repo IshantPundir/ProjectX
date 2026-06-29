@@ -31,9 +31,11 @@ from app.modules.reporting.scoring.aggregate import (
     score_overall,
 )
 from app.modules.reporting.scoring.constants import (
+    ADVANCE_THRESHOLD,
     BEHAVIORAL_TYPES,
     NARRATIVE_NOTES_PER_SIGNAL,
     NARRATIVE_TRANSCRIPT_CHAR_BUDGET,
+    REJECT_THRESHOLD,
     SCORECARD_EVIDENCE_MAX,
     TECHNICAL_TYPES,
     tier_label,
@@ -84,7 +86,9 @@ SCORER_CODE_VERSION = "qa-1"  # question-anchored, gen-1
 def _tone_by_score(s: int | None) -> str:
     if s is None:
         return "neutral"
-    return "ok" if s >= 65 else "caution" if s >= 40 else "danger"
+    # Gauge color tracks the verdict bands: ok = advance tier, caution =
+    # borderline tier, danger = reject tier (keep aligned with the thresholds).
+    return "ok" if s >= ADVANCE_THRESHOLD else "caution" if s >= REJECT_THRESHOLD else "danger"
 
 
 def _scorecard_evidence(

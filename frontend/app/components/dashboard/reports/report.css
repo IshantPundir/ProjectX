@@ -212,15 +212,31 @@
   border: 1px solid rgba(255,255,255,.16);
 }
 
-/* CTA — shared sizing for both header buttons */
+/* CTA — shared sizing for the header buttons */
 .rh-btn-reel,
-.rh-btn-sec {
+.rh-btn-sec,
+.rh-btn-gen {
   min-width: 170px;
   padding: 11px 20px;
   border-radius: 13px;
   font-weight: 600;
   font-size: 13px;
   justify-content: center;
+}
+
+/* CTA — accent-filled "generate highlight" button */
+.rh-btn-gen {
+  background: var(--px-accent);
+  color: #fff;
+  border: 1px solid color-mix(in srgb, var(--px-accent) 75%, #000);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--px-accent) 35%, transparent);
+}
+.rh-btn-gen:hover:not(:disabled) {
+  filter: brightness(1.07);
+}
+.rh-btn-gen:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 /* CTA — accent-tinted highlight button (no gradient) */
