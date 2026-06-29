@@ -111,7 +111,7 @@ export function TheaterTopBar({
         </div>
 
         {/* center: inline score gauges */}
-        <div className="flex items-center gap-2.5 justify-self-center">
+        <div className="theater-topbar-gauges flex items-center gap-2.5 justify-self-center">
           {dims.map(({ key, label, short }) => {
             const s = report.scores[key]
             return (
