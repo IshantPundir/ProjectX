@@ -276,3 +276,63 @@ def test_document_includes_asked_question_line():
                           verdict_reason=None, why_positive=None, strengths=[],
                           question_scorecards=[], signal_scorecards=[], transcript=tr)
     assert "asked: Walk me through enrollment." in doc
+
+
+def test_document_includes_negative_evidence_and_rich_signal_fields():
+    from app.modules.reel.director import _build_document
+    tr = [
+        {"speaker": "candidate", "turn_ref": "t-1", "question_id": "q1",
+         "span": {"start_ms": 100, "end_ms": 101},
+         "words": [{"text": "first", "start_ms": 0, "end_ms": 100}]},
+    ]
+    doc = _build_document(
+        candidate_name="Rahul", role_title="EMM Engineer", verdict="reject",
+        verdict_reason="Did not meet the bar on scaling.",
+        why_positive="Strong on basics.",
+        why_negative="Scaling answers stayed shallow.",
+        quick_summary="Capable on fundamentals; thin under depth.",
+        decision_headline="Below the bar for this role.",
+        strengths=[{"title": "Fundamentals", "detail": "Clear on enrollment."}],
+        concerns=[{"title": "Scaling depth", "detail": "No concrete mechanism.",
+                   "severity": "major"}],
+        charity_flags=["Credited a vague answer on MDM as adequate."],
+        question_scorecards=[{
+            "question_id": "q1", "title": "Scaling MDM", "status_badge": "Thin",
+            "our_read": "Stayed high level.", "candidate_quote": "we just scaled it",
+            "level": "thin", "closure": "tapped_out", "difficulty": "hard",
+            "red_flags_tripped": ["no concrete numbers"],
+            "listen_for_hits": [], "score": 3,
+        }],
+        signal_scorecards=[{
+            "signal": "Distributed systems at scale", "signal_label": "Scaling",
+            "weight": 3, "knockout": True, "priority": "must_have",
+            "provenance": "probed_absent", "level": "absent", "score": 1.0,
+            "evidence": ["we just scaled it"], "level_basis": "dedicated: absent",
+        }],
+        transcript=tr)
+    # negative narrative
+    assert "why_negative: Scaling answers stayed shallow." in doc
+    assert "quick_summary:" in doc
+    assert "decision_headline:" in doc
+    # concerns with severity
+    assert "Scaling depth" in doc and "severity: major" in doc
+    # charity flag advisory
+    assert "charity" in doc.lower()
+    # signal block uses level/score (NOT the old null final_state/grade)
+    assert "level: absent" in doc and "knockout: True" in doc
+    assert "provenance: probed_absent" in doc
+    assert "state: None" not in doc and "grade: None" not in doc
+    # question block exposes shortfall locators
+    assert "level: thin" in doc and "red_flags" in doc.lower()
+
+
+def test_document_backward_compatible_without_negative_fields():
+    """Old-style call (no negative kwargs) still builds — defaults are safe."""
+    from app.modules.reel.director import _build_document
+    tr = [{"speaker": "candidate", "turn_ref": "t-1", "question_id": "q1",
+           "span": {"start_ms": 0, "end_ms": 1},
+           "words": [{"text": "x", "start_ms": 0, "end_ms": 1}]}]
+    doc = _build_document(candidate_name="A", role_title="R", verdict="advance",
+                          verdict_reason=None, why_positive="ok", strengths=[],
+                          question_scorecards=[], signal_scorecards=[], transcript=tr)
+    assert "<report>" in doc
