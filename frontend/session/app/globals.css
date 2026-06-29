@@ -24,11 +24,19 @@
   --color-px-accent: var(--px-accent);
   --color-px-accent-2: var(--px-accent-2);
   --color-px-accent-soft: var(--px-accent-soft);
+  --color-px-accent-ink: var(--px-accent-ink);
   --color-px-ai: var(--px-ai);
+  --color-px-ai-fill: var(--px-ai-fill);
   --color-px-caution: var(--px-caution);
+  --color-px-caution-fill: var(--px-caution-fill);
   --color-px-ok: var(--px-ok);
+  --color-px-ok-fill: var(--px-ok-fill);
   --color-px-danger: var(--px-danger);
+  --color-px-danger-fill: var(--px-danger-fill);
   --color-px-human: var(--px-human);
+  --color-px-human-fill: var(--px-human-fill);
+  --color-px-neutral-cat: var(--px-neutral-cat);
+  --color-px-neutral-cat-fill: var(--px-neutral-cat-fill);
 
   /* ─────────────────────────────────────────────────────────
      Override the Tailwind neutral + semantic palettes so that
