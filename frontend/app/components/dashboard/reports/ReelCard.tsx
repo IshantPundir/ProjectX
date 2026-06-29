@@ -11,17 +11,19 @@ import { ReelTheater } from './theater/ReelTheater'
 const CARD = 'rounded-xl border bg-white p-3.5'
 
 /**
- * Candidate Reel card for the report page. Owns the full generation lifecycle —
+ * Highlights card for the report page. Owns the full generation lifecycle —
  * absent → generating → ready / failed — and plays the ready reel in a modal with
- * a chapter rail. The reel is a positive highlight that ships alongside the full
- * report + recording; the backend gates eligibility (advance/borderline + ready).
+ * a chapter rail. The reel surfaces the video evidence behind the verdict; the
+ * backend gates eligibility (report + recording ready, any verdict).
  */
 export function ReelCard({
   sessionId,
   candidateName,
+  verdict,
 }: {
   sessionId: string
   candidateName: string
+  verdict: 'advance' | 'borderline' | 'reject'
 }) {
   const { data, isLoading } = useReel(sessionId)
   const generate = useGenerateReel(sessionId)
@@ -44,15 +46,20 @@ export function ReelCard({
   const busy =
     status === 'pending' || status === 'generating' || generate.isPending
 
+  const reelBlurb =
+    verdict === 'advance' ? 'A ~60s reel: why this candidate fits.'
+    : verdict === 'borderline' ? 'A ~60s reel: the case both ways.'
+    : 'A ~60s reel: the evidence behind this call.'
+
   return (
     <div className={CARD} style={{ borderColor: 'var(--px-hairline)' }}>
       <div className="mb-2.5 flex items-center justify-between">
         <span className="text-[12px] font-semibold" style={{ color: 'var(--px-fg-2)' }}>
-          Candidate reel
+          Highlights
         </span>
         {status === 'ready' && data?.duration_seconds != null && (
           <span className="text-[11px]" style={{ color: 'var(--px-fg-4)' }}>
-            {Math.round(data.duration_seconds)}s highlight
+            {Math.round(data.duration_seconds)}s
           </span>
         )}
       </div>
@@ -67,7 +74,7 @@ export function ReelCard({
           regenerating={generate.isPending}
         />
       ) : busy ? (
-        <Poster spinner>Generating reel… this takes a minute.</Poster>
+        <Poster spinner>Generating Highlights… this takes a minute.</Poster>
       ) : status === 'failed' ? (
         <FailedState
           error={data?.generation_error}
@@ -75,7 +82,7 @@ export function ReelCard({
           retrying={generate.isPending}
         />
       ) : data?.eligible ? (
-        <EmptyState onGenerate={() => trigger(false)} starting={generate.isPending} />
+        <EmptyState onGenerate={() => trigger(false)} starting={generate.isPending} blurb={reelBlurb} />
       ) : (
         <Poster muted>{data?.ineligible_reason ?? 'Reel not available yet.'}</Poster>
       )}
@@ -133,7 +140,15 @@ function Poster({
   )
 }
 
-function EmptyState({ onGenerate, starting }: { onGenerate: () => void; starting: boolean }) {
+function EmptyState({
+  onGenerate,
+  starting,
+  blurb,
+}: {
+  onGenerate: () => void
+  starting: boolean
+  blurb: string
+}) {
   return (
     <div
       className="flex w-full flex-col items-center justify-center gap-3 rounded-lg px-4 text-center"
@@ -144,13 +159,13 @@ function EmptyState({ onGenerate, starting }: { onGenerate: () => void; starting
       }}
     >
       <span className="text-[13px] font-semibold text-white">
-        A ~60s highlight reel for this candidate
+        {blurb}
       </span>
       <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.6)' }}>
-        AI-directed from the interview — the case for advancing, at a glance.
+        AI-directed from the interview — the evidence behind the verdict, at a glance.
       </span>
       <Button size="sm" onClick={onGenerate} disabled={starting}>
-        {starting ? 'Starting…' : 'Create candidate reel'}
+        {starting ? 'Starting…' : 'Create Highlights'}
       </Button>
     </div>
   )
@@ -203,7 +218,7 @@ function ReadyPoster({
       <button
         type="button"
         onClick={onPlay}
-        aria-label={`Play ${candidateName}'s candidate reel`}
+        aria-label={`Play ${candidateName}'s Highlights`}
         className="group relative flex w-full items-center justify-center overflow-hidden rounded-lg"
         style={{
           aspectRatio: '16 / 9',
@@ -222,7 +237,7 @@ function ReadyPoster({
           className="absolute bottom-2.5 left-2.5 text-[11px] font-semibold text-white"
           style={{ textShadow: '0 1px 6px rgba(0,0,0,0.5)' }}
         >
-          {candidateName} · highlight reel
+          {candidateName} · Highlights
         </span>
       </button>
       <button

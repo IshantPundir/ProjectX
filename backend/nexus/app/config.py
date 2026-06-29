@@ -670,7 +670,7 @@ class Settings(BaseSettings):
     # reasoning_effort, effort-gated (forwarded only when non-empty).
     openai_reel_director_effort: str = "medium"
     # versioned prompt directory PromptLoader reads from (prompts/v{N}/).
-    reel_director_prompt_version: str = "v3"
+    reel_director_prompt_version: str = "v4"
     # PREFIX only — concatenated into keys like
     # ``reel_director:{prompt_version}:{model}``. Bump on a prompt-family change.
     reel_director_prompt_cache_key_prefix: str = "reel_director"

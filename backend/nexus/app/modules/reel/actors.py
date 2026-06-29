@@ -127,14 +127,25 @@ async def _build_and_upload(session_id: UUID, tenant_id: UUID,
         meta_started_at, inp["recording_started_at"])
 
     summary = inp["summary"] or {}
-    why_positive = (summary.get("decision") or {}).get("why_positive")
+    decision = summary.get("decision") or {}
+    why_positive = decision.get("why_positive")
     if isinstance(why_positive, dict):
         why_positive = why_positive.get("body")
+    why_negative = decision.get("why_negative")
+    if isinstance(why_negative, dict):
+        why_negative = why_negative.get("body")
+    decision_headline = decision.get("headline")
+    charity_flags = (summary.get("methodology") or {}).get("charity_flags") or []
 
     raw = await generate_edl(
         candidate_name=inp["candidate_name"], role_title=inp["role_title"],
         verdict=inp["verdict"], verdict_reason=inp["verdict_reason"],
-        why_positive=why_positive, strengths=summary.get("strengths", []),
+        why_positive=why_positive, why_negative=why_negative,
+        quick_summary=summary.get("quick_summary"),
+        decision_headline=decision_headline,
+        strengths=summary.get("strengths", []),
+        concerns=summary.get("concerns", []),
+        charity_flags=charity_flags,
         question_scorecards=inp["question_scorecards"] or [],
         signal_scorecards=inp["signal_scorecards"] or [],
         transcript=transcript, correlation_id=correlation_id,

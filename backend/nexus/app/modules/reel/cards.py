@@ -65,6 +65,28 @@ def format_identity_tag(candidate_name: str | None, role_title: str | None) -> s
     return " · ".join(parts) if parts else None
 
 
+# Point-card polarity: which moment is this card framing?
+_POINT_GLYPHS = ("★", "✓", "△")
+
+
+def parse_point_glyph(on_screen_text: str) -> tuple[str, str, tuple[int, int, int]]:
+    """Split a point card's leading polarity glyph from its phrase + pick its color.
+
+    ``★`` (differentiating strength) and ``✓`` (met requirement) render in the violet
+    accent. ``△`` (a gap / unmet requirement) renders in NEUTRAL soft ink — this is
+    evidence behind a verdict, not an alarm. Missing glyph → defaults to ``★``.
+    """
+    text = (on_screen_text or "").strip()
+    glyph = "★"
+    for g in _POINT_GLYPHS:
+        if text.startswith(g):
+            glyph = g
+            text = text[len(g):].strip()
+            break
+    color = _INK_SOFT if glyph == "△" else _ACCENT_SOFT
+    return glyph, text, color
+
+
 def render_card(*, kind: str, out_path: str, on_screen_text: str | None = None,
                 subtitle: str | None = None,
                 width: int = CARD_W, height: int = CARD_H) -> str:
@@ -96,10 +118,11 @@ def render_card(*, kind: str, out_path: str, on_screen_text: str | None = None,
     # Unescape HTML entities the LLM sometimes emits (e.g. "&amp;" -> "&").
     text = html.unescape((on_screen_text or "").strip())
     if kind == "point":
-        star = font(_FONT_BOLD, 96)
-        sw = text_w("★", star)
-        draw.text(((width - sw) / 2, 170), "★", font=star, fill=_ACCENT_SOFT)
-        phrase = text.lstrip("★ ").strip() or text
+        glyph, phrase, glyph_color = parse_point_glyph(text)
+        gfont = font(_FONT_BOLD, 96)
+        gw = text_w(glyph, gfont)
+        draw.text(((width - gw) / 2, 170), glyph, font=gfont, fill=glyph_color)
+        phrase = phrase or text
         y = centered_block(phrase, font(_FONT_BOLD, 54), top=320, fill=_INK)
         if subtitle:
             centered_block(subtitle, font(_FONT_REG, 30), top=y + 22, fill=_INK_SOFT)

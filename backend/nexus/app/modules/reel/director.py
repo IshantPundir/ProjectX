@@ -258,49 +258,90 @@ def validate_edl(edl: ReelEdlOut, transcript: list[dict]) -> ValidatedEdl:
 # --- LLM call (manual-tested) ---------------------------------------------
 def _build_document(*, candidate_name: str | None, role_title: str | None,
                     verdict: str | None, verdict_reason: str | None,
-                    why_positive: str | None, strengths: list[dict],
-                    question_scorecards: list[dict], signal_scorecards: list[dict],
-                    transcript: list[dict]) -> str:
-    """Serialize report fit-context (FIRST) then the indexed transcript (the document).
+                    why_positive: str | None,
+                    why_negative: str | None = None,
+                    quick_summary: str | None = None,
+                    decision_headline: str | None = None,
+                    strengths: list[dict] | None = None,
+                    concerns: list[dict] | None = None,
+                    charity_flags: list[str] | None = None,
+                    question_scorecards: list[dict] | None = None,
+                    signal_scorecards: list[dict] | None = None,
+                    transcript: list[dict] | None = None) -> str:
+    """Serialize the FULL report ground-truth (FIRST) then the indexed transcript.
 
-    Context-before-document per the house rule. The fit-context is the material
-    for §1 (role + must-have signals) and §2 (strengths). Candidate turns are
-    rendered with a per-word ``idx:text`` index so the model can reference
-    [in_word, out_word].
+    Context-before-document per the house rule. The director uses this material to
+    voice the verdict: strengths for advance, both sides for borderline, and the
+    unmet/shortfall evidence for reject. Candidate turns carry a per-word
+    ``idx:text`` index so the model can reference ``[in_word, out_word]``.
     """
+    transcript = transcript or []
     first_name = (candidate_name or "").split()[0] if candidate_name else None
     lines: list[str] = ["<report>",
                         f"candidate_name: {candidate_name or 'n/a'}",
                         f"candidate_first_name: {first_name or 'n/a'}",
                         f"role: {role_title or 'n/a'}",
                         f"verdict: {verdict or 'n/a'}"]
+    if decision_headline:
+        lines.append(f"decision_headline: {decision_headline}")
     if verdict_reason:
         lines.append(f"verdict_reason: {verdict_reason}")
+    if quick_summary:
+        lines.append(f"quick_summary: {quick_summary}")
     if why_positive:
         lines.append(f"why_positive: {why_positive}")
+    if why_negative:
+        lines.append(f"why_negative: {why_negative}")
 
-    # §1 source: the JD must-haves (highest-weight signals) the candidate met.
+    # JD must-haves the candidate met OR missed (weight desc). This is the spine of
+    # the verdict story — for reject/borderline the high-weight ABSENT/THIN signals
+    # are the shortfall evidence.
     lines.append("jd_signals (the role's requirements; weight=importance):")
     for s in sorted(signal_scorecards or [], key=lambda x: -(x.get("weight") or 0)):
-        lines.append(
-            f"- {s.get('signal')} | weight: {s.get('weight')} | "
-            f"state: {s.get('final_state')} | grade: {s.get('grade')}"
-        )
+        label = s.get("signal_label") or s.get("signal")
+        line = (f"- {label} | weight: {s.get('weight')} | "
+                f"knockout: {s.get('knockout')} | priority: {s.get('priority')} | "
+                f"level: {s.get('level')} | score: {s.get('score')} | "
+                f"provenance: {s.get('provenance')}")
+        if s.get("level_basis"):
+            line += f" | basis: {s.get('level_basis')}"
+        lines.append(line)
+        for ev in (s.get("evidence") or [])[:2]:
+            lines.append(f"    evidence: {ev}")
 
-    # §2 source: the report's named strengths.
+    # Report-named strengths (advance §1 / borderline 'met' beats).
     lines.append("strengths:")
     for s in strengths or []:
         lines.append(f"- {s.get('title', '')}: {s.get('detail', '')}")
 
-    # Per-question reads — to locate which turn evidences a point.
+    # Report-named concerns (reject spine / borderline 'gap' beats), with severity.
+    lines.append("concerns:")
+    for c in concerns or []:
+        lines.append(f"- {c.get('title', '')} | severity: {c.get('severity', '')}: "
+                     f"{c.get('detail', '')}")
+
+    # Where the report already extended benefit-of-the-doubt — do NOT harden these
+    # into firm claims in either direction.
+    if charity_flags:
+        lines.append("charity_flags (the report read these charitably — do not overstate):")
+        for f in charity_flags:
+            lines.append(f"- {f}")
+
+    # Per-question reads — locate which turn evidences a point (strong OR shortfall).
     lines.append("questions:")
     for q in question_scorecards or []:
         lines.append(
             f"- question_id: {q.get('question_id')} | status: {q.get('status_badge')} | "
+            f"level: {q.get('level')} | closure: {q.get('closure')} | "
+            f"difficulty: {q.get('difficulty')} | score: {q.get('score')} | "
             f"title: {q.get('title', '')}"
         )
         if q.get("our_read"):
             lines.append(f"  our_read: {q['our_read']}")
+        if q.get("red_flags_tripped"):
+            lines.append(f"  red_flags: {', '.join(q['red_flags_tripped'])}")
+        if q.get("listen_for_hits"):
+            lines.append(f"  listen_for_hits: {', '.join(q['listen_for_hits'])}")
         if q.get("candidate_quote"):
             lines.append(f"  candidate_quote (hint): {q['candidate_quote']}")
     lines.append("</report>")
@@ -330,7 +371,13 @@ def _build_document(*, candidate_name: str | None, role_title: str | None,
 
 async def generate_edl(*, candidate_name: str | None, role_title: str | None,
                        verdict: str | None, verdict_reason: str | None,
-                       why_positive: str | None, strengths: list[dict],
+                       why_positive: str | None,
+                       why_negative: str | None = None,
+                       quick_summary: str | None = None,
+                       decision_headline: str | None = None,
+                       strengths: list[dict],
+                       concerns: list[dict] | None = None,
+                       charity_flags: list[str] | None = None,
                        question_scorecards: list[dict], signal_scorecards: list[dict],
                        transcript: list[dict], correlation_id: str) -> ReelEdlOut:
     """Call the LLM to produce a raw EDL. Caller must run ``validate_edl`` after.
@@ -353,7 +400,10 @@ async def generate_edl(*, candidate_name: str | None, role_title: str | None,
     ).get("reel/director")
     document = _build_document(
         candidate_name=candidate_name, role_title=role_title, verdict=verdict,
-        verdict_reason=verdict_reason, why_positive=why_positive, strengths=strengths,
+        verdict_reason=verdict_reason, why_positive=why_positive,
+        why_negative=why_negative, quick_summary=quick_summary,
+        decision_headline=decision_headline, strengths=strengths,
+        concerns=concerns, charity_flags=charity_flags,
         question_scorecards=question_scorecards, signal_scorecards=signal_scorecards,
         transcript=transcript,
     )
@@ -440,9 +490,16 @@ async def _dev_main(session_id: str) -> int:
         print(f"[director] no session_report for {session_id}")
         return 1
     verdict, verdict_reason, summary, qsc, ssc, role_title, candidate_name = row
-    why_positive = ((summary or {}).get("decision") or {}).get("why_positive")
+    # Mirror the actor's extraction so the dev EDL matches production for EVERY
+    # verdict (the negative evidence is what borderline/reject framings need).
+    summary = summary or {}
+    decision = summary.get("decision") or {}
+    why_positive = decision.get("why_positive")
     if isinstance(why_positive, dict):
         why_positive = why_positive.get("body")
+    why_negative = decision.get("why_negative")
+    if isinstance(why_negative, dict):
+        why_negative = why_negative.get("body")
 
     fixture = os.path.join(os.path.dirname(__file__), "..", "..", "..",
                            "tests/fixtures/candidate_reel",
@@ -453,7 +510,11 @@ async def _dev_main(session_id: str) -> int:
     raw = await generate_edl(
         candidate_name=candidate_name, role_title=role_title, verdict=verdict,
         verdict_reason=verdict_reason, why_positive=why_positive,
-        strengths=(summary or {}).get("strengths", []),
+        why_negative=why_negative, quick_summary=summary.get("quick_summary"),
+        decision_headline=decision.get("headline"),
+        strengths=summary.get("strengths", []),
+        concerns=summary.get("concerns", []),
+        charity_flags=(summary.get("methodology") or {}).get("charity_flags") or [],
         question_scorecards=qsc or [], signal_scorecards=ssc or [],
         transcript=transcript, correlation_id=f"reel-dev-{session_id[:8]}",
     )

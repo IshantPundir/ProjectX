@@ -102,7 +102,7 @@ export interface ImmersiveHeaderProps {
   header: ReportHeader
   verdict: Verdict
   hasReel: boolean
-  /** Backend says a reel can be generated (verdict advance/borderline + report + recording ready). */
+  /** Backend says a reel can be generated (report + recording ready, any verdict). */
   reelEligible: boolean
   /** A reel is currently being generated (pending/generating or the mutation is in flight). */
   reelBusy: boolean
@@ -123,10 +123,10 @@ export function ImmersiveHeader({
   onGenerateReel,
   onOpenSession,
 }: ImmersiveHeaderProps) {
-  const showReel = hasReel && verdict !== 'reject'
-  // Offer generation when no reel exists yet and the candidate is reel-eligible
-  // (advance/borderline only — never for a reject).
-  const showGenerate = !hasReel && verdict !== 'reject' && reelEligible
+  // Highlights is available for every verdict; the backend `reelEligible`
+  // flag already gates on report + recording readiness.
+  const showReel = hasReel
+  const showGenerate = !hasReel && reelEligible
 
   return (
     <div className="rh-hero overflow-hidden rounded-[18px] shadow-[0_12px_40px_rgba(20,20,40,.22)]">
@@ -225,19 +225,19 @@ export function ImmersiveHeader({
               {showReel && (
                 <button
                   type="button"
-                  aria-label="Candidate highlight"
+                  aria-label="Highlights"
                   onClick={onOpenReel}
                   className="rh-btn-reel inline-flex items-center gap-[9px] cursor-pointer"
                 >
                   <Play size={14} aria-hidden />
-                  Candidate highlight
+                  Highlights
                 </button>
               )}
 
               {showGenerate && (
                 <button
                   type="button"
-                  aria-label="Generate highlight video"
+                  aria-label="Generate Highlights"
                   onClick={onGenerateReel}
                   disabled={reelBusy}
                   aria-busy={reelBusy}
@@ -251,7 +251,7 @@ export function ImmersiveHeader({
                   ) : (
                     <>
                       <Clapperboard size={14} aria-hidden />
-                      Generate highlight video
+                      Generate Highlights
                     </>
                   )}
                 </button>

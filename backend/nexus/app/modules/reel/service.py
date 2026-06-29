@@ -1,9 +1,10 @@
 """Persistence + eligibility for the Candidate Reel.
 
-Eligibility (design D8): verdict ∈ {advance, borderline} AND report ready AND
-recording ready. The reel is a positive highlight; a reel of a rejected candidate
-is contradictory, and a reel needs the report (for the EDL) + the recording (to
-cut from). The decision function is pure + table-tested; the DB wrappers feed it.
+Eligibility: report ready AND recording ready, for ANY verdict. The reel is the
+video evidence behind the verdict (positive for advance; balanced for borderline;
+evidence-for-shortfall for reject). A reel needs the report (for the EDL) + the
+recording (to cut from). The decision function is pure + table-tested; the DB
+wrappers feed it.
 """
 from __future__ import annotations
 
@@ -18,16 +19,17 @@ from app.modules.reel.models import SessionReel
 from app.modules.reel.schemas import ReelChapter, ReelPlayback
 from app.storage import get_object_storage
 
-_ELIGIBLE_VERDICTS = ("advance", "borderline")
-
-
 def eligibility_decision(*, report_status: str | None, verdict: str | None,
                          recording_key: str | None) -> tuple[bool, str | None]:
-    """Pure eligibility decision → (eligible, ineligible_reason)."""
+    """Pure eligibility decision → (eligible, ineligible_reason).
+
+    The Evidence Reel is available for EVERY verdict (advance / borderline /
+    reject) — it voices the verdict the report reached. It only needs the report
+    (for the EDL) and the recording (to cut from). ``verdict`` is accepted for
+    call-site stability but no longer gates eligibility.
+    """
     if report_status != "ready":
         return False, "Report is not ready yet."
-    if verdict not in _ELIGIBLE_VERDICTS:
-        return False, "A reel is only available for advancing or borderline candidates."
     if not recording_key:
         return False, "Session recording is not ready yet."
     return True, None

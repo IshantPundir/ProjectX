@@ -251,14 +251,14 @@ def test_rendered_html_has_glance_and_competencies():
 
 
 # ---------------------------------------------------------------------------
-# Header CTAs — "Candidate highlight" (USP, reel-gated) + "Full session"
+# Header CTAs — "Evidence Reel" (USP, reel-gated) + "Full session"
 # ---------------------------------------------------------------------------
 
 
 def test_highlight_button_shows_only_when_reel_ready():
-    # reel ready → both buttons, primary highlight deep-links to ?view=reel
+    # reel ready → both buttons, primary Evidence Reel deep-links to ?view=reel
     html = build_pdf_html(_ctx(_report_full(), has_reel=True))
-    assert "Candidate highlight" in html
+    assert "Evidence Reel" in html
     assert "https://x/recordings/tok?view=reel" in html
     assert "Full session" in html
     assert "https://x/recordings/tok?view=full" in html

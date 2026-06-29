@@ -306,8 +306,8 @@ def build_pdf_context(
         "generated_on": generated_on,
         "reference_photo_url": reference_photo_url,
         # Two recording entry points (same capability token, deep-linked view).
-        # "Candidate highlight" (the reel) is the USP CTA — gated on has_reel so
-        # it only shows when a reel actually rendered (advance/borderline verdict).
+        # "Evidence Reel" (the reel) is the USP CTA — gated on has_reel so
+        # it only shows when a reel actually rendered (any verdict).
         "full_session_url": full_session_url,
         "reel_url": reel_url,
         "has_reel": has_reel,

@@ -182,7 +182,7 @@ export function ReelTheater({
                     className="whitespace-nowrap rounded-full px-2.5 py-0.5 text-[10.5px] font-bold"
                     style={{ background: 'var(--px-accent)', color: 'var(--px-accent-ink, #fff)' }}
                   >
-                    ★ Highlight reel{durationSeconds ? ` · ${Math.round(durationSeconds)}s` : ''}
+                    ★ Evidence Reel{durationSeconds ? ` · ${Math.round(durationSeconds)}s` : ''}
                   </span>
                   {showClose && (
                     <button
