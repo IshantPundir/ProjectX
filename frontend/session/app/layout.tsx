@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Fraunces, JetBrains_Mono } from "next/font/google";
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 
-import { AnimatedBackground } from "@/components/agents-ui/animated-background";
-import { DevtoolsShield } from "@/components/DevtoolsShield";
 import { InterviewProviders } from "@/components/interview/providers";
 
 import "./globals.css";
@@ -63,24 +61,14 @@ export default function RootLayout({
         className="min-h-full flex flex-col bg-background text-foreground font-sans"
         suppressHydrationWarning
       >
+        {/*
+         * InterviewProviders (QueryClient + Toaster) is global and benign.
+         * Interview-only chrome (AnimatedBackground, --px-app-base wrapper,
+         * DevtoolsShield) lives in app/interview/layout.tsx so it does NOT
+         * bleed into the public /recordings/* page.
+         */}
         <InterviewProviders>
-          <div
-            className="min-h-screen w-full"
-            style={
-              {
-                // --px-accent default; per-tenant override applied closer to the surface later.
-                "--px-accent": "#8B5CF6",
-                background: "var(--px-app-base)",
-                color: "var(--px-fg)",
-              } as CSSProperties
-            }
-          >
-            <AnimatedBackground />
-            {children}
-          </div>
-          {/* Site-wide devtools deterrent — blocks open-shortcuts/right-click on
-              every page and covers the page if devtools is detected open. */}
-          <DevtoolsShield />
+          {children}
         </InterviewProviders>
       </body>
     </html>
