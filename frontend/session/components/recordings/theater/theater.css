@@ -622,3 +622,31 @@
   .theater-bottom { left: 6px; right: 6px; bottom: 6px; }
 }
 
+/* --- Touch: bigger targets regardless of orientation --- */
+@media (hover: none) and (pointer: coarse) {
+  .theater-playbtn { width: 44px; height: 44px; }
+  .theater-ctrlbtn { min-width: 44px; min-height: 44px; }
+}
+
+/* --- Compact: two-row control bar so the scrubber gets full width --- */
+@media (max-width: 640px) {
+  .theater-controls {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    column-gap: 8px;
+    padding: 10px 12px;
+  }
+  /* scrubber onto its own first row, full width */
+  .theater-scrub {
+    order: -1;
+    flex: 1 0 100%;
+  }
+  /* hardware volume on phones — drop the slider, keep the mute button */
+  .theater-vol { display: none; }
+}
+
+/* --- Landscape-compact: keep controls single-row but compact --- */
+@media (orientation: landscape) and (max-height: 480px) {
+  .theater-vol { display: none; }
+  .theater-controls { padding: 6px 10px; }
+}
