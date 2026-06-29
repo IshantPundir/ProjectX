@@ -146,9 +146,12 @@ export function DialogContent({
   const previouslyFocused = React.useRef<HTMLElement | null>(null);
   const [mounted, setMounted] = React.useState(false);
 
-  React.useEffect(() => {
-    setMounted(true);
-  }, []);
+  // Intentional: tracks client-mount so the portal is never rendered during SSR.
+  // The one-time setState does not cascade — empty-deps effect runs only once, after
+  // hydration. The rule is correct in general; this is a known-valid exception.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  React.useEffect(() => { setMounted(true) }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Scroll lock + focus management while open.
   React.useEffect(() => {
