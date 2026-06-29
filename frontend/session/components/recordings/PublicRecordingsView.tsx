@@ -79,7 +79,7 @@ export function PublicRecordingsView({ token }: { token: string }) {
         <div
           role="tablist"
           aria-label="Switch view"
-          className="fixed left-4 top-4 z-[60] flex items-center gap-1 rounded-full border bg-white/90 p-1 shadow-sm backdrop-blur"
+          className="fixed left-4 top-4 z-[60] flex items-center gap-1 rounded-full border bg-white/90 p-1 shadow-sm backdrop-blur max-[640px]:top-16"
         >
           {(['reel', 'full'] as const).map((m) => (
             <button

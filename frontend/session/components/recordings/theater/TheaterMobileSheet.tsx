@@ -54,7 +54,7 @@ export function TheaterMobileSheet({
         tabIndex={open ? 0 : -1}
         onClick={onClose}
       />
-      <div className="theater-sheet" role="dialog" aria-label="Questions and scores">
+      <div className="theater-sheet" role="dialog" aria-label="Questions and scores" inert={!open}>
         <div className="theater-sheet-grip" aria-hidden="true" />
         <div className="theater-sheet-scroll">
           <div className="mb-3 flex items-center gap-2">
