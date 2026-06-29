@@ -490,9 +490,16 @@ async def _dev_main(session_id: str) -> int:
         print(f"[director] no session_report for {session_id}")
         return 1
     verdict, verdict_reason, summary, qsc, ssc, role_title, candidate_name = row
-    why_positive = ((summary or {}).get("decision") or {}).get("why_positive")
+    # Mirror the actor's extraction so the dev EDL matches production for EVERY
+    # verdict (the negative evidence is what borderline/reject framings need).
+    summary = summary or {}
+    decision = summary.get("decision") or {}
+    why_positive = decision.get("why_positive")
     if isinstance(why_positive, dict):
         why_positive = why_positive.get("body")
+    why_negative = decision.get("why_negative")
+    if isinstance(why_negative, dict):
+        why_negative = why_negative.get("body")
 
     fixture = os.path.join(os.path.dirname(__file__), "..", "..", "..",
                            "tests/fixtures/candidate_reel",
@@ -503,7 +510,11 @@ async def _dev_main(session_id: str) -> int:
     raw = await generate_edl(
         candidate_name=candidate_name, role_title=role_title, verdict=verdict,
         verdict_reason=verdict_reason, why_positive=why_positive,
-        strengths=(summary or {}).get("strengths", []),
+        why_negative=why_negative, quick_summary=summary.get("quick_summary"),
+        decision_headline=decision.get("headline"),
+        strengths=summary.get("strengths", []),
+        concerns=summary.get("concerns", []),
+        charity_flags=(summary.get("methodology") or {}).get("charity_flags") or [],
         question_scorecards=qsc or [], signal_scorecards=ssc or [],
         transcript=transcript, correlation_id=f"reel-dev-{session_id[:8]}",
     )

@@ -1,4 +1,4 @@
-"""Candidate Reel module — AI-directed ~60s highlight reel from a session.
+"""Candidate Reel module — AI-directed ~60s Evidence Reel from a session.
 
 Public API is import-light (model / schemas / service only). The render path
 (``render``, ``cards``, ``tts``, ``director``, ``actors``) pulls Pillow / livekit
