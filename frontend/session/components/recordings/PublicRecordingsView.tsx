@@ -16,13 +16,13 @@ type Mode = 'reel' | 'full'
 /**
  * Public, token-gated playback surface. Fetches the full envelope from the
  * public API (no auth), then plays the videos inline. The page lands directly
- * on the highlight reel (when one exists) and offers a top-left switch between
- * "Highlight reel" and "Full session" (the full ReviewTheater: video +
+ * on the Evidence Reel (when one exists) and offers a top-left switch between
+ * "Evidence Reel" and "Full session" (the full ReviewTheater: video +
  * proctoring + scores + transcript + decision). When there is no reel, the
  * switch is omitted and the page shows Full session directly.
  *
  * Deep-linking: a `?view=reel` or `?view=full` query param picks the initial
- * view (the shared PDF's "Candidate highlight" and "Full session" buttons use
+ * view (the shared PDF's "Evidence Reel" and "Full session" buttons use
  * this). Absent/invalid → the reel-first default. A `?view=reel` request with no
  * reel available falls back to Full session (see activeMode below).
  *

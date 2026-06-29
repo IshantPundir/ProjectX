@@ -487,12 +487,12 @@ async def _share_report_pdf_async(
             share_base = settings.candidate_session_base_url
             # Two deep-linked entry points off the same capability token. The
             # public /recordings page reads ?view= to open straight to the reel
-            # ("Candidate highlight" — the USP) or the full session recording.
+            # ("Evidence Reel" — the USP) or the full session recording.
             full_session_url = f"{share_base}/recordings/{share_token}?view=full"
             reel_url = f"{share_base}/recordings/{share_token}?view=reel"
 
-            # The highlight CTA only shows when a reel actually rendered (gated to
-            # advance/borderline verdicts). Best-effort — never block the PDF on it.
+            # The Evidence Reel CTA only shows when a reel actually rendered (any
+            # verdict). Best-effort — never block the PDF on it.
             has_reel = False
             with contextlib.suppress(Exception):
                 reel_row = await get_reel(
